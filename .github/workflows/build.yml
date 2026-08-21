@@ -26,15 +26,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            android/.gradle
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/settings.gradle.kts') }}
-          restore-keys: gradle-${{ runner.os }}-
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -49,9 +44,6 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('**/pubspec.yaml', '**/pubspec.lock') }}
           restore-keys: pub-${{ runner.os }}-${{ env.FLUTTER_VERSION }}-
-
-      - name: Flutter environment
-        run: flutter doctor -v
 
       - name: Install dependencies
         run: flutter pub get
