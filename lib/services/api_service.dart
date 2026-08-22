@@ -353,18 +353,23 @@ class ApiService {
     }
   }
 
-  Future<List<Thread>> getThreadList({int page = 1}) async {
+  Future<List<Thread>> getThreadList({
+    int page = 1,
+    String view = 'hot',
+  }) async {
+    const supportedViews = {'hot', 'newthread', 'digest', 'sofa'};
+    final normalizedView = supportedViews.contains(view) ? view : 'hot';
+
     final response = await _dio.get<String>(
-      '/plugin.php',
+      '/forum.php',
       queryParameters: {
-        'id': 'comiis_app_portal',
-        'pid': 1,
+        'mod': 'guide',
+        'view': normalizedView,
+        'index': 1,
         'page': page,
-        'comiis_list': 'yes',
-        'inajax': 1,
+        'mobile': 2,
       },
       options: Options(
-        headers: const {'X-Requested-With': 'XMLHttpRequest'},
         responseType: ResponseType.plain,
         followRedirects: true,
       ),
@@ -677,7 +682,52 @@ class ApiService {
       throw StateError('请先登录');
     }
 
-    final response = await _dio.get<String>(
+    final viewReferer =
+        '$baseUrl/forum.php?mod=viewthread&tid=$tid&page=$page&mobile=2';
+
+    PostEditorForm parseForm(String body) {
+      return _parser.parsePostEditorForm(
+        body,
+        fallbackFid: fid,
+        fallbackTid: tid,
+        fallbackPid: pid,
+        fallbackPage: page,
+      );
+    }
+
+    bool hasRealEditor(String body, PostEditorForm form) {
+      if (form.formhash.isEmpty || form.posttime.isEmpty) return false;
+
+      // 编辑帖子必须存在正文 textarea。旧逻辑只检查 formhash/posttime，
+      // 因此服务器若因为 fid/page 等定位不准确返回了一个通用表单壳，App 仍会
+      // 当成“编辑表单成功”，最终给用户一个空编辑器。
+      final document = html_parser.parse(body);
+      final textarea = document.querySelector('textarea[name="message"]');
+      return textarea != null && form.message.trim().isNotEmpty;
+    }
+
+    Future<String> requestEdit(
+      String path, {
+      Map<String, dynamic>? queryParameters,
+      String? referer,
+    }) async {
+      final response = await _dio.get<String>(
+        path,
+        queryParameters: queryParameters,
+        options: Options(
+          headers: {
+            'Referer': referer ?? viewReferer,
+            'Cache-Control': 'no-cache',
+          },
+          responseType: ResponseType.plain,
+          followRedirects: true,
+          validateStatus: (status) => status != null && status < 400,
+        ),
+      );
+      return response.data ?? '';
+    }
+
+    var body = await requestEdit(
       '/forum.php',
       queryParameters: {
         'mod': 'post',
@@ -688,27 +738,92 @@ class ApiService {
         'page': page,
         'mobile': 2,
       },
-      options: Options(
-        headers: {
-          'Referer':
-              '$baseUrl/forum.php?mod=viewthread&tid=$tid&page=$page&mobile=2',
-        },
-        responseType: ResponseType.plain,
-        followRedirects: true,
-      ),
     );
+    var form = parseForm(body);
 
-    final form = _parser.parsePostEditorForm(
-      response.data ?? '',
-      fallbackFid: fid,
-      fallbackTid: tid,
-      fallbackPid: pid,
-      fallbackPage: page,
-    );
-    if (form.formhash.isEmpty || form.posttime.isEmpty) {
-      final message = _extractAjaxMessage(response.data ?? '');
-      throw StateError(message.isEmpty ? '未获取到编辑表单' : message);
+    if (!hasRealEditor(body, form)) {
+      // 不猜 fid/page。直接回到真实帖子页面，寻找服务器自己输出的该 PID
+      // 编辑链接，再按这个 URL 重试。这样即使客户端楼层页码或 fid 过期，
+      // 也以 Discuz 当前页面给出的真实定位为准。
+      try {
+        final threadBody = await requestEdit(
+          '/forum.php',
+          queryParameters: {
+            'mod': 'viewthread',
+            'tid': tid,
+            'page': page,
+            'mobile': 2,
+          },
+          referer: '$baseUrl/thread-$tid-$page-1.html',
+        );
+        final document = html_parser.parse(threadBody);
+        Uri? actualEditUri;
+
+        for (final anchor in document.querySelectorAll(
+          'a[href*="action=edit"]',
+        )) {
+          final rawHref = (anchor.attributes['href'] ?? '')
+              .replaceAll('&amp;', '&')
+              .trim();
+          if (rawHref.isEmpty) continue;
+
+          final resolved = Uri.parse(baseUrl).resolve(rawHref);
+          if (resolved.queryParameters['pid'] == pid) {
+            actualEditUri = resolved;
+            break;
+          }
+        }
+
+        if (actualEditUri != null) {
+          final actualBody = await requestEdit(
+            actualEditUri.toString(),
+            referer: viewReferer,
+          );
+          final actualForm = parseForm(actualBody);
+          if (hasRealEditor(actualBody, actualForm)) {
+            body = actualBody;
+            form = actualForm;
+          }
+        }
+      } catch (_) {
+        // 继续使用下面的不带 mobile 参数兜底，不把辅助定位失败直接暴露给 UI。
+      }
     }
+
+    if (!hasRealEditor(body, form)) {
+      // 实测带/不带 mobile=2 的编辑页都可能正常返回。最后再用桌面/自动模板
+      // 请求一次，兼容某些旧帖在移动模板下只返回表单壳的情况。
+      try {
+        final fallbackBody = await requestEdit(
+          '/forum.php',
+          queryParameters: {
+            'mod': 'post',
+            'action': 'edit',
+            'fid': fid,
+            'tid': tid,
+            'pid': pid,
+            'page': page,
+          },
+        );
+        final fallbackForm = parseForm(fallbackBody);
+        if (hasRealEditor(fallbackBody, fallbackForm)) {
+          body = fallbackBody;
+          form = fallbackForm;
+        }
+      } catch (_) {}
+    }
+
+    if (!hasRealEditor(body, form)) {
+      final message = _extractAjaxMessage(body);
+      if (message.isNotEmpty) {
+        throw StateError(message);
+      }
+      if (form.formhash.isNotEmpty && form.posttime.isNotEmpty) {
+        throw StateError('编辑页未返回原帖正文（tid=$tid pid=$pid page=$page fid=$fid）');
+      }
+      throw StateError('未获取到编辑表单');
+    }
+
     _rememberFormhash(form.formhash);
     return form;
   }

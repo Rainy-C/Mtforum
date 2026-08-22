@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'pages/home_page.dart';
 import 'pages/community_page.dart';
 import 'pages/messages_page.dart';
 import 'pages/profile_page.dart';
+import 'services/analytics_service.dart';
 import 'services/api_service.dart';
 import 'services/message_badge_service.dart';
 import 'services/theme_service.dart';
@@ -102,6 +105,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   Future<void> _runStartupTasks() async {
+    // 匿名启动统计使用独立网络客户端，不携带论坛 Cookie，也不阻塞启动流程。
+    unawaited(AnalyticsService.instance.reportLaunch());
     await _runAutoSign();
     await MessageBadgeService.instance.refresh(force: true);
     await _checkUpdate();
@@ -287,7 +292,12 @@ class _AnimatedTabStackState extends State<_AnimatedTabStack>
     final isPrevious = index == _previousIndex;
     final isVisible = isCurrent || isPrevious;
 
-    Widget page = TickerMode(
+    // 每个 Tab 始终保持完全相同的 Widget 包装层，并通过稳定 key 识别。
+    // Stack 为了保证动画 Z 轴会把 current / previous 移到末尾；如果隐藏态
+    // 使用 Offstage、显示态改成 AnimatedBuilder，Flutter 会因为父节点类型变化
+    // 销毁原来的 State。HomePage 被重新创建后 initState 会再次请求首页，表现为
+    // “切回首页就自动刷新”。固定结构后只改变 offstage / translation，不再重建页面。
+    final page = TickerMode(
       enabled: isVisible,
       child: ExcludeSemantics(
         excluding: !isCurrent,
@@ -298,30 +308,32 @@ class _AnimatedTabStackState extends State<_AnimatedTabStack>
       ),
     );
 
-    if (!isVisible) {
-      return Offstage(offstage: true, child: page);
-    }
-
-    // 只让正在离开的页面和正在进入的页面参与合成动画。
-    // 旧实现会让所有隐藏 Tab 同时横穿屏幕，重页面时会明显掉帧。
-    return AnimatedBuilder(
-      animation: _controller,
-      child: page,
-      builder: (context, page) {
-        final t = _curve.transform(_controller.value);
-        final double x;
-        if (isCurrent) {
-          x = _direction * (1 - t);
-        } else {
-          // 底层页只做极轻的反向视差，减少大面积像素移动。
-          x = -_direction * 0.06 * t;
-        }
-
-        return FractionalTranslation(
-          translation: Offset(x, 0),
+    return KeyedSubtree(
+      key: ValueKey<int>(index),
+      child: Offstage(
+        offstage: !isVisible,
+        child: AnimatedBuilder(
+          animation: _controller,
           child: page,
-        );
-      },
+          builder: (context, page) {
+            final t = _curve.transform(_controller.value);
+            var x = 0.0;
+            if (isVisible) {
+              if (isCurrent) {
+                x = _direction * (1 - t);
+              } else if (isPrevious) {
+                // 底层页只做极轻的反向视差，减少大面积像素移动。
+                x = -_direction * 0.06 * t;
+              }
+            }
+
+            return FractionalTranslation(
+              translation: Offset(x, 0),
+              child: page,
+            );
+          },
+        ),
+      ),
     );
   }
 }
