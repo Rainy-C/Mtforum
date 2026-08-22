@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../widgets/app_state_view.dart';
 
 class FriendsPage extends StatefulWidget {
   const FriendsPage({super.key});
@@ -132,40 +133,28 @@ class _FriendsPageState extends State<FriendsPage> {
           if (_loading)
             const SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(child: CircularProgressIndicator()),
+              child: AppStateView.loading(),
             )
           else if (_error != null)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_error!),
-                    const SizedBox(height: 12),
-                    FilledButton.tonal(
-                      onPressed: _reload,
-                      child: const Text('重试'),
-                    ),
-                  ],
-                ),
+              child: AppStateView.error(
+                message: _error!,
+                onRetry: _reload,
               ),
             )
           else if (_items.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(
-                child: Text(
-                  '暂无好友',
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.outline,
-                  ),
-                ),
+              child: const AppStateView.empty(
+                icon: Icons.people_outline_rounded,
+                title: '暂无好友',
+                message: '添加好友后会显示在这里。',
               ),
             )
           else
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {

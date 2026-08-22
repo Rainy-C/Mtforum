@@ -165,7 +165,8 @@ class _PokeDialogState extends State<_PokeDialog> {
                         TextField(
                           controller: _note,
                           maxLength: 120,
-                          maxLines: 3,
+                          minLines: 1,
+                          maxLines: 5,
                           decoration: const InputDecoration(
                             labelText: '附言（可选）',
                             prefixIcon: Icon(Icons.edit_note_rounded),

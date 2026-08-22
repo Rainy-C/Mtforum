@@ -104,7 +104,7 @@ class _SettingsPageState extends State<SettingsPage> {
         slivers: [
           const SliverAppBar(title: Text('设置'), pinned: true),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(14, 8, 14, 28),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
                 const _SectionTitle('账号'),
@@ -177,6 +177,61 @@ class _SettingsPageState extends State<SettingsPage> {
                       },
                       title: const Text('深色模式'),
                       secondary: const Icon(Icons.dark_mode_rounded),
+                    ),
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 12, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.text_fields_rounded),
+                              const SizedBox(width: 16),
+                              const Expanded(
+                                child: Text(
+                                  '文字大小',
+                                  style: TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              Text(
+                                '${(_theme.textScale * 100).round()}%',
+                                style: TextStyle(
+                                  color: colors.primary,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              TextButton(
+                                onPressed: (_theme.textScale - 1.0).abs() < 0.001
+                                    ? null
+                                    : _theme.resetTextScale,
+                                child: const Text('默认'),
+                              ),
+                            ],
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 38, right: 2),
+                            child: Slider(
+                              value: _theme.textScale,
+                              min: 0.85,
+                              max: 1.25,
+                              divisions: 8,
+                              label: '${(_theme.textScale * 100).round()}%',
+                              onChanged: _theme.setTextScale,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 54, right: 8),
+                            child: Text(
+                              '预览文字 · 根据阅读习惯调整全局字号',
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -267,7 +322,7 @@ class _Group extends StatelessWidget {
     return Material(
       color: colors.surfaceContainerLow,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
         side: BorderSide(color: colors.outlineVariant),
       ),
       clipBehavior: Clip.antiAlias,

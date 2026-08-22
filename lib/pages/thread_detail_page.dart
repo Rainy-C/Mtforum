@@ -9,9 +9,43 @@ import 'package:url_launcher/url_launcher.dart';
 import '../data/smiley_catalog.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../widgets/app_state_view.dart';
 import '../widgets/user_level_badge.dart';
+import '../routes/forum_link_router.dart';
 import 'account/user_profile_page.dart';
 import 'thread_editor_page.dart';
+
+Future<void> _openPostLink(BuildContext context, String rawUrl) async {
+  final target = resolveForumLink(rawUrl);
+
+  switch (target.kind) {
+    case ForumLinkKind.thread:
+      if (!context.mounted || target.id == null) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          settings: RouteSettings(name: '/thread/${target.id}'),
+          builder: (_) => ThreadDetailPage(tid: target.id!),
+        ),
+      );
+      return;
+
+    case ForumLinkKind.user:
+      if (!context.mounted || target.id == null) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          settings: RouteSettings(name: '/user/${target.id}'),
+          builder: (_) => UserProfilePage(uid: target.id!),
+        ),
+      );
+      return;
+
+    case ForumLinkKind.external:
+      final uri = Uri.tryParse(target.url);
+      if (uri == null) return;
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return;
+  }
+}
 
 class ThreadDetailPage extends StatefulWidget {
   final String tid;
@@ -37,7 +71,6 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
     _loadData();
   }
 
@@ -45,14 +78,6 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   void dispose() {
     _scrollController.dispose();
     super.dispose();
-  }
-
-  void _onScroll() {
-    if (_detail == null || _loadingMore || !_hasMore) return;
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 260) {
-      _loadMore();
-    }
   }
 
   Future<void> _loadData() async {
@@ -70,7 +95,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         _hasMore = detail.posts.isNotEmpty;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = '加载失败：$e');
+      if (mounted) {
+        final message = e is StateError ? e.message : '加载失败：$e';
+        setState(() => _error = message);
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -98,6 +126,44 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
+  }
+
+  Future<void> _showComments() async {
+    final detail = _detail;
+    if (detail == null || detail.posts.isEmpty) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (_) => _CommentsSheet(
+        detail: detail,
+        hasMore: () => _hasMore,
+        isLoadingMore: () => _loadingMore,
+        onLoadMore: _loadMore,
+        onRefresh: _refreshCommentsInPlace,
+        canEdit: _canEdit,
+        onEdit: _editPost,
+        onImageTap: (post, index) => _openImages(post.images, index),
+      ),
+    );
+  }
+
+  Future<void> _refreshCommentsInPlace() async {
+    final current = _detail;
+    if (current == null) return;
+
+    final refreshed = await _api.getThreadDetail(widget.tid, page: 1);
+    if (!mounted) return;
+
+    setState(() {
+      current.posts
+        ..clear()
+        ..addAll(refreshed.posts);
+      _page = 1;
+      _hasMore = refreshed.posts.isNotEmpty;
+    });
   }
 
   void _showReply({Post? post}) {
@@ -204,6 +270,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     return Scaffold(
       body: CustomScrollView(
         controller: _scrollController,
+        cacheExtent: 800,
         slivers: [
           SliverAppBar(
             pinned: true,
@@ -213,6 +280,24 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
               overflow: TextOverflow.ellipsis,
             ),
             actions: [
+              if (detail != null)
+                IconButton(
+                  tooltip: _liked ? '取消点赞' : '点赞',
+                  onPressed: _toggleLike,
+                  icon: Icon(
+                    _liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined,
+                  ),
+                ),
+              if (detail != null)
+                IconButton(
+                  tooltip: _favorited ? '取消收藏' : '收藏',
+                  onPressed: _toggleFavorite,
+                  icon: Icon(
+                    _favorited
+                        ? Icons.bookmark_rounded
+                        : Icons.bookmark_border_rounded,
+                  ),
+                ),
               IconButton(
                 tooltip: '刷新',
                 onPressed: _loading ? null : _loadData,
@@ -222,123 +307,609 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           ),
           if (_loading && detail == null)
             const SliverFillRemaining(
-              child: Center(child: CircularProgressIndicator()),
+              child: AppStateView.loading(),
             )
           else if (_error != null && detail == null)
             SliverFillRemaining(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_error!, textAlign: TextAlign.center),
-                      const SizedBox(height: 14),
-                      FilledButton(onPressed: _loadData, child: const Text('重试')),
-                    ],
-                  ),
-                ),
+              child: AppStateView.error(
+                message: _error!,
+                onRetry: _loadData,
               ),
             )
           else if (detail != null && detail.posts.isEmpty)
             SliverFillRemaining(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.article_outlined, size: 44),
-                    const SizedBox(height: 12),
-                    const Text('没有解析到楼层内容'),
-                    const SizedBox(height: 12),
-                    FilledButton(onPressed: _loadData, child: const Text('重新加载')),
-                  ],
-                ),
+              child: AppStateView.error(
+                message: '没有解析到楼层内容',
+                onRetry: _loadData,
               ),
             )
           else if (detail != null)
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 90),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
               sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    if (index == detail.posts.length) {
-                      if (_loadingMore) {
-                        return const Padding(
-                          padding: EdgeInsets.all(18),
-                          child: Center(child: CircularProgressIndicator()),
-                        );
-                      }
-                      if (!_hasMore) {
-                        return Padding(
-                          padding: const EdgeInsets.all(18),
-                          child: Center(
-                            child: Text(
-                              '没有更多了',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                        );
-                      }
-                      return const SizedBox.shrink();
-                    }
-
-                    final post = detail.posts[index];
-                    return _PostCard(
-                      post: post,
-                      onReply: () => _showReply(post: post),
-                      onEdit: _canEdit(post) ? () => _editPost(post) : null,
-                      onImageTap: (imageIndex) =>
-                          _openImages(post.images, imageIndex),
-                    );
-                  },
-                  childCount: detail.posts.length + 1,
-                ),
+                delegate: SliverChildListDelegate([
+                  Builder(
+                    builder: (context) {
+                      final op = _threadOp(detail);
+                      return RepaintBoundary(
+                        child: _PostCard(
+                          post: op,
+                          onReply: () => _showReply(post: op),
+                          onEdit: _canEdit(op) ? () => _editPost(op) : null,
+                          onImageTap: (imageIndex) =>
+                              _openImages(op.images, imageIndex),
+                        ),
+                      );
+                    },
+                  ),
+                ]),
               ),
             ),
         ],
       ),
-      bottomNavigationBar: detail == null
+      floatingActionButton: detail == null
           ? null
-          : SafeArea(
-              top: false,
-              child: Material(
-                color: Theme.of(context).colorScheme.surface,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 6, 10, 8),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        onPressed: _toggleLike,
-                        icon: Icon(
-                          _liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined,
-                        ),
+          : FloatingActionButton.extended(
+              heroTag: 'thread-comments-${widget.tid}',
+              onPressed: _showComments,
+              icon: const Icon(Icons.forum_rounded),
+              label: const Text('评论区'),
+            ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+    );
+  }
+}
+
+Post _threadOp(ThreadDetail detail) {
+  for (final post in detail.posts) {
+    if (post.isOp) return post;
+  }
+  return detail.posts.first;
+}
+
+List<Post> _threadComments(ThreadDetail detail) {
+  if (detail.posts.isEmpty) return const <Post>[];
+  final opPid = _threadOp(detail).pid;
+  return detail.posts
+      .where((post) => post.pid != opPid)
+      .toList(growable: false);
+}
+
+class _CommentsSheet extends StatefulWidget {
+  final ThreadDetail detail;
+  final bool Function() hasMore;
+  final bool Function() isLoadingMore;
+  final Future<void> Function() onLoadMore;
+  final Future<void> Function() onRefresh;
+  final bool Function(Post post) canEdit;
+  final ValueChanged<Post> onEdit;
+  final void Function(Post post, int index) onImageTap;
+
+  const _CommentsSheet({
+    required this.detail,
+    required this.hasMore,
+    required this.isLoadingMore,
+    required this.onLoadMore,
+    required this.onRefresh,
+    required this.canEdit,
+    required this.onEdit,
+    required this.onImageTap,
+  });
+
+  @override
+  State<_CommentsSheet> createState() => _CommentsSheetState();
+}
+
+class _CommentsSheetState extends State<_CommentsSheet> {
+  final _scrollController = ScrollController();
+  final _composerController = _SmileyEditingController();
+  final _composerFocusNode = FocusNode();
+
+  bool _requesting = false;
+  bool _sending = false;
+  bool _showSmileys = false;
+  Post? _replyTarget;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+    _composerController.addListener(_onComposerChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_comments.isEmpty && widget.hasMore()) {
+        _loadNext();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _composerController.removeListener(_onComposerChanged);
+    _scrollController.dispose();
+    _composerController.dispose();
+    _composerFocusNode.dispose();
+    super.dispose();
+  }
+
+  List<Post> get _comments => _threadComments(widget.detail);
+
+  void _onComposerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients ||
+        _scrollController.position.extentAfter > 260) {
+      return;
+    }
+    _loadNext();
+  }
+
+  Future<void> _loadNext() async {
+    if (_requesting || widget.isLoadingMore() || !widget.hasMore()) return;
+    setState(() => _requesting = true);
+    await widget.onLoadMore();
+    if (!mounted) return;
+    setState(() => _requesting = false);
+  }
+
+  void _ensureLogin() {
+    if (ApiService.instance.isLoggedIn) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('请先登录后再评论')),
+    );
+  }
+
+  void _startReply(Post post) {
+    if (!ApiService.instance.isLoggedIn) {
+      _ensureLogin();
+      return;
+    }
+    setState(() {
+      _replyTarget = post;
+      _showSmileys = false;
+    });
+    _composerFocusNode.requestFocus();
+  }
+
+  void _cancelReply() {
+    setState(() => _replyTarget = null);
+  }
+
+  void _toggleSmileys() {
+    if (!ApiService.instance.isLoggedIn) {
+      _ensureLogin();
+      return;
+    }
+    if (_showSmileys) {
+      setState(() => _showSmileys = false);
+      _composerFocusNode.requestFocus();
+      return;
+    }
+    _composerFocusNode.unfocus();
+    setState(() => _showSmileys = true);
+  }
+
+  void _hideSmileysForKeyboard() {
+    if (!ApiService.instance.isLoggedIn) {
+      _ensureLogin();
+      return;
+    }
+    if (_showSmileys) setState(() => _showSmileys = false);
+  }
+
+  void _insertSmiley(String url) {
+    final marker = SmileyCatalog.markerForUrl(url);
+    if (marker == null) return;
+
+    final value = _composerController.value;
+    final selection = value.selection;
+    final hasSelection = selection.isValid &&
+        selection.start >= 0 &&
+        selection.end >= 0;
+    final start = hasSelection ? selection.start : value.text.length;
+    final end = hasSelection ? selection.end : start;
+    final nextText = value.text.replaceRange(start, end, marker);
+    final nextOffset = start + marker.length;
+
+    _composerController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextOffset),
+      composing: TextRange.empty,
+    );
+  }
+
+  Future<void> _sendComment() async {
+    if (_sending) return;
+    if (!ApiService.instance.isLoggedIn) {
+      _ensureLogin();
+      return;
+    }
+
+    final editorValue = _composerController.text.trim();
+    if (editorValue.isEmpty) return;
+    final message = SmileyCatalog.toForumBbCode(editorValue).trim();
+    if (message.isEmpty) return;
+
+    setState(() => _sending = true);
+    try {
+      final target = _replyTarget;
+      final result = await ApiService.instance.replyThread(
+        tid: widget.detail.tid,
+        fid: widget.detail.fid,
+        noticeauthor: widget.detail.noticeauthor,
+        message: message,
+        repquotePid: target?.pid,
+      );
+
+      if (!mounted) return;
+      if (!result.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.message)),
+        );
+        return;
+      }
+
+      _composerController.clear();
+      setState(() {
+        _replyTarget = null;
+        _showSmileys = false;
+      });
+      _composerFocusNode.unfocus();
+
+      try {
+        await widget.onRefresh();
+      } catch (_) {
+        // 回复已成功时，刷新失败不应把发送结果判成失败。
+      }
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('评论成功')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('评论失败：$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final media = MediaQuery.of(context);
+    final comments = _comments;
+    final loading = _requesting || widget.isLoadingMore();
+    final hasMore = widget.hasMore();
+    final loggedIn = ApiService.instance.isLoggedIn;
+    final canSend = loggedIn &&
+        !_sending &&
+        _composerController.text.trim().isNotEmpty;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
+      child: FractionallySizedBox(
+        heightFactor: 0.92,
+        child: Material(
+          color: colors.surface,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 8, 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: colors.secondaryContainer,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      IconButton(
-                        onPressed: _toggleFavorite,
-                        icon: Icon(
-                          _favorited
-                              ? Icons.bookmark_rounded
-                              : Icons.bookmark_border_rounded,
-                        ),
+                      child: Icon(
+                        Icons.forum_rounded,
+                        color: colors.onSecondaryContainer,
+                        size: 20,
                       ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: FilledButton.tonalIcon(
-                          onPressed: () => _showReply(),
-                          icon: const Icon(Icons.edit_outlined, size: 18),
-                          label: const Text('写回复…'),
-                          style: FilledButton.styleFrom(
-                            alignment: Alignment.centerLeft,
-                            minimumSize: const Size(0, 48),
-                            maximumSize: const Size(double.infinity, 48),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '评论区',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
-                        ),
+                          Text(
+                            comments.isEmpty
+                                ? '暂无已加载评论'
+                                : '已加载 ${comments.length} 条',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.outline,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    IconButton(
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
                 ),
               ),
+              Divider(color: colors.outlineVariant, height: 1),
+              Expanded(
+                child: comments.isEmpty && !loading && !hasMore
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.chat_bubble_outline_rounded,
+                              size: 42,
+                              color: colors.outline,
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              '还没有评论',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: colors.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '来发表第一条评论吧',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colors.outline,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scrollController,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+                        itemCount: comments.length + 1,
+                        itemBuilder: (context, index) {
+                          if (index == comments.length) {
+                            if (loading) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 18),
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              );
+                            }
+                            if (hasMore) {
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                child: Center(
+                                  child: FilledButton.tonalIcon(
+                                    onPressed: _loadNext,
+                                    icon: const Icon(Icons.expand_more_rounded),
+                                    label: const Text('加载更多评论'),
+                                  ),
+                                ),
+                              );
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              child: Center(
+                                child: Text(
+                                  '没有更多评论了',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colors.outline,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+
+                          final post = comments[index];
+                          return RepaintBoundary(
+                            child: _PostCard(
+                              post: post,
+                              onReply: () => _startReply(post),
+                              onEdit: widget.canEdit(post)
+                                  ? () {
+                                      Navigator.pop(context);
+                                      Future.microtask(() => widget.onEdit(post));
+                                    }
+                                  : null,
+                              onImageTap: (imageIndex) =>
+                                  widget.onImageTap(post, imageIndex),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              _CommentComposer(
+                controller: _composerController,
+                focusNode: _composerFocusNode,
+                loggedIn: loggedIn,
+                sending: _sending,
+                canSend: canSend,
+                showSmileys: _showSmileys,
+                replyTargetName: _replyTarget?.authorName,
+                onTapInput: _hideSmileysForKeyboard,
+                onToggleSmileys: _toggleSmileys,
+                onCancelReply: _cancelReply,
+                onSend: _sendComment,
+                onSmileySelected: _insertSmiley,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CommentComposer extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool loggedIn;
+  final bool sending;
+  final bool canSend;
+  final bool showSmileys;
+  final String? replyTargetName;
+  final VoidCallback onTapInput;
+  final VoidCallback onToggleSmileys;
+  final VoidCallback onCancelReply;
+  final VoidCallback onSend;
+  final ValueChanged<String> onSmileySelected;
+
+  const _CommentComposer({
+    required this.controller,
+    required this.focusNode,
+    required this.loggedIn,
+    required this.sending,
+    required this.canSend,
+    required this.showSmileys,
+    required this.replyTargetName,
+    required this.onTapInput,
+    required this.onToggleSmileys,
+    required this.onCancelReply,
+    required this.onSend,
+    required this.onSmileySelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Material(
+      color: colors.surfaceContainerLow,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: colors.outlineVariant),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (replyTargetName?.trim().isNotEmpty == true)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 0, 2, 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.reply_rounded,
+                      size: 16,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '回复 @$replyTargetName',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '取消回复',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onCancelReply,
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                    ),
+                  ],
+                ),
+              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                IconButton(
+                  tooltip: '表情',
+                  isSelected: showSmileys,
+                  onPressed: loggedIn ? onToggleSmileys : null,
+                  icon: Icon(
+                    showSmileys
+                        ? Icons.keyboard_rounded
+                        : Icons.sentiment_satisfied_alt_rounded,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    readOnly: !loggedIn,
+                    minLines: 1,
+                    maxLines: 5,
+                    textInputAction: TextInputAction.newline,
+                    onTap: onTapInput,
+                    decoration: InputDecoration(
+                      hintText: loggedIn
+                          ? (replyTargetName?.trim().isNotEmpty == true
+                              ? '回复 @$replyTargetName…'
+                              : '写下你的评论…')
+                          : '登录后参与评论',
+                      filled: true,
+                      fillColor: colors.surfaceContainerHighest,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 11,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  tooltip: '发送',
+                  onPressed: canSend ? onSend : null,
+                  icon: sending
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.send_rounded),
+                ),
+              ],
             ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              child: showSmileys
+                  ? Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: SizedBox(
+                        height: 220,
+                        child: _SmileyPicker(
+                          onSelected: onSmileySelected,
+                        ),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -361,6 +932,14 @@ class _PostCard extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final content = post.content.trim();
+    final richImageUrls = post.richContent
+        .where((item) => item.type == PostContentType.image)
+        .map((item) => item.url)
+        .whereType<String>()
+        .toSet();
+    final detachedImages = post.images
+        .where((url) => !richImageUrls.contains(url))
+        .toList(growable: false);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -523,12 +1102,17 @@ class _PostCard extends StatelessWidget {
                 ),
               ),
             ],
-            if (post.images.isNotEmpty &&
-                !post.richContent.any(
-                  (item) => item.type == PostContentType.image,
-                )) ...[
+            if (detachedImages.isNotEmpty) ...[
               const SizedBox(height: 10),
-              _PostImages(images: post.images, onTap: onImageTap),
+              _PostImages(
+                images: detachedImages,
+                onTap: (index) {
+                  final originalIndex = post.images.indexOf(detachedImages[index]);
+                  if (originalIndex >= 0) {
+                    onImageTap(originalIndex);
+                  }
+                },
+              ),
             ],
             if (!post.isOp || onEdit != null) ...[
               const SizedBox(height: 2),
@@ -617,16 +1201,8 @@ class _RichContentView extends StatelessWidget {
     this.onImageTap,
   });
 
-  Future<void> _openUrl(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) {
-      return;
-    }
-
-    await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+  Future<void> _openUrl(BuildContext context, String url) async {
+    await _openPostLink(context, url);
   }
 
   @override
@@ -720,6 +1296,32 @@ class _RichContentView extends StatelessWidget {
             ),
           );
 
+        case PostContentType.richQuote:
+          flushInline();
+          if (content.children.isEmpty) {
+            break;
+          }
+          widgets.add(
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(10),
+                border: Border(
+                  left: BorderSide(
+                    color: colors.primary,
+                    width: 3,
+                  ),
+                ),
+              ),
+              child: _InlineRichText(
+                contents: content.children,
+              ),
+            ),
+          );
+
         case PostContentType.code:
           flushInline();
           widgets.add(
@@ -760,6 +1362,29 @@ class _RichContentView extends StatelessWidget {
             ),
           );
 
+        case PostContentType.attachment:
+          flushInline();
+          widgets.add(
+            _AttachmentCard(
+              name: content.text.trim().isEmpty ? '附件' : content.text.trim(),
+              url: content.url,
+              onOpen: content.url == null || content.url!.isEmpty
+                  ? null
+                  : () => _openUrl(context, content.url!),
+            ),
+          );
+
+        case PostContentType.table:
+          flushInline();
+          if (content.tableRows.isNotEmpty) {
+            widgets.add(
+              _TableBlock(
+                rows: content.tableRows,
+                headerRows: content.tableHeaderRows,
+              ),
+            );
+          }
+
         case PostContentType.audio:
           flushInline();
           if (content.url != null) {
@@ -769,7 +1394,7 @@ class _RichContentView extends StatelessWidget {
                 title: '音频',
                 subtitle: content.url!,
                 actionLabel: '播放',
-                onTap: () => _openUrl(content.url!),
+                onTap: () => _openUrl(context, content.url!),
               ),
             );
           }
@@ -783,7 +1408,7 @@ class _RichContentView extends StatelessWidget {
                 title: '视频',
                 subtitle: content.url!,
                 actionLabel: '播放',
-                onTap: () => _openUrl(content.url!),
+                onTap: () => _openUrl(context, content.url!),
               ),
             );
           }
@@ -797,7 +1422,7 @@ class _RichContentView extends StatelessWidget {
                 title: 'Flash 内容',
                 subtitle: 'Android 已不原生支持 Flash · 点击尝试外部打开',
                 actionLabel: '打开',
-                onTap: () => _openUrl(content.url!),
+                onTap: () => _openUrl(context, content.url!),
               ),
             );
           }
@@ -806,9 +1431,13 @@ class _RichContentView extends StatelessWidget {
 
     flushInline();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: widgets,
+    // 让整段帖子正文进入同一个选择区域，普通文字、引用、链接前后
+    // 的内容都可以长按框选/复制；图片和链接点击行为保持不变。
+    return SelectionArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: widgets,
+      ),
     );
   }
 }
@@ -841,20 +1470,30 @@ class _InlineRichTextState extends State<_InlineRichText> {
   }
 
   Future<void> _openUrl(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) {
-      return;
-    }
+    await _openPostLink(context, url);
+  }
 
-    await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+  @override
+  void didUpdateWidget(_InlineRichText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 只在内容真正变化时才重建手势识别器，避免每次 build 都 dispose+重建导致闪烁。
+    if (!_sameContents(oldWidget.contents, widget.contents)) {
+      _disposeRecognizers();
+    }
+  }
+
+  bool _sameContents(List<PostContent> a, List<PostContent> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].type != b[i].type || a[i].text != b[i].text || a[i].url != b[i].url) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @override
   Widget build(BuildContext context) {
-    _disposeRecognizers();
 
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -934,13 +1573,13 @@ class _InlineRichTextState extends State<_InlineRichText> {
       }
     }
 
-    return SelectionArea(
-      child: RichText(
-        text: TextSpan(
-          style: baseStyle,
-          children: spans,
-        ),
+    return RichText(
+      text: TextSpan(
+        style: baseStyle,
+        children: spans,
       ),
+      selectionRegistrar: SelectionContainer.maybeOf(context),
+      selectionColor: colors.primary.withValues(alpha: 0.24),
     );
   }
 }
@@ -1094,10 +1733,12 @@ class _CodeSyntax {
 
     if (RegExp(
       r'(^|\n)\s*#!\s*/(?:usr/)?bin/(?:ba)?sh\b'
+      r'|(^|\n)\s*(?:git\s+clone|npx|npm|pnpm|yarn|curl|wget|adb|fastboot|flutter|dart|python(?:3)?|pip(?:3)?|docker|cargo|gradle|\.\/gradlew)\b'
       r'|\b(?:apt|apk|yum|dnf|pacman)\s+(?:install|update)\b'
       r'|\bexport\s+[A-Za-z_][A-Za-z0-9_]*='
       r'|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?',
       multiLine: true,
+      caseSensitive: false,
     ).hasMatch(text)) {
       return _shell;
     }
@@ -1466,6 +2107,196 @@ class _CodeSyntax {
       default:
         return const <String>{};
     }
+  }
+}
+
+class _AttachmentCard extends StatelessWidget {
+  final String name;
+  final String? url;
+  final VoidCallback? onOpen;
+
+  const _AttachmentCard({
+    required this.name,
+    required this.url,
+    required this.onOpen,
+  });
+
+  IconData _iconForName(String value) {
+    final lower = value.toLowerCase();
+    if (RegExp(r'\.(?:zip|rar|7z|tar|gz|xz)$').hasMatch(lower)) {
+      return Icons.folder_zip_outlined;
+    }
+    if (RegExp(r'\.(?:apk|apks|xapk)$').hasMatch(lower)) {
+      return Icons.android_rounded;
+    }
+    if (RegExp(r'\.(?:txt|md|log|json|xml|yaml|yml|ini|conf)$')
+        .hasMatch(lower)) {
+      return Icons.description_outlined;
+    }
+    if (RegExp(r'\.(?:pdf)$').hasMatch(lower)) {
+      return Icons.picture_as_pdf_outlined;
+    }
+    return Icons.attach_file_rounded;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: colors.primaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              _iconForName(name),
+              size: 21,
+              color: colors.onPrimaryContainer,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(
+                  name,
+                  maxLines: 2,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (url != null && url!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '论坛附件',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: colors.outline,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          IconButton.filledTonal(
+            tooltip: onOpen == null ? '附件地址不可用' : '打开附件',
+            onPressed: onOpen,
+            icon: const Icon(Icons.open_in_new_rounded, size: 19),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TableBlock extends StatelessWidget {
+  final List<List<String>> rows;
+  final int headerRows;
+
+  const _TableBlock({
+    required this.rows,
+    required this.headerRows,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final columnCount = rows.fold<int>(
+      0,
+      (max, row) => row.length > max ? row.length : max,
+    );
+    if (columnCount == 0) {
+      return const SizedBox.shrink();
+    }
+
+    final normalizedRows = rows
+        .map(
+          (row) => List<String>.generate(
+            columnCount,
+            (index) => index < row.length ? row[index] : '',
+          ),
+        )
+        .toList(growable: false);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Table(
+          defaultColumnWidth: const IntrinsicColumnWidth(),
+          border: TableBorder.all(
+            color: colors.outlineVariant,
+            width: 1,
+          ),
+          children: [
+            for (var rowIndex = 0;
+                rowIndex < normalizedRows.length;
+                rowIndex++)
+              TableRow(
+                decoration: BoxDecoration(
+                  color: rowIndex < headerRows
+                      ? colors.primaryContainer.withValues(alpha: 0.55)
+                      : (rowIndex.isOdd
+                          ? colors.surfaceContainerHighest
+                              .withValues(alpha: 0.42)
+                          : colors.surfaceContainerLow),
+                ),
+                children: [
+                  for (final cell in normalizedRows[rowIndex])
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        minWidth: 84,
+                        maxWidth: 280,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 11,
+                          vertical: 9,
+                        ),
+                        child: SelectableText(
+                          cell,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            height: 1.45,
+                            fontWeight: rowIndex < headerRows
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                            color: rowIndex < headerRows
+                                ? colors.onPrimaryContainer
+                                : colors.onSurface,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -1880,8 +2711,8 @@ class _ReplySheetState extends State<_ReplySheet> {
                   TextField(
                     controller: _controller,
                     focusNode: _focusNode,
-                    minLines: 3,
-                    maxLines: 6,
+                    minLines: 1,
+                    maxLines: 8,
                     autofocus: true,
                     onTap: _hideSmileysForKeyboard,
                     decoration: InputDecoration(

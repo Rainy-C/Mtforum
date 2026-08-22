@@ -5,6 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../widgets/app_state_view.dart';
 
 class PromotionPage extends StatefulWidget {
   const PromotionPage({super.key});
@@ -71,11 +72,11 @@ class _PromotionPageState extends State<PromotionPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : _error != null
-              ? Center(child: Text(_error!))
+              ? AppStateView.error(message: _error!, onRetry: _load)
               : ListView(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                   children: [
                     Material(
                       color: colors.surfaceContainerLow,

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-/// MTForum 视觉体系
+/// MTForum 统一视觉体系。
 ///
-/// 重点不是增加更多颜色，而是把 Material 3 的 surface 层级真正拉开：
-/// scaffold < card < secondary surface < selected / action。
+/// 统一卡片、输入框、Chip、BottomSheet、按钮、加载状态和页面过渡，
+/// 页面本身只负责信息层级，不再各自定义一套视觉参数。
 class AppTheme {
   static const Color seedColor = Color(0xFF3F67B1);
 
@@ -53,12 +53,29 @@ class AppTheme {
           isDark ? const Color(0xFF6A2424) : const Color(0xFFFFDAD6),
     );
 
+    final fieldBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(
+        color: scheme.outlineVariant.withValues(alpha: 0.86),
+      ),
+    );
+
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: scheme.surface,
       canvasColor: scheme.surface,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: _MTPageTransitionsBuilder(),
+          TargetPlatform.iOS: _MTPageTransitionsBuilder(),
+          TargetPlatform.linux: _MTPageTransitionsBuilder(),
+          TargetPlatform.macOS: _MTPageTransitionsBuilder(),
+          TargetPlatform.windows: _MTPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: _MTPageTransitionsBuilder(),
+        },
+      ),
 
       appBarTheme: AppBarTheme(
         centerTitle: true,
@@ -67,6 +84,11 @@ class AppTheme {
         backgroundColor: scheme.surface,
         foregroundColor: scheme.onSurface,
         surfaceTintColor: Colors.transparent,
+        titleTextStyle: TextStyle(
+          color: scheme.onSurface,
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+        ),
       ),
 
       cardTheme: CardThemeData(
@@ -74,68 +96,79 @@ class AppTheme {
         color: scheme.surfaceContainerLow,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           side: BorderSide(
-            color: scheme.outlineVariant.withValues(alpha: isDark ? 0.72 : 0.80),
+            color: scheme.outlineVariant.withValues(alpha: isDark ? 0.68 : 0.72),
           ),
         ),
         margin: EdgeInsets.zero,
       ),
 
       listTileTheme: ListTileThemeData(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        minVerticalPadding: 8,
         iconColor: scheme.onSurfaceVariant,
         textColor: scheme.onSurface,
-        subtitleTextStyle: TextStyle(color: scheme.outline),
+        subtitleTextStyle: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
 
       dividerTheme: DividerThemeData(
         space: 1,
         thickness: 1,
-        color: scheme.outlineVariant.withValues(alpha: 0.72),
+        color: scheme.outlineVariant.withValues(alpha: 0.68),
       ),
 
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: scheme.surfaceContainerHigh,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(13),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(13),
+        fillColor: scheme.surfaceContainerLow,
+        border: fieldBorder,
+        enabledBorder: fieldBorder,
+        disabledBorder: fieldBorder.copyWith(
           borderSide: BorderSide(
-            color: scheme.outlineVariant.withValues(alpha: 0.85),
+            color: scheme.outlineVariant.withValues(alpha: 0.45),
           ),
         ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(13),
-          borderSide: BorderSide(color: scheme.primary, width: 1.4),
+        focusedBorder: fieldBorder.copyWith(
+          borderSide: BorderSide(color: scheme.primary, width: 1.5),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        errorBorder: fieldBorder.copyWith(
+          borderSide: BorderSide(color: scheme.error),
+        ),
+        focusedErrorBorder: fieldBorder.copyWith(
+          borderSide: BorderSide(color: scheme.error, width: 1.5),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        alignLabelWithHint: true,
+      ),
+
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: scheme.primary,
+        selectionColor: scheme.primary.withValues(alpha: 0.22),
+        selectionHandleColor: scheme.primary,
       ),
 
       searchBarTheme: SearchBarThemeData(
-        backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHigh),
+        backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerLow),
         surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
         elevation: const WidgetStatePropertyAll(0),
         side: WidgetStatePropertyAll(
-          BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.90)),
+          BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.82)),
         ),
         shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         ),
       ),
 
       navigationBarTheme: NavigationBarThemeData(
-        height: 72,
+        height: 70,
         elevation: 0,
         backgroundColor: scheme.surfaceContainerLow,
         indicatorColor: scheme.primaryContainer,
         surfaceTintColor: Colors.transparent,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         indicatorShape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(15),
         ),
         iconTheme: WidgetStateProperty.resolveWith((states) {
           return IconThemeData(
@@ -158,34 +191,150 @@ class AppTheme {
       ),
 
       tabBarTheme: TabBarThemeData(
-        dividerColor: scheme.outlineVariant,
+        dividerColor: scheme.outlineVariant.withValues(alpha: 0.65),
         indicatorColor: scheme.primary,
         labelColor: scheme.primary,
         unselectedLabelColor: scheme.onSurfaceVariant,
         labelStyle: const TextStyle(fontWeight: FontWeight.w700),
         unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
+        overlayColor: WidgetStatePropertyAll(
+          scheme.primary.withValues(alpha: 0.06),
+        ),
       ),
 
       chipTheme: ChipThemeData(
-        backgroundColor: scheme.surfaceContainerHigh,
+        backgroundColor: scheme.surfaceContainerLow,
         selectedColor: scheme.primaryContainer,
-        side: BorderSide(color: scheme.outlineVariant),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+        disabledColor: scheme.surfaceContainer,
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.82)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+        secondaryLabelStyle: TextStyle(
+          color: scheme.onPrimaryContainer,
+          fontWeight: FontWeight.w700,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       ),
 
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size(44, 44),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+          minimumSize: const Size(44, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(44, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size(40, 40)),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+      ),
+
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        elevation: 2,
+        focusElevation: 2,
+        hoverElevation: 3,
+        highlightElevation: 3,
+        backgroundColor: scheme.primaryContainer,
+        foregroundColor: scheme.onPrimaryContainer,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      ),
+
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: scheme.surfaceContainerLow,
+        surfaceTintColor: Colors.transparent,
+        showDragHandle: true,
+        dragHandleColor: scheme.outlineVariant,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+      ),
+
+      dialogTheme: DialogThemeData(
+        elevation: 0,
+        backgroundColor: scheme.surfaceContainerLow,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      ),
+
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: scheme.primary,
+        linearTrackColor: scheme.surfaceContainerHighest,
+        circularTrackColor: scheme.surfaceContainerHighest,
       ),
 
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
         backgroundColor: scheme.inverseSurface,
         contentTextStyle: TextStyle(color: scheme.onInverseSurface),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      ),
+    );
+  }
+}
+
+/// 全局页面切换：纯横向层级动画。
+///
+/// 新页面从右侧完整推入；返回时严格反向滑出。底层页面仅做轻微视差，
+/// 不叠加透明度、缩放或额外位移，避免返回时出现“飘一下”的感觉。
+class _MTPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _MTPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    // 进入使用减速曲线，返回使用对应的加速曲线。
+    // reverse 继续使用 easeOut 会导致返回时起步发黏、收尾突然。
+    final primary = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    final secondary = CurvedAnimation(
+      parent: secondaryAnimation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+
+    final incoming = Tween<Offset>(
+      begin: const Offset(1, 0),
+      end: Offset.zero,
+    ).animate(primary);
+    final background = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(-0.06, 0),
+    ).animate(secondary);
+
+    return RepaintBoundary(
+      child: SlideTransition(
+        position: background,
+        transformHitTests: false,
+        child: SlideTransition(
+          position: incoming,
+          transformHitTests: false,
+          child: child,
+        ),
       ),
     );
   }

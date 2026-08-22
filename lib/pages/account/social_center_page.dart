@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../widgets/app_state_view.dart';
 import 'user_profile_page.dart';
 
 class SocialCenterPage extends StatefulWidget {
@@ -71,7 +72,11 @@ class _SocialCenterPageState extends State<SocialCenterPage> {
         body: TabBarView(
           children: [
             _SocialList(type: 'friend', uid: _uid!),
-            _SocialList(type: 'following', uid: _uid!),
+            _SocialList(
+              type: 'following',
+              uid: _uid!,
+              allowUnfollow: true,
+            ),
             _SocialList(type: 'follower', uid: _uid!, canFollow: true),
             _SocialList(type: 'visitor', uid: _uid!, canFollow: true),
             _SocialList(type: 'trace', uid: _uid!, canFollow: true),
@@ -84,15 +89,47 @@ class _SocialCenterPageState extends State<SocialCenterPage> {
   }
 }
 
+class SocialUsersPage extends StatelessWidget {
+  final String type;
+  final String uid;
+  final String title;
+  final bool canFollow;
+  final bool allowUnfollow;
+
+  const SocialUsersPage({
+    super.key,
+    required this.type,
+    required this.uid,
+    required this.title,
+    this.canFollow = false,
+    this.allowUnfollow = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: _SocialList(
+        type: type,
+        uid: uid,
+        canFollow: canFollow,
+        allowUnfollow: allowUnfollow,
+      ),
+    );
+  }
+}
+
 class _SocialList extends StatefulWidget {
   final String type;
   final String uid;
   final bool canFollow;
+  final bool allowUnfollow;
 
   const _SocialList({
     required this.type,
     required this.uid,
     this.canFollow = false,
+    this.allowUnfollow = false,
   });
 
   @override
@@ -232,6 +269,26 @@ class _SocialListState extends State<_SocialList> {
   }
 
 
+  Future<void> _unblock(SocialUser user) async {
+    if (_followingNow.contains(user.uid)) return;
+
+    setState(() => _followingNow.add(user.uid));
+    final result = await _api.unblockUser(uid: user.uid);
+
+    if (!mounted) return;
+
+    setState(() {
+      _followingNow.remove(user.uid);
+      if (result.success) {
+        _items.removeWhere((item) => item.uid == user.uid);
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.message)),
+    );
+  }
+
   Future<void> _unfollow(SocialUser user) async {
     if (_followingNow.contains(user.uid)) {
       return;
@@ -261,7 +318,7 @@ class _SocialListState extends State<_SocialList> {
     final colors = theme.colorScheme;
 
     if (_loading && _items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppStateView.loading();
     }
 
     return RefreshIndicator(
@@ -269,18 +326,22 @@ class _SocialListState extends State<_SocialList> {
       child: ListView.builder(
         controller: _scroll,
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
         itemCount: _items.isEmpty ? 1 : _items.length + 1,
         itemBuilder: (context, index) {
           if (_items.isEmpty) {
-            return Padding(
-              padding: const EdgeInsets.only(top: 180),
-              child: Center(
-                child: Text(
-                  _error ?? '暂无数据',
-                  style: TextStyle(color: colors.outline),
-                ),
-              ),
+            return SizedBox(
+              height: 360,
+              child: _error != null
+                  ? AppStateView.error(
+                      message: _error!,
+                      onRetry: _reload,
+                    )
+                  : const AppStateView.empty(
+                      icon: Icons.people_outline_rounded,
+                      title: '暂无数据',
+                      message: '这个列表目前没有内容。',
+                    ),
             );
           }
 
@@ -305,7 +366,7 @@ class _SocialListState extends State<_SocialList> {
           final followed = _followedUids.contains(user.uid);
 
           return Card(
-            margin: const EdgeInsets.only(bottom: 7),
+            margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
               leading: CircleAvatar(
                 backgroundImage: user.avatarUrl == null
@@ -325,22 +386,20 @@ class _SocialListState extends State<_SocialList> {
                 overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text('UID ${user.uid}'),
-              trailing: widget.type == 'following'
+              trailing: widget.type == 'blacklist'
                   ? FilledButton.tonal(
-                      onPressed: busy ? null : () => _unfollow(user),
+                      onPressed: busy ? null : () => _unblock(user),
                       child: busy
                           ? const SizedBox(
                               width: 16,
                               height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Text('取消关注'),
+                          : const Text('取消拉黑'),
                     )
-                  : widget.canFollow
+                  : widget.type == 'following' && widget.allowUnfollow
                       ? FilledButton.tonal(
-                          onPressed: busy || followed ? null : () => _follow(user),
+                          onPressed: busy ? null : () => _unfollow(user),
                           child: busy
                               ? const SizedBox(
                                   width: 16,
@@ -349,9 +408,24 @@ class _SocialListState extends State<_SocialList> {
                                     strokeWidth: 2,
                                   ),
                                 )
-                              : Text(followed ? '已关注' : '关注'),
+                              : const Text('取消关注'),
                         )
-                      : const Icon(Icons.chevron_right_rounded),
+                      : widget.canFollow
+                          ? FilledButton.tonal(
+                              onPressed: busy || followed
+                                  ? null
+                                  : () => _follow(user),
+                              child: busy
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Text(followed ? '已关注' : '关注'),
+                            )
+                          : const Icon(Icons.chevron_right_rounded),
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -362,6 +436,18 @@ class _SocialListState extends State<_SocialList> {
           );
         },
       ),
+    );
+  }
+}
+
+class FriendRequestsPage extends StatelessWidget {
+  const FriendRequestsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('好友申请')),
+      body: const _FriendRequestList(),
     );
   }
 }
@@ -432,29 +518,28 @@ class _FriendRequestListState extends State<_FriendRequestList> {
     final colors = Theme.of(context).colorScheme;
 
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppStateView.loading();
     }
 
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
         children: [
           if (_items.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 180),
-              child: Center(
-                child: Text(
-                  '没有新的好友请求',
-                  style: TextStyle(color: colors.outline),
-                ),
+            const SizedBox(
+              height: 360,
+              child: AppStateView.empty(
+                icon: Icons.group_add_outlined,
+                title: '暂无好友申请',
+                message: '目前没有新的好友请求。',
               ),
             )
           else
             for (final item in _items)
               Card(
-                margin: const EdgeInsets.only(bottom: 8),
+                margin: const EdgeInsets.only(bottom: 10),
                 child: ListTile(
                   leading: CircleAvatar(
                     backgroundImage: item.avatarUrl == null

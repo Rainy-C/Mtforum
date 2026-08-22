@@ -315,4 +315,230 @@ class PortalParser {
 
     return Uri.parse(baseUrl).resolve(raw).toString();
   }
+
+  /// 解析论坛会员排行榜（misc.php?mod=ranklist&type=member）。
+  ///
+  /// Comiis 模板会把前三名放在 `.comiis_rankhot` 中，后续名次使用另一套
+  /// 列表 DOM；不同榜单/模板版本的 class 也并不完全一致。这里不再只依赖
+  /// 一个固定 selector，而是查找“位于 rank 容器内、并包含 uid 链接”的
+  /// li/dl/tr 行，再统一解析并按 uid 去重，这样前三名和后续排名都会保留。
+  List<RankItem> parseRanklist(
+    String html, {
+    required String baseUrl,
+  }) {
+    final document = html_parser.parse(html);
+    final result = <RankItem>[];
+    final seenUid = <String>{};
+
+    bool isInsideRankArea(dynamic element) {
+      dynamic current = element;
+      for (var depth = 0; current != null && depth < 8; depth++) {
+        final id = '${current.attributes?['id'] ?? ''}'.toLowerCase();
+        final className = '${current.attributes?['class'] ?? ''}'.toLowerCase();
+        if (id.contains('rank') || className.contains('rank')) {
+          return true;
+        }
+        current = current.parent;
+      }
+      return false;
+    }
+
+    final rows = <dynamic>[];
+    final seenRows = <dynamic>{};
+
+    // 主路径：按 DOM 顺序扫描排行榜区域中的候选行，避免把前三名与普通
+    // 排名拆成两个独立列表后顺序错乱。
+    for (final row in document.querySelectorAll('li, dl, tr')) {
+      if (row.querySelector('a[href*="uid="]') == null) continue;
+      if (!isInsideRankArea(row)) continue;
+      if (seenRows.add(row)) rows.add(row);
+    }
+
+    // 某些精简模板的父容器 class 不包含 rank，保留已知 selector 兜底。
+    if (rows.isEmpty) {
+      for (final selector in const [
+        '.comiis_rankhot li',
+        '.comiis_ranklist_box li',
+        '.comiis_ranklist li',
+        '.comiis_rank_list li',
+        '.ranklist li',
+        '#ranklist li',
+      ]) {
+        for (final row in document.querySelectorAll(selector)) {
+          if (row.querySelector('a[href*="uid="]') == null) continue;
+          if (seenRows.add(row)) rows.add(row);
+        }
+      }
+    }
+
+    for (final row in rows) {
+      final profileAnchors = row.querySelectorAll('a[href*="uid="]');
+      if (profileAnchors.isEmpty) continue;
+
+      String? uid;
+      dynamic profileAnchor;
+      for (final anchor in profileAnchors) {
+        final href = anchor.attributes['href'] ?? '';
+        final parsedUid = RegExp(r'uid=(\d+)').firstMatch(href)?.group(1);
+        if (parsedUid != null && parsedUid.isNotEmpty) {
+          uid = parsedUid;
+          profileAnchor = anchor;
+          break;
+        }
+      }
+      if (uid == null || !seenUid.add(uid)) continue;
+
+      String username = '';
+      for (final selector in const [
+        '.top_user',
+        'h2 a[href*="uid="]',
+        '.user_name a[href*="uid="]',
+        '.user_name',
+        '.name a[href*="uid="]',
+        '.name',
+        'h2 span.vm',
+        'h2 span',
+      ]) {
+        username = _clean(row.querySelector(selector)?.text ?? '');
+        if (username.isNotEmpty) break;
+      }
+      if (username.isEmpty) {
+        // 头像链接通常没有文字，优先从其它 uid 链接寻找可见用户名。
+        for (final anchor in profileAnchors) {
+          final text = _clean(anchor.text);
+          if (text.isNotEmpty) {
+            username = text;
+            profileAnchor = anchor;
+            break;
+          }
+        }
+      }
+      if (username.isEmpty) continue;
+
+      // 排名：图片 alt / data-rank / 可见数字，最后才按解析顺序补位。
+      var rank = int.tryParse(
+            row.querySelector('em img')?.attributes['alt'] ?? '',
+          ) ??
+          int.tryParse(row.attributes['data-rank'] ?? '') ??
+          0;
+      if (rank <= 0) {
+        for (final selector in const [
+          '.rank_num',
+          '.ranknum',
+          '.num',
+          '.order',
+          'em',
+        ]) {
+          final text = _clean(row.querySelector(selector)?.text ?? '');
+          final match = RegExp(r'(\d+)').firstMatch(text);
+          final parsed = int.tryParse(match?.group(1) ?? '');
+          if (parsed != null && parsed > 0) {
+            rank = parsed;
+            break;
+          }
+        }
+      }
+      if (rank <= 0) rank = result.length + 1;
+
+      // 头像：先只认明确的用户头像节点。前三名区域常把奖牌图也放在
+      // `.user_img` 内，不能把 `.user_img img` 的第一张图直接当头像。
+      String? avatarSrc;
+      final preferredAvatar = row.querySelector(
+        'img.top_tximg, '
+        'img[src*="avatar.php"], '
+        'img[data-src*="avatar.php"], '
+        'img[data-original*="avatar.php"]',
+      );
+      if (preferredAvatar != null) {
+        avatarSrc = preferredAvatar.attributes['src'] ??
+            preferredAvatar.attributes['data-src'] ??
+            preferredAvatar.attributes['data-original'];
+      }
+
+      // 第 4 名以后如果模板使用了非 avatar.php 的头像地址，再从普通图片中
+      // 兜底，但必须排除 <em> 中的排名/奖牌图片。前三名若没有明确头像，
+      // 直接按 uid 生成 Discuz 头像地址，避免把奖牌或性别图标当成头像。
+      if ((avatarSrc == null || avatarSrc.trim().isEmpty) && rank > 3) {
+        for (final image in row.querySelectorAll('img')) {
+          dynamic parent = image.parent;
+          var insideRankEm = false;
+          while (parent != null && parent != row) {
+            if (parent.localName == 'em') {
+              insideRankEm = true;
+              break;
+            }
+            parent = parent.parent;
+          }
+          if (insideRankEm) continue;
+          final src = image.attributes['src'] ??
+              image.attributes['data-src'] ??
+              image.attributes['data-original'];
+          if (src != null && src.trim().isNotEmpty) {
+            avatarSrc = src;
+            break;
+          }
+        }
+      }
+
+      final avatarUrl = _absoluteUrl(avatarSrc, baseUrl) ??
+          _absoluteUrl('/uc_server/avatar.php?uid=$uid&size=middle', baseUrl);
+
+      String? gender;
+      final genderEl = row.querySelector('.user_gender, [class*="gender"]');
+      if (genderEl != null) {
+        final cls = genderEl.classes.join(' ').toLowerCase();
+        final text = _clean(genderEl.text);
+        if (cls.contains('girl') || cls.contains('female') || text == '女') {
+          gender = '女';
+        } else if (cls.contains('boy') ||
+            cls.contains('male') ||
+            text == '男') {
+          gender = '男';
+        }
+      }
+
+      String value = '';
+      for (final selector in const [
+        '.user_txt',
+        '.rank_value',
+        '.rankvalue',
+        '.user_value',
+        '.user_num',
+        '.xg1',
+        '.f_d',
+      ]) {
+        final text = _clean(row.querySelector(selector)?.text ?? '');
+        if (text.isNotEmpty && text != username && text != '$rank') {
+          value = text;
+          break;
+        }
+      }
+      if (value.isEmpty) {
+        // 最后从整行文本中移除用户名和纯排名，保留榜单数值/描述。
+        var text = _clean(row.text);
+        text = text.replaceFirst(username, '').trim();
+        text = text.replaceFirst(RegExp('^${RegExp.escape('$rank')}\\s*'), '');
+        value = _clean(text);
+      }
+
+      result.add(RankItem(
+        uid: uid,
+        username: username,
+        avatarUrl: avatarUrl,
+        rank: rank,
+        gender: gender,
+        value: value,
+      ));
+    }
+
+    // 部分模板把后续列表放在前三名之前/之后但 rank 数字本身是准确的。
+    // 只在 rank 唯一且有效时按名次排序，避免模板 DOM 顺序异常。
+    final ranks = result.map((e) => e.rank).toList();
+    if (ranks.length == ranks.toSet().length && ranks.every((e) => e > 0)) {
+      result.sort((a, b) => a.rank.compareTo(b.rank));
+    }
+
+    return result;
+  }
+
 }

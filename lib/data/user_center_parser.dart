@@ -61,8 +61,9 @@ class UserCenterParser {
     final text = _clean(document.body?.text ?? document.documentElement?.text ?? '');
 
     int? numberAfter(String label) {
+      // 冒号可选：真实页面里标签与数值间可能没有冒号（如“<em>信誉</em>100”）。
       final match = RegExp(
-        '${RegExp.escape(label)}\\s*[:：]\\s*(\\d+)',
+        '${RegExp.escape(label)}\\s*[:：]?\\s*(\\d+)',
       ).firstMatch(text);
       return int.tryParse(match?.group(1) ?? '');
     }
@@ -153,6 +154,31 @@ class UserCenterParser {
     );
   }
 
+  /// 当前登录用户的“我的”资料。
+  ///
+  /// 直接复用真实用户主页 DOM 解析，避免“我的”页另写一套简化解析后
+  /// 帖子/回复/好友长期显示 0。UserProfile 中 threads=帖子数、posts=回复数。
+  UserProfile parseCurrentProfile(
+    String raw, {
+    required String uid,
+    required String baseUrl,
+  }) {
+    final space = parseSpaceProfile(raw, uid: uid, baseUrl: baseUrl);
+    return UserProfile(
+      uid: uid,
+      username: space.username,
+      avatarUrl: space.avatarUrl,
+      userGroup: space.userGroup,
+      credits: space.credits,
+      gold: space.gold,
+      threads: space.posts,
+      posts: space.replies,
+      friends: space.friends,
+      regDate: space.registerTime,
+      lastVisit: space.lastVisit,
+    );
+  }
+
   SpaceUserProfile parseSpaceProfile(
     String raw, {
     required String uid,
@@ -177,17 +203,76 @@ class UserCenterParser {
     );
     final pageText = _sanitizeVisibleText(document.body?.text ?? '');
 
+    // 优先用 DOM 精确解析积分区。两种结构：
+    //   未登录: <ul class="pf_l"><li><em>标签</em>值</li></ul>   (标签前, 值后)
+    //   登录态: <div class="comiis_space_profilejf"><ul><li>
+    //           <span class="f_0">值</span>标签</li></ul></div>  (值前, 标签后)
+    final statMap = <String, int>{};
+    for (final li in document.querySelectorAll(
+      '#psts li, .pf_l li, .comiis_psts li, ul.pf_l > li, '
+      '.comiis_space_profilejf li, .comiis_space_jf li',
+    )) {
+      final fullText = _sanitizeVisibleText(li.text);
+      if (fullText.isEmpty) continue;
+
+      // 结构A: <em>标签</em>值 —— 取 em 文本为标签，剩余为值。
+      final em = li.querySelector('em');
+      if (em != null) {
+        final label = _sanitizeVisibleText(em.text);
+        if (label.isNotEmpty) {
+          var valueText = fullText;
+          if (valueText.startsWith(label)) {
+            valueText = valueText.substring(label.length);
+          }
+          valueText = _sanitizeVisibleText(valueText);
+          final numMatch = RegExp(r'(\d+)').firstMatch(valueText);
+          final value = int.tryParse(numMatch?.group(1) ?? '');
+          if (value != null) {
+            statMap[label] = value;
+          }
+          continue;
+        }
+      }
+
+      // 结构B: <span class="f_0">值</span>标签 —— 值在前, 标签在后。
+      final span = li.querySelector('.f_0, span');
+      if (span != null) {
+        final valueText = _sanitizeVisibleText(span.text);
+        final numMatch = RegExp(r'(\d+)').firstMatch(valueText);
+        if (numMatch != null) {
+          final value = int.tryParse(numMatch.group(1) ?? '');
+          if (value != null) {
+            // 标签 = li全文 去掉 span里的数字部分。
+            var label = fullText;
+            final spanText = _sanitizeVisibleText(span.text);
+            if (label.contains(spanText)) {
+              label = label.replaceAll(spanText, '');
+            }
+            label = _sanitizeVisibleText(label);
+            if (label.isNotEmpty) {
+              statMap[label] = value;
+            }
+          }
+        }
+      }
+    }
+
     int? stat(String label) {
+      // 1. DOM 精确匹配优先。
+      final domValue = statMap[label];
+      if (domValue != null) return domValue;
+      // 2. afterLabel（标签后的数字）回退。
       for (final text in <String>[headerText, pageText]) {
-        // 资料明细多数是“积分 4165 / 帖子 94”，优先读标签后的数字，
-        // 避免整页文本压平后把前一个统计值误当成当前字段。
         final afterLabel = RegExp(
           RegExp.escape(label) + r'\s*[:：]?\s*(\d+)',
           caseSensitive: false,
         ).firstMatch(text);
         final labeledValue = int.tryParse(afterLabel?.group(1) ?? '');
         if (labeledValue != null) return labeledValue;
-
+      }
+      // 3. beforeLabel（数字在前，如"110 信誉"）—— 登录态积分区常见格式。
+      //    限定在 headerText 和 profilejf 区域文本，避免误匹配 UID。
+      for (final text in <String>[headerText, pageText]) {
         final beforeLabel = RegExp(
           r'(\d+)\s*' + RegExp.escape(label),
           caseSensitive: false,
@@ -341,7 +426,9 @@ class UserCenterParser {
     final seen = <String>{};
 
     for (final item in document.querySelectorAll('li.b_t')) {
-      final nameLink = item.querySelector('.tit a');
+      final nameLink = item.querySelector(
+        '.tit a, h2 a, h3 a, h4 a, a.top_user',
+      );
       final profileLink = nameLink ??
           item.querySelector(
             '.list01_limg[href*="uid="], '
@@ -409,7 +496,9 @@ class UserCenterParser {
 
       final container = _nearestContainer(anchor);
       final username = _sanitizeUsername(
-        container?.querySelector('.tit a, h4 a, h3 a')?.text ??
+        container?.querySelector(
+              '.tit a, h2 a, h3 a, h4 a, a.top_user',
+            )?.text ??
             anchor.text,
       );
 
@@ -499,6 +588,73 @@ class UserCenterParser {
             ignore?.attributes['href'],
             baseUrl,
           ),
+        ),
+      );
+    }
+
+    return result;
+  }
+
+  List<WallComment> parseWallComments(
+    String raw, {
+    required String baseUrl,
+  }) {
+    final source = _unwrapCdata(raw);
+    final document = html_parser.parse(source);
+    final result = <WallComment>[];
+    final seen = <String>{};
+
+    for (final item in document.querySelectorAll(
+      r'dl[id^="comment_"][id$="_li"], .comiis_plli dl[id^="comment_"]',
+    )) {
+      final cid = RegExp(r'^comment_(\d+)_li$')
+          .firstMatch(item.id)
+          ?.group(1);
+      if (cid == null || !seen.add(cid)) continue;
+
+      final profileLink = item.querySelector(
+        'dt a[href*="mod=space"][href*="uid="], '
+        'dt a[href*="space&uid="], '
+        'a.rzlist_tximg[href*="uid="]',
+      );
+      final href = profileLink?.attributes['href'] ?? '';
+      final uid = RegExp(r'(?:^|[?&])uid=(\d+)')
+              .firstMatch(href)
+              ?.group(1) ??
+          '';
+
+      var username = _sanitizeUsername(
+        item.querySelector('#author_$cid, .top_user')?.text ?? '',
+      );
+      if (username.isEmpty) {
+        username = uid.isEmpty ? '论坛用户' : 'UID $uid';
+      }
+
+      final avatar = item.querySelector(
+        'a.rzlist_tximg img, img.top_tximg, '
+        'img[src*="avatar.php"], img[src*="uc_server"]',
+      );
+      final time = _sanitizeVisibleText(
+        item.querySelector('.top_time')?.text ?? '',
+      );
+      final content = _sanitizeVisibleText(
+        item.querySelector('dd.plface')?.text ?? '',
+      );
+
+      // 没有正文的占位节点不是有效留言。
+      if (content.isEmpty) continue;
+
+      result.add(
+        WallComment(
+          cid: cid,
+          uid: uid,
+          username: username,
+          avatarUrl: _absoluteUrl(
+            avatar?.attributes['src'] ?? avatar?.attributes['data-src'],
+            baseUrl,
+          ),
+          time: time,
+          content: content,
         ),
       );
     }
@@ -643,8 +799,10 @@ class UserCenterParser {
 
     String textFromAttributes(html_dom.Element? element) {
       if (element == null) return '';
+      // 不取 img 的 alt：招呼图标的 alt 通常是缩写字母代码（如“cy”），
+      // 不能作为显示名称。
       for (final name in const [
-        'data-name', 'data-label', 'data-title', 'title', 'alt',
+        'data-name', 'data-label', 'data-title', 'title',
       ]) {
         final value = _sanitizeVisibleText(element.attributes[name] ?? '');
         if (value.isNotEmpty) return value;
@@ -691,12 +849,10 @@ class UserCenterParser {
           row?.querySelector('img') ??
           input.parent?.querySelector('img');
 
-      var label = textFromAttributes(input);
+      // 优先取 label 元素的可见文字（招呼名称，如“打招呼”）。
+      var label = _sanitizeVisibleText(labelElement?.text ?? '');
+      if (label.isEmpty) label = textFromAttributes(input);
       if (label.isEmpty) label = textFromAttributes(labelElement);
-      if (label.isEmpty) label = textFromAttributes(image);
-      if (label.isEmpty && labelElement != null) {
-        label = _sanitizeVisibleText(labelElement.text);
-      }
       if (label.isEmpty) {
         label = textFromScript(
           '${input.attributes['onclick'] ?? ''} '
@@ -1348,11 +1504,364 @@ class UserCenterParser {
     return result;
   }
 
+  List<NoticeItem> parseNotices(
+    String raw, {
+    String baseUrl = 'https://bbs.binmt.cc',
+  }) {
+    return parseNoticePage(raw, baseUrl: baseUrl).items;
+  }
+
+  NoticePageData parseNoticePage(
+    String raw, {
+    String baseUrl = 'https://bbs.binmt.cc',
+    int currentPage = 1,
+  }) {
+    final document = html_parser.parse(_unwrapCdata(raw));
+    final result = <NoticeItem>[];
+
+    var noticeNodes = document.querySelectorAll('.comiis_notice_list li');
+    if (noticeNodes.isEmpty) {
+      // 某些主题模板不会保留 comiis_notice_list 外层，仍以 ntc_body
+      // 作为真正的通知项标记，避免误解析页面上的普通导航 li。
+      noticeNodes = document
+          .querySelectorAll('li')
+          .where((node) => node.querySelector('.ntc_body') != null)
+          .toList();
+    }
+
+    for (final item in noticeNodes) {
+      final body = item.querySelector('.ntc_body');
+      if (body == null) continue;
+
+      final avatarLink = item.querySelector('a.notice_img');
+      final avatar = avatarLink?.querySelector('img');
+      final systemIcon = item.querySelector('.notice_imgs');
+      final bodyLinks = body.querySelectorAll('a[href]');
+      final firstLink = bodyLinks.isEmpty ? null : bodyLinks.first;
+
+      final firstHref =
+          (firstLink?.attributes['href'] ?? '').replaceAll('&amp;', '&');
+      final firstIsUserLink = RegExp(
+        r'(?:[?&]uid=\d+|space-uid-\d+)',
+        caseSensitive: false,
+      ).hasMatch(firstHref);
+      var username = firstIsUserLink
+          ? _sanitizeUsername(firstLink?.text ?? '')
+          : '';
+      final authorHref = avatarLink?.attributes['href'] ??
+          (firstIsUserLink ? firstHref : '');
+      final avatarSrc = avatar?.attributes['src'] ?? '';
+
+      String uidFrom(String value) {
+        final normalized = value.replaceAll('&amp;', '&');
+        return RegExp(r'(?:^|[?&])uid=(\d+)')
+                .firstMatch(normalized)
+                ?.group(1) ??
+            RegExp(r'space-uid-(\d+)', caseSensitive: false)
+                .firstMatch(normalized)
+                ?.group(1) ??
+            '';
+      }
+
+      final uidFromAuthor = uidFrom(authorHref);
+      final authorUid = uidFromAuthor.isNotEmpty
+          ? uidFromAuthor
+          : uidFrom(avatarSrc);
+
+      html_dom.Element? targetLink;
+      html_dom.Element? fallbackTarget;
+      for (final link in bodyLinks) {
+        final href = (link.attributes['href'] ?? '').replaceAll('&amp;', '&');
+        if (!_looksLikeNoticeTarget(href)) continue;
+        fallbackTarget ??= link;
+        final label = _sanitizeVisibleText(link.text);
+        if (label.isNotEmpty && label != '查看' && label != '详情') {
+          targetLink = link;
+          break;
+        }
+      }
+      targetLink ??= fallbackTarget;
+
+      final targetHref =
+          (targetLink?.attributes['href'] ?? '').replaceAll('&amp;', '&');
+      final targetUrl = _absoluteUrl(targetHref, baseUrl);
+      final targetTitleRaw = _sanitizeVisibleText(targetLink?.text ?? '');
+      final targetTitle = targetTitleRaw.isEmpty ||
+              targetTitleRaw == '查看' ||
+              targetTitleRaw == '详情'
+          ? null
+          : targetTitleRaw;
+
+      String? tid;
+      final tidMatch = RegExp(r'(?:^|[?&])(?:ptid|tid)=(\d+)')
+          .firstMatch(targetHref);
+      tid = tidMatch?.group(1);
+      tid ??= RegExp(r'thread-(\d+)-', caseSensitive: false)
+          .firstMatch(targetHref)
+          ?.group(1);
+      final pid = RegExp(r'(?:^|[?&])pid=(\d+)')
+          .firstMatch(targetHref)
+          ?.group(1);
+
+      final content = _sanitizeVisibleText(body.text);
+      var actionText = content;
+      if (username.isNotEmpty) {
+        actionText = actionText.replaceFirst(username, '').trim();
+      }
+      if (targetTitle != null && targetTitle.isNotEmpty) {
+        actionText = actionText.replaceFirst(targetTitle, '').trim();
+      }
+      actionText = actionText
+          .replaceAll(RegExp(r'\s*(?:查看|详情)\s*$'), '')
+          .trim();
+      if (actionText.isEmpty) actionText = content;
+
+      final timeNode = item.querySelector('h2.f_d, .f_d');
+      final time = _sanitizeVisibleText(timeNode?.text ?? '')
+          .replaceAll('屏蔽', '')
+          .trim();
+      final ignoreLink = item.querySelector(
+        'h2 a[href*="op=ignore"], a[href*="ac=common"][href*="op=ignore"]',
+      );
+      final ignoreHref =
+          (ignoreLink?.attributes['href'] ?? '').replaceAll('&amp;', '&');
+      final ignoreUrl = _absoluteUrl(ignoreHref, baseUrl);
+      final ignoreUri = Uri.tryParse(ignoreHref);
+      final type = ignoreUri?.queryParameters['type'] ?? '';
+      final idAttr = ignoreLink?.attributes['id'] ?? '';
+      final noticeId = RegExp(r'(?:^|_)note_(\d+)$', caseSensitive: false)
+              .firstMatch(idAttr)
+              ?.group(1) ??
+          RegExp(r'(\d+)$').firstMatch(idAttr)?.group(1) ??
+          '';
+
+      final isSystem = systemIcon != null ||
+          type == 'system' ||
+          (authorUid.isEmpty && avatarLink == null);
+      final itemClasses = item.classes.map((value) => value.toLowerCase());
+      final isUnread = itemClasses.any(
+            (value) =>
+                value == 'new' ||
+                value.contains('unread') ||
+                value.contains('notice_new'),
+          ) ||
+          item.querySelector('.new, .unread, .notice_new') != null;
+
+      if (username.isEmpty && authorUid.isNotEmpty && !isSystem) {
+        username = 'UID $authorUid';
+      }
+
+      result.add(
+        NoticeItem(
+          id: noticeId,
+          type: type,
+          authorUid: authorUid,
+          username: username,
+          avatarUrl: _absoluteUrl(avatarSrc, baseUrl),
+          content: content,
+          actionText: actionText,
+          time: time,
+          targetTitle: targetTitle,
+          targetUrl: targetUrl,
+          tid: tid,
+          pid: pid,
+          ignoreUrl: ignoreUrl,
+          isSystem: isSystem,
+          isUnread: isUnread,
+        ),
+      );
+    }
+
+    var hasMore = false;
+    for (final link in document.querySelectorAll('.comiis_page a[href*="page="]')) {
+      final href = (link.attributes['href'] ?? '').replaceAll('&amp;', '&');
+      final uri = Uri.tryParse(href);
+      final page = int.tryParse(uri?.queryParameters['page'] ?? '');
+      if (page != null && page > currentPage) {
+        hasMore = true;
+        break;
+      }
+    }
+
+    return NoticePageData(items: result, hasMore: hasMore);
+  }
+
+
+  /// 从不会清空提醒状态的普通论坛页面中提取 Discuz 全局未读标记。
+  ///
+  /// 标准 Discuz 模板会通过 `#pm_ntc` 的 `new` class 表示新私信，
+  /// 通过 `#myprompt` 展示 `newprompt`。部分 Comiis 模板会直接输出数字，
+  /// 也有模板只输出“new/unread”状态；后者保留为 count=null。
+  MessageUnreadSummary parseGlobalMessageUnread(String raw) {
+    final source = _unwrapCdata(raw);
+    final document = html_parser.parse(source);
+
+    int? parseNumber(String value) {
+      final text = _sanitizeVisibleText(value);
+      final direct = RegExp(r'^\s*(\d{1,4})\s*$').firstMatch(text);
+      if (direct != null) return int.tryParse(direct.group(1)!);
+
+      final bracket = RegExp(r'[（(\[]\s*(\d{1,4})\s*[）)\]]')
+          .firstMatch(text);
+      if (bracket != null) return int.tryParse(bracket.group(1)!);
+
+      final labelled = RegExp(
+        r'(?:未读|新消息|新提醒|提醒|消息)\D{0,5}(\d{1,4})',
+        caseSensitive: false,
+      ).firstMatch(text);
+      return int.tryParse(labelled?.group(1) ?? '');
+    }
+
+    int? sourceNumber(List<String> names) {
+      for (final name in names) {
+        final escaped = RegExp.escape(name);
+        final patterns = <RegExp>[
+          RegExp(
+            "(?:\\b$escaped\\b|[\"']$escaped[\"'])\\s*[:=]\\s*[\"']?(\\d{1,4})",
+            caseSensitive: false,
+          ),
+        ];
+        for (final pattern in patterns) {
+          final match = pattern.firstMatch(source);
+          final value = int.tryParse(match?.group(1) ?? '');
+          if (value != null) return value;
+        }
+      }
+      return null;
+    }
+
+    UnreadBadgeInfo readSignal({
+      required List<String> selectors,
+      required List<String> sourceKeys,
+    }) {
+      int? count = sourceNumber(sourceKeys);
+      var hasUnread = (count ?? 0) > 0;
+
+      for (final selector in selectors) {
+        final nodes = document.querySelectorAll(selector);
+        for (final node in nodes) {
+          count ??= parseNumber(node.text);
+          if ((count ?? 0) > 0) hasUnread = true;
+
+          for (final child in node.querySelectorAll(
+            '.badge, .num, .number, .count, em, strong, span',
+          )) {
+            final childCount = parseNumber(child.text);
+            if (childCount != null) {
+              count ??= childCount;
+              if (childCount > 0) hasUnread = true;
+            }
+          }
+
+          final classes = <String>{
+            ...node.classes,
+            for (final child in node.querySelectorAll('*')) ...child.classes,
+          }.join(' ').toLowerCase();
+          if (RegExp(r'(^|\s|_|-)(?:new|unread|newpm|newprompt|hasnew)(\s|_|-|$)')
+              .hasMatch(classes)) {
+            hasUnread = true;
+          }
+        }
+      }
+
+      if (count != null && count <= 0 && !hasUnread) {
+        return const UnreadBadgeInfo.none();
+      }
+      return UnreadBadgeInfo(count: count, hasUnread: hasUnread);
+    }
+
+    return MessageUnreadSummary(
+      privateMessages: readSignal(
+        selectors: const [
+          '#pm_ntc',
+          'a[href*="do=pm"]',
+          '[class*="pm"][class*="new"]',
+        ],
+        sourceKeys: const ['newpm', 'new_pm', 'pmcount', 'pm_count'],
+      ),
+      notices: readSignal(
+        selectors: const [
+          '#myprompt',
+          'a[href*="do=notice"]',
+          '[class*="notice"][class*="new"]',
+          '[class*="prompt"][class*="new"]',
+        ],
+        sourceKeys: const [
+          'newprompt',
+          'new_prompt',
+          'noticecount',
+          'notice_count',
+          'promptcount',
+        ],
+      ),
+    );
+  }
+
+  RenameStatusData parseRenameStatus(String raw) {
+    final document = html_parser.parse(_unwrapCdata(raw));
+    final text = _sanitizeVisibleText(
+      document.body?.text ?? document.documentElement?.text ?? '',
+    );
+
+    final costMatch = RegExp(
+      r'每次改名需要消耗\s*(\d+)\s*金币',
+      caseSensitive: false,
+    ).firstMatch(text);
+    final cost = int.tryParse(costMatch?.group(1) ?? '');
+    final insufficient = text.contains('金币 余额不足') ||
+        text.contains('金币余额不足') ||
+        RegExp(r'金币\s*余额不足').hasMatch(text);
+
+    final statusMatch = RegExp(
+      r'每次改名需要消耗\s*\d+\s*金币[^。！？!]*余额不足[！!。]?',
+    ).firstMatch(text);
+
+    final renameForm = document.querySelector(
+      'form[action*="nimba_rename"], form[id*="rename"], form[name*="rename"]',
+    );
+
+    var message = _sanitizeVisibleText(statusMatch?.group(0) ?? '');
+    if (message.isEmpty && insufficient) {
+      message = cost == null
+          ? '当前金币余额不足，暂时无法改名。'
+          : '每次改名需要消耗 $cost 金币，当前金币余额不足。';
+    }
+    if (message.isEmpty && renameForm != null) {
+      message = '当前账号已满足改名页面条件。';
+    }
+
+    return RenameStatusData(
+      costGold: cost,
+      insufficientGold: insufficient,
+      hasRenameForm: renameForm != null,
+      message: message,
+    );
+  }
+
+  bool _looksLikeNoticeTarget(String href) {
+    if (href.isEmpty) return false;
+    final value = href.toLowerCase();
+    return value.contains('ptid=') ||
+        value.contains('pid=') ||
+        value.contains('tid=') ||
+        value.contains('thread-') ||
+        value.contains('ac=usergroup') ||
+        value.contains('op=usergroup');
+  }
+
   bool _isCreditJunk(String value) {
     final text = _sanitizeVisibleText(value);
     if (text.isEmpty) {
       return true;
     }
+
+    // 移动版积分页会把分区标题拼成“/系统奖励”“丨系统奖励”等文本。
+    // 这些只是导航/分隔标题，不是实际积分记录。先去掉首尾分隔符后再判断，
+    // 避免它们落进记录列表。
+    final normalized = text
+        .replaceAll(RegExp(r'^[\/／|丨·•>›»—–\-\s]+'), '')
+        .replaceAll(RegExp(r'[\/／|丨·•>›»—–\-\s]+$'), '')
+        .trim();
 
     const exact = {
       '我的',
@@ -1365,7 +1874,7 @@ class UserCenterParser {
       '积分规则',
     };
 
-    return exact.contains(text);
+    return exact.contains(normalized);
   }
 
   html_dom.Element? _nearestContainer(html_dom.Element element) {

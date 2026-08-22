@@ -1,9 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../data/smiley_catalog.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../widgets/app_state_view.dart';
 
 class ThreadEditorPage extends StatefulWidget {
   final bool editing;
@@ -46,6 +48,7 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
   final _messageController = _ForumSmileyEditingController();
   final _messageFocusNode = FocusNode();
   final _mentionController = TextEditingController();
+  final _imagePicker = ImagePicker();
 
   PostEditorForm? _form;
   bool _loading = true;
@@ -54,6 +57,11 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
   bool _useSig = true;
   String? _error;
   _EditorPanel _panel = _EditorPanel.none;
+
+  final List<PostAttachmentUploadResult> _uploadedAttachments = [];
+  final Set<String> _deletingAttachmentAids = <String>{};
+  bool _uploadingAttachment = false;
+  String? _attachmentError;
 
   List<FriendItem> _friends = const [];
   bool _friendsLoading = false;
@@ -236,6 +244,116 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
     _messageFocusNode.requestFocus();
   }
 
+  Future<void> _pickAndUploadImages() async {
+    final form = _form;
+    if (form == null || _uploadingAttachment) return;
+    if (!form.canUploadImages) {
+      _showMessage('当前页面没有附件上传凭证，请重新打开发帖页');
+      return;
+    }
+
+    try {
+      final files = await _imagePicker.pickMultiImage(
+        imageQuality: 88,
+        maxWidth: 2560,
+        maxHeight: 2560,
+      );
+      if (files.isEmpty || !mounted) return;
+
+      setState(() {
+        _uploadingAttachment = true;
+        _attachmentError = null;
+      });
+
+      final maxBytes = form.maxUploadSizeKb * 1024;
+      var successCount = 0;
+      final failures = <String>[];
+
+      for (final file in files) {
+        try {
+          final bytes = await file.readAsBytes();
+          if (bytes.length > maxBytes) {
+            failures.add('${file.name} 超过 ${form.maxUploadSizeKb}KB');
+            continue;
+          }
+
+          final result = await _api.uploadPostImage(
+            form: form,
+            bytes: bytes,
+            fileName: file.name,
+          );
+          if (!mounted) return;
+
+          if (result.success && result.aid.isNotEmpty) {
+            setState(() => _uploadedAttachments.add(result));
+            _replaceSelection('[attachimg]${result.aid}[/attachimg]\n');
+            successCount++;
+          } else {
+            failures.add('${file.name}：${result.message}');
+          }
+        } catch (e) {
+          failures.add('${file.name}：${_readableError(e)}');
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _attachmentError = failures.isEmpty ? null : failures.join('；');
+      });
+      if (successCount > 0) {
+        _showMessage('已上传 $successCount 张图片并插入正文');
+      } else if (failures.isNotEmpty) {
+        _showMessage(failures.first);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _attachmentError = _readableError(e));
+      _showMessage(_readableError(e));
+    } finally {
+      if (mounted) setState(() => _uploadingAttachment = false);
+    }
+  }
+
+  Future<void> _deleteUploadedAttachment(
+    PostAttachmentUploadResult attachment,
+  ) async {
+    final form = _form;
+    if (form == null || attachment.aid.isEmpty) return;
+    if (_deletingAttachmentAids.contains(attachment.aid)) return;
+
+    setState(() => _deletingAttachmentAids.add(attachment.aid));
+    try {
+      final deleted = await _api.deletePostAttachment(
+        form: form,
+        aid: attachment.aid,
+      );
+      if (!mounted) return;
+      if (!deleted) {
+        _showMessage('删除附件失败，请稍后重试');
+        return;
+      }
+
+      final marker = '[attachimg]${attachment.aid}[/attachimg]';
+      final nextText = _messageController.text
+          .replaceAll('$marker\n', '')
+          .replaceAll(marker, '');
+      _messageController.value = TextEditingValue(
+        text: nextText,
+        selection: TextSelection.collapsed(offset: nextText.length),
+      );
+      setState(() {
+        _uploadedAttachments.removeWhere((item) => item.aid == attachment.aid);
+      });
+      _showMessage('附件已删除');
+    } catch (e) {
+      if (mounted) _showMessage(_readableError(e));
+    } finally {
+      if (mounted) {
+        setState(() => _deletingAttachmentAids.remove(attachment.aid));
+      }
+    }
+  }
+
   Future<String?> _showSingleFieldDialog({
     required String title,
     required String hint,
@@ -326,6 +444,10 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
   Future<void> _submit() async {
     final form = _form;
     if (form == null || _submitting) return;
+    if (_uploadingAttachment) {
+      _showMessage('请等待图片上传完成');
+      return;
+    }
 
     final subject = _subjectController.text.trim();
     final message = SmileyCatalog.toForumBbCode(_messageController.text).trim();
@@ -378,8 +500,7 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
+    final colors = Theme.of(context).colorScheme;
     final title = widget.editing
         ? (widget.editSubject ? '编辑主题' : '编辑回复')
         : '发布新帖';
@@ -387,12 +508,13 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
-        centerTitle: true,
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 10),
             child: FilledButton(
-              onPressed: _loading || _submitting ? null : _submit,
+              onPressed: _loading || _submitting || _uploadingAttachment
+                  ? null
+                  : _submit,
               style: FilledButton.styleFrom(
                 visualDensity: VisualDensity.compact,
                 padding: const EdgeInsets.symmetric(horizontal: 18),
@@ -409,83 +531,116 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : _error != null
-              ? _ErrorState(message: _error!, onRetry: _loadForm)
+              ? AppStateView.error(message: _error!, onRetry: _loadForm)
               : SafeArea(
                   top: false,
-                  child: Column(
+                  child: ListView(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
                     children: [
-                      if (!widget.editing)
+                      if (!widget.editing) ...[
                         _ForumHeader(
                           forumName: widget.forumName,
                           colors: colors,
                         ),
-                      if (!widget.editing) const _PostTypeBar(),
-                      Expanded(
-                        child: ListView(
-                          keyboardDismissBehavior:
-                              ScrollViewKeyboardDismissBehavior.onDrag,
-                          padding: EdgeInsets.zero,
+                        const SizedBox(height: 10),
+                      ],
+                      Card(
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
                           children: [
-                            if (!widget.editing || widget.editSubject)
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                                child: TextField(
-                                  controller: _subjectController,
-                                  maxLength: 80,
-                                  textInputAction: TextInputAction.next,
-                                  decoration: const InputDecoration(
-                                    hintText: '标题  必填',
-                                    counterText: '',
-                                    border: UnderlineInputBorder(),
+                            if (!widget.editing || widget.editSubject) ...[
+                              TextField(
+                                controller: _subjectController,
+                                maxLength: 80,
+                                textInputAction: TextInputAction.next,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                                decoration: const InputDecoration(
+                                  hintText: '帖子标题',
+                                  counterText: '',
+                                  filled: false,
+                                  border: InputBorder.none,
+                                  enabledBorder: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  contentPadding: EdgeInsets.fromLTRB(
+                                    16,
+                                    15,
+                                    16,
+                                    13,
                                   ),
                                 ),
                               ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-                              child: SizedBox(
-                                height: 280,
-                                child: TextField(
-                                  controller: _messageController,
-                                  focusNode: _messageFocusNode,
-                                  expands: true,
-                                  minLines: null,
-                                  maxLines: null,
-                                  textAlignVertical: TextAlignVertical.top,
-                                  keyboardType: TextInputType.multiline,
-                                  onTap: () {
-                                    if (_panel != _EditorPanel.none) {
-                                      setState(() => _panel = _EditorPanel.none);
-                                    }
-                                  },
-                                  decoration: InputDecoration(
-                                    hintText: widget.editing
-                                        ? '编辑帖子内容…'
-                                        : '想和大家分享点什么…',
-                                    border: InputBorder.none,
-                                    contentPadding: EdgeInsets.zero,
-                                  ),
+                              Divider(
+                                height: 1,
+                                color: colors.outlineVariant
+                                    .withValues(alpha: 0.65),
+                              ),
+                            ],
+                            TextField(
+                              controller: _messageController,
+                              focusNode: _messageFocusNode,
+                              minLines: 10,
+                              maxLines: null,
+                              keyboardType: TextInputType.multiline,
+                              textAlignVertical: TextAlignVertical.top,
+                              onTap: () {
+                                if (_panel != _EditorPanel.none) {
+                                  setState(() => _panel = _EditorPanel.none);
+                                }
+                              },
+                              decoration: InputDecoration(
+                                hintText: widget.editing
+                                    ? '编辑帖子内容…'
+                                    : '分享你的内容、代码、图片或链接…',
+                                filled: false,
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                contentPadding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  14,
+                                  16,
+                                  16,
                                 ),
                               ),
                             ),
                             Divider(
                               height: 1,
-                              color: colors.outlineVariant.withValues(alpha: 0.65),
+                              color: colors.outlineVariant
+                                  .withValues(alpha: 0.65),
                             ),
                             _EditorModeBar(
                               selected: _panel,
                               onSelected: _setPanel,
                             ),
-                            AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 160),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeInCubic,
-                              child: _buildPanel(context),
-                            ),
                           ],
                         ),
                       ),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 160),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        child: _panel == _EditorPanel.none
+                            ? const SizedBox.shrink(key: ValueKey('none-gap'))
+                            : Padding(
+                                key: ValueKey(_panel),
+                                padding: const EdgeInsets.only(top: 10),
+                                child: Card(
+                                  clipBehavior: Clip.antiAlias,
+                                  child: _buildPanel(context),
+                                ),
+                              ),
+                      ),
+                      if (_uploadingAttachment) ...[
+                        const SizedBox(height: 10),
+                        const LinearProgressIndicator(),
+                      ],
                     ],
                   ),
                 ),
@@ -548,8 +703,17 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
           onHide: () => _wrapSelection('[hide]', '[/hide]'),
         );
       case _EditorPanel.attachment:
+        final form = _form;
         return _AttachmentPanel(
           key: const ValueKey('attachment'),
+          canUpload: form?.canUploadImages ?? false,
+          uploading: _uploadingAttachment,
+          maxSizeKb: form?.maxUploadSizeKb ?? 1024,
+          attachments: _uploadedAttachments,
+          deletingAids: _deletingAttachmentAids,
+          error: _attachmentError,
+          onUpload: _pickAndUploadImages,
+          onDelete: _deleteUploadedAttachment,
           onNetworkImage: () => _insertSingleUrl(
             title: '网络图片',
             hint: 'https://example.com/image.jpg',
@@ -580,74 +744,35 @@ class _ForumHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 9, 16, 9),
-      color: colors.surfaceContainerLow,
-      child: Row(
-        children: [
-          Icon(Icons.forum_outlined, size: 17, color: colors.primary),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              forumName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+    return Material(
+      color: colors.primaryContainer.withValues(alpha: 0.48),
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          children: [
+            Icon(Icons.forum_outlined, size: 18, color: colors.primary),
+            const SizedBox(width: 8),
+            Text(
+              '发布到',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: colors.onSurfaceVariant,
                   ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PostTypeBar extends StatelessWidget {
-  const _PostTypeBar();
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      height: 46,
-      color: colors.surfaceContainerLowest,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                '发表帖子',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: colors.primary,
-                      fontWeight: FontWeight.w600,
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                forumName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: colors.onPrimaryContainer,
+                      fontWeight: FontWeight.w800,
                     ),
               ),
-              const SizedBox(height: 5),
-              Container(
-                width: 34,
-                height: 3,
-                decoration: BoxDecoration(
-                  color: colors.primary,
-                  borderRadius: BorderRadius.circular(99),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(width: 32),
-          Tooltip(
-            message: '投票发帖接口尚未抓取',
-            child: Text(
-              '发投票',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: colors.outline,
-                  ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -915,9 +1040,28 @@ class _InsertPanel extends StatelessWidget {
 }
 
 class _AttachmentPanel extends StatelessWidget {
+  final bool canUpload;
+  final bool uploading;
+  final int maxSizeKb;
+  final List<PostAttachmentUploadResult> attachments;
+  final Set<String> deletingAids;
+  final String? error;
+  final VoidCallback onUpload;
+  final ValueChanged<PostAttachmentUploadResult> onDelete;
   final VoidCallback onNetworkImage;
 
-  const _AttachmentPanel({super.key, required this.onNetworkImage});
+  const _AttachmentPanel({
+    super.key,
+    required this.canUpload,
+    required this.uploading,
+    required this.maxSizeKb,
+    required this.attachments,
+    required this.deletingAids,
+    required this.error,
+    required this.onUpload,
+    required this.onDelete,
+    required this.onNetworkImage,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -930,32 +1074,151 @@ class _AttachmentPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              OutlinedButton.icon(
-                onPressed: null,
-                icon: const Icon(Icons.cloud_upload_outlined),
-                label: const Text('上传附件'),
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: canUpload && !uploading ? onUpload : null,
+                  icon: uploading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add_photo_alternate_outlined),
+                  label: Text(uploading ? '正在上传…' : '选择并上传图片'),
+                ),
               ),
-              const SizedBox(width: 12),
-              Text(
-                '论坛附件上传接口待适配',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colors.onSurfaceVariant,
-                    ),
+              const SizedBox(width: 10),
+              OutlinedButton.icon(
+                onPressed: onNetworkImage,
+                icon: const Icon(Icons.link_rounded, size: 18),
+                label: const Text('网络图片'),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          FilledButton.tonalIcon(
-            onPressed: onNetworkImage,
-            icon: const Icon(Icons.image_outlined),
-            label: const Text('插入网络图片'),
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 9),
           Text(
-            '本地附件不猜写操作；拿到真实 Filedata 上传请求后再接入。',
+            canUpload
+                ? '支持多选图片，单张最大 ${maxSizeKb}KB；上传成功后会自动插入正文。'
+                : '当前发帖页没有返回 uid/hash 上传凭证，请重新打开发帖页后再试。',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colors.onSurfaceVariant,
+                  color: canUpload ? colors.onSurfaceVariant : colors.error,
                 ),
+          ),
+          if (error != null && error!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              error!,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.error,
+                  ),
+            ),
+          ],
+          if (attachments.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              '已上传 ${attachments.length} 张',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            for (final attachment in attachments)
+              _AttachmentItem(
+                attachment: attachment,
+                deleting: deletingAids.contains(attachment.aid),
+                onDelete: () => onDelete(attachment),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AttachmentItem extends StatelessWidget {
+  final PostAttachmentUploadResult attachment;
+  final bool deleting;
+  final VoidCallback onDelete;
+
+  const _AttachmentItem({
+    required this.attachment,
+    required this.deleting,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(9),
+            child: SizedBox(
+              width: 52,
+              height: 52,
+              child: attachment.url.isEmpty
+                  ? ColoredBox(
+                      color: colors.surfaceContainerHighest,
+                      child: Icon(Icons.image_outlined, color: colors.primary),
+                    )
+                  : CachedNetworkImage(
+                      imageUrl: attachment.url,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => ColoredBox(
+                        color: colors.surfaceContainerHighest,
+                      ),
+                      errorWidget: (_, __, ___) => ColoredBox(
+                        color: colors.surfaceContainerHighest,
+                        child: const Icon(Icons.broken_image_outlined),
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  attachment.fileName.isEmpty
+                      ? '图片附件'
+                      : attachment.fileName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'AID ${attachment.aid} · 已插入正文',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: '删除附件',
+            onPressed: deleting ? null : onDelete,
+            icon: deleting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.delete_outline_rounded),
           ),
         ],
       ),

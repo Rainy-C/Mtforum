@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../widgets/app_state_view.dart';
 
 class PasswordSecurityPage extends StatefulWidget {
   const PasswordSecurityPage({super.key});
@@ -143,11 +144,11 @@ class _PasswordSecurityPageState extends State<PasswordSecurityPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : _error != null
-              ? Center(child: Text(_error!))
+              ? AppStateView.error(message: _error!, onRetry: _load)
               : ListView(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
                   children: [
                     TextField(
                       controller: _oldPassword,

@@ -6,6 +6,57 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+List<String> normalizeUpdateChangelog(String raw) {
+  var text = raw.trim();
+  if (text.isEmpty) return const [];
+
+  // 兼容服务端常见的几种公告格式：真实换行、JSON 中二次转义的
+  // \\n/\\r\\n、HTML <br> / <p> / <li>，避免正文全部粘成一行。
+  text = text
+      .replaceAll(r'\r\n', '\n')
+      .replaceAll(r'\n', '\n')
+      .replaceAll(r'\r', '\n')
+      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</(?:p|div|li)>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'<li\b[^>]*>', caseSensitive: false), '• ')
+      .replaceAll(RegExp(r'<[^>]+>'), ' ')
+      .replaceAll(RegExp(r'[\t ]+[•●▪]\s*'), '\n• ')
+      .replaceAllMapped(
+        RegExp(r'([。；;])\s*(?=\d{1,2}[.、)])'),
+        (match) => '${match.group(1)}\n',
+      );
+
+  final lines = text
+      .split(RegExp(r'[\n\r]+'))
+      .map((line) => line
+          .replaceFirst(RegExp(r'^[•●▪*\-]+\s*'), '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+
+  // 某些 update.json 只有一整个中文段落且完全没有换行；长度较长时按
+  // 句号/分号/问号/感叹号拆成易读条目。没有自然分隔符时保持原文。
+  if (lines.length == 1 && lines.first.length > 48) {
+    final sentenceLines = <String>[];
+    final buffer = StringBuffer();
+    for (final rune in lines.first.runes) {
+      final char = String.fromCharCode(rune);
+      buffer.write(char);
+      if ('。！？；;'.contains(char)) {
+        final value = buffer.toString().trim();
+        if (value.isNotEmpty) sentenceLines.add(value);
+        buffer.clear();
+      }
+    }
+    final tail = buffer.toString().trim();
+    if (tail.isNotEmpty) sentenceLines.add(tail);
+    if (sentenceLines.length > 1) return sentenceLines;
+  }
+
+  return lines;
+}
+
 class UpdateInfo {
   final String version;
   final int versionCode;
@@ -176,31 +227,141 @@ Future<void> showUpdateDialog(
 ) async {
   if (!result.hasUpdate) return;
   final info = result.info;
+  final theme = Theme.of(context);
+  final colors = theme.colorScheme;
+
+  final lines = normalizeUpdateChangelog(info.changelog);
 
   await showDialog<void>(
     context: context,
     builder: (dialogContext) => AlertDialog(
+      icon: Icon(Icons.system_update_rounded, color: colors.primary),
       title: const Text('发现新版本'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('v${result.currentVersion}  →  v${info.version}'),
-          const SizedBox(height: 12),
-          Text(info.changelog.isEmpty ? '新版本可用' : info.changelog),
-        ],
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 版本号卡片
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: colors.primaryContainer.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'v${result.currentVersion}',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: colors.onPrimaryContainer.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Icon(Icons.arrow_forward_rounded,
+                        size: 18, color: colors.primary),
+                  ),
+                  Text(
+                    'v${info.version}',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      color: colors.onPrimaryContainer,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            // 更新日志标题
+            Row(
+              children: [
+                Icon(Icons.edit_note_rounded,
+                    size: 18, color: colors.primary),
+                const SizedBox(width: 5),
+                Text(
+                  '更新内容',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // 更新日志内容。统一规范化换行后放在独立内容区，避免长公告粘连。
+            Flexible(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: lines.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          '新版本可用',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                      )
+                    : SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final line in lines)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 7),
+                                      child: Container(
+                                        width: 5,
+                                        height: 5,
+                                        decoration: BoxDecoration(
+                                          color: colors.primary,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 9),
+                                    Expanded(
+                                      child: Text(
+                                        line,
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(height: 1.55),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+              ),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext),
           child: const Text('稍后'),
         ),
-        FilledButton(
+        FilledButton.icon(
           onPressed: () {
             Navigator.pop(dialogContext);
             showUpdateDownloadDialog(context, info);
           },
-          child: const Text('下载更新'),
+          icon: const Icon(Icons.download_rounded, size: 18),
+          label: const Text('下载更新'),
         ),
       ],
     ),

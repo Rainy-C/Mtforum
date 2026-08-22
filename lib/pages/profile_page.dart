@@ -1,17 +1,22 @@
-import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/material.dart';
+
+import '../models/models.dart';
 import '../services/api_service.dart';
 import '../services/sign_service.dart';
-import '../models/models.dart';
-import 'settings_page.dart';
-import 'my_threads_page.dart';
+import '../widgets/app_state_view.dart';
+import 'about_page.dart';
+import 'account/account_tools_page.dart';
+import 'account/credits_page.dart';
+import 'account/private_messages_page.dart';
+import 'account/profile_edit_page.dart';
+import 'account/social_center_page.dart';
+import 'account/user_group_page.dart';
+import 'account/wall_page.dart';
 import 'favorites_page.dart';
 import 'mall_page.dart';
-import 'account/profile_edit_page.dart';
-import 'account/credits_page.dart';
-import 'account/social_center_page.dart';
-import 'account/account_tools_page.dart';
-import 'account/private_messages_page.dart';
+import 'my_threads_page.dart';
+import 'settings_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -41,427 +46,212 @@ class _ProfilePageState extends State<ProfilePage> {
   void _onLoginStateChanged() {
     if (_api.isLoggedIn && _profile == null) {
       _loadProfile();
-    } else if (!_api.isLoggedIn) {
+    } else if (!_api.isLoggedIn && mounted) {
       setState(() => _profile = null);
     }
   }
 
   Future<void> _loadProfile() async {
+    if (_loading) return;
     setState(() => _loading = true);
     try {
-      final p = await _api.getProfile();
-      setState(() {
-        _profile = p;
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() => _loading = false);
+      final profile = await _api.getProfile();
+      if (!mounted) return;
+      setState(() => _profile = profile);
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar.large(
-            title: const Text('我的'),
-            pinned: true,
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: _api.isLoggedIn ? _loadProfile : null,
-              ),
-            ],
-          ),
-          if (!_api.isLoggedIn)
-            SliverFillRemaining(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.lock_outline,
-                          size: 64, color: theme.colorScheme.outline),
-                      const SizedBox(height: 16),
-                      const Text('登录后可使用签到、收藏、好友与金币兑换'),
-                      const SizedBox(height: 24),
-                      FilledButton.icon(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const SettingsPage()),
-                          ).then((_) {
-                            // 从设置页返回后刷新
-                            if (_api.isLoggedIn && _profile == null) {
-                              _loadProfile();
-                            }
-                          });
-                        },
-                        icon: const Icon(Icons.settings),
-                        label: const Text('登录 / 设置'),
-                      ),
-                    ],
-                  ),
+      body: RefreshIndicator(
+        onRefresh: _api.isLoggedIn ? _loadProfile : () async {},
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverAppBar(
+              title: const Text('我的'),
+              pinned: true,
+              actions: [
+                IconButton(
+                  tooltip: '刷新',
+                  icon: const Icon(Icons.refresh_rounded),
+                  onPressed: _api.isLoggedIn && !_loading ? _loadProfile : null,
                 ),
-              ),
-            )
-          else if (_loading && _profile == null)
-            const SliverFillRemaining(
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_profile != null)
-            SliverToBoxAdapter(
-              child: Column(
-                children: [
-                  // 用户信息卡
-                  Container(
-                    margin: const EdgeInsets.all(16),
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          theme.colorScheme.primaryContainer,
-                          theme.colorScheme.secondaryContainer,
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Column(
-                      children: [
-                        CircleAvatar(
-                          radius: 40,
-                          backgroundColor: theme.colorScheme.primary,
-                          backgroundImage: _profile!.avatarUrl != null
-                              ? CachedNetworkImageProvider(
-                                  _profile!.avatarUrl!)
-                              : null,
-                          child: _profile!.avatarUrl == null
-                              ? Text(
-                                  (_profile!.username ?? '?')[0],
-                                  style: TextStyle(
-                                      fontSize: 32,
-                                      color: theme.colorScheme.onPrimary),
-                                )
-                              : null,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _profile!.username ?? '未知用户',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
+              ],
+            ),
+            if (!_api.isLoggedIn)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: _LoggedOutView(
+                  onLogin: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SettingsPage()),
+                    ).then((_) {
+                      if (_api.isLoggedIn) _loadProfile();
+                    });
+                  },
+                ),
+              )
+            else if (_loading && _profile == null)
+              const SliverFillRemaining(child: AppStateView.loading())
+            else if (_profile != null)
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    _ProfileHero(profile: _profile!),
+                    const SizedBox(height: 12),
+                    _ProfileStats(
+                      profile: _profile!,
+                      onThreads: () => _openMyContent('thread'),
+                      onReplies: () => _openMyContent('reply'),
+                      onFriends: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SocialUsersPage(
+                            type: 'friend',
+                            uid: _profile!.uid,
+                            title: '我的好友',
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'UID: ${_profile!.uid}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.outline,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const _SectionTitle('常用功能'),
+                    const SizedBox(height: 9),
+                    _QuickActions(
+                      onMessages: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const PrivateMessagesPage(),
+                        ),
+                      ),
+                      onFavorites: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const FavoritesPage()),
+                      ),
+                      onSign: _openSignPage,
+                      onSocial: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const SocialCenterPage(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const _SectionTitle('论坛账户'),
+                    const SizedBox(height: 9),
+                    _MenuGroup(
+                      children: [
+                        _MenuEntry(
+                          icon: Icons.manage_accounts_outlined,
+                          title: '编辑资料',
+                          subtitle: '资料、签名与隐私设置',
+                          onTap: () => Navigator.push<bool>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const ProfileEditPage(),
+                            ),
+                          ).then((changed) {
+                            if (changed == true) _loadProfile();
+                          }),
+                        ),
+                        _MenuEntry(
+                          icon: Icons.stars_rounded,
+                          title: '积分中心',
+                          subtitle: '积分、金币与收支记录',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const CreditsPage()),
+                          ),
+                        ),
+                        _MenuEntry(
+                          icon: Icons.workspace_premium_outlined,
+                          title: '用户组',
+                          subtitle: _profile!.userGroup?.trim().isNotEmpty == true
+                              ? '当前：${_profile!.userGroup}'
+                              : '等级进度与权限详情',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const UserGroupPage(),
+                            ),
+                          ),
+                        ),
+                        _MenuEntry(
+                          icon: Icons.rate_review_outlined,
+                          title: '留言墙',
+                          subtitle: '查看、发表和管理留言',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => WallPage(
+                                uid: _profile!.uid,
+                                username: _profile!.username,
+                              ),
+                            ),
+                          ),
+                        ),
+                        _MenuEntry(
+                          icon: Icons.storefront_outlined,
+                          title: '积分商城',
+                          subtitle: '使用论坛金币兑换商品',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const MallPage()),
+                          ),
+                        ),
+                        _MenuEntry(
+                          icon: Icons.tune_rounded,
+                          title: '更多账号工具',
+                          subtitle: '推广、短信、改名等低频功能',
+                          onTap: _openAccountTools,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    const _SectionTitle('设置与支持'),
+                    const SizedBox(height: 9),
+                    _MenuGroup(
+                      children: [
+                        _MenuEntry(
+                          icon: Icons.settings_outlined,
+                          title: '设置',
+                          subtitle: '主题、文字大小、更新与账号',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SettingsPage()),
+                          ),
+                        ),
+                        _MenuEntry(
+                          icon: Icons.info_outline_rounded,
+                          title: '关于与反馈',
+                          subtitle: '版本、作者信息与问题反馈',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const AboutPage()),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  // 积分卡片
-                  if (_profile!.credits != null || _profile!.gold != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          if (_profile!.credits != null)
-                            Expanded(
-                              child: _StatCard(
-                                icon: Icons.star,
-                                label: '积分',
-                                value: _profile!.credits.toString(),
-                              ),
-                            ),
-                          if (_profile!.credits != null &&
-                              _profile!.gold != null)
-                            const SizedBox(width: 12),
-                          if (_profile!.gold != null)
-                            Expanded(
-                              child: _StatCard(
-                                icon: Icons.monetization_on_outlined,
-                                label: '金币',
-                                value: _profile!.gold.toString(),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  const SizedBox(height: 16),
-                  // 功能列表
-                  _buildMenuList(context),
-                ],
+                  ]),
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildMenuList(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-
-    Widget quickAction({
-      required IconData icon,
-      required Color color,
-      required String title,
-      required VoidCallback onTap,
-    }) {
-      return Material(
-        color: colors.surfaceContainerLow,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(17),
-          side: BorderSide(color: colors.outlineVariant),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 10, 11),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  alignment: Alignment.center,
-                  child: Icon(icon, size: 20, color: color),
-                ),
-                const Spacer(),
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    Widget rowItem({
-      required IconData icon,
-      required String title,
-      required String subtitle,
-      required VoidCallback onTap,
-      Color? accent,
-    }) {
-      final color = accent ?? colors.primary;
-      return ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          alignment: Alignment.center,
-          child: Icon(icon, color: color, size: 21),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-        subtitle: Text(subtitle),
-        trailing: Icon(
-          Icons.chevron_right_rounded,
-          color: colors.outline,
-        ),
-        onTap: onTap,
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '我的内容',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          GridView.count(
-            crossAxisCount: 4,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 0.95,
-            children: [
-              quickAction(
-                icon: Icons.article_outlined,
-                color: colors.primary,
-                title: '帖子',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const MyThreadsPage(),
-                  ),
-                ),
-              ),
-              quickAction(
-                icon: Icons.bookmarks_outlined,
-                color: colors.secondary,
-                title: '收藏',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const FavoritesPage(),
-                  ),
-                ),
-              ),
-              quickAction(
-                icon: Icons.people_outline_rounded,
-                color: colors.tertiary,
-                title: '关系',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const SocialCenterPage(),
-                  ),
-                ),
-              ),
-              quickAction(
-                icon: Icons.edit_calendar_outlined,
-                color: colors.primary,
-                title: '签到',
-                onTap: _openSignPage,
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Text(
-            '服务与设置',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Material(
-            color: colors.surfaceContainerLow,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-              side: BorderSide(color: colors.outlineVariant),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                rowItem(
-                  icon: Icons.chat_bubble_outline_rounded,
-                  title: '私信',
-                  subtitle: '查看会话和发送私信',
-                  accent: colors.primary,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const PrivateMessagesPage(),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1, indent: 64),
-                rowItem(
-                  icon: Icons.manage_accounts_outlined,
-                  title: '编辑资料',
-                  subtitle: '基本资料与隐私设置',
-                  accent: colors.primary,
-                  onTap: () => Navigator.push<bool>(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const ProfileEditPage(),
-                    ),
-                  ).then((changed) {
-                    if (changed == true) {
-                      _loadProfile();
-                    }
-                  }),
-                ),
-                const Divider(height: 1, indent: 64),
-                rowItem(
-                  icon: Icons.stars_rounded,
-                  title: '积分中心',
-                  subtitle: '积分、金币、好评、信誉与记录',
-                  accent: colors.tertiary,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const CreditsPage(),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1, indent: 64),
-                rowItem(
-                  icon: Icons.admin_panel_settings_outlined,
-                  title: '账号工具',
-                  subtitle: '用户组、推广、短信、改名等',
-                  accent: colors.secondary,
-                  onTap: () {
-                    final uid = _profile?.uid ?? '';
-                    final oldAvatar = _profile?.avatarUrl;
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => AccountToolsPage(uid: uid),
-                      ),
-                    ).then((_) async {
-                      if (oldAvatar != null && oldAvatar.isNotEmpty) {
-                        await CachedNetworkImage.evictFromCache(oldAvatar);
-                      }
-                      if (mounted) _loadProfile();
-                    });
-                  },
-                ),
-                const Divider(height: 1, indent: 64),
-                rowItem(
-                  icon: Icons.storefront_outlined,
-                  title: '积分商城',
-                  subtitle: '使用论坛金币兑换商品',
-                  accent: colors.tertiary,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const MallPage(),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1, indent: 64),
-                rowItem(
-                  icon: Icons.settings_outlined,
-                  title: '设置',
-                  subtitle: '账号、主题、更新与应用设置',
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const SettingsPage(),
-                    ),
-                  ).then((_) {
-                    if (_api.isLoggedIn && _profile == null) {
-                      _loadProfile();
-                    }
-                  }),
-                ),
-              ],
-            ),
-          ),
-        ],
+  void _openMyContent(String type) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MyThreadsPage(initialType: type),
       ),
     );
   }
@@ -472,33 +262,178 @@ class _ProfilePageState extends State<ProfilePage> {
       MaterialPageRoute(builder: (_) => const _SignRankPage()),
     );
   }
+
+  void _openAccountTools() {
+    final uid = _profile?.uid ?? '';
+    final oldAvatar = _profile?.avatarUrl;
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => AccountToolsPage(uid: uid)),
+    ).then((_) async {
+      if (oldAvatar != null && oldAvatar.isNotEmpty) {
+        await CachedNetworkImage.evictFromCache(oldAvatar);
+      }
+      if (mounted) _loadProfile();
+    });
+  }
 }
 
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
+class _LoggedOutView extends StatelessWidget {
+  final VoidCallback onLogin;
 
-  const _StatCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
+  const _LoggedOutView({required this.onLogin});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
+    final colors = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 74,
+            height: 74,
+            decoration: BoxDecoration(
+              color: colors.primaryContainer,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Icon(
+              Icons.person_outline_rounded,
+              size: 38,
+              color: colors.onPrimaryContainer,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '登录 MT论坛',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            '登录后可使用消息、收藏、签到、好友与论坛账户功能。',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 22),
+          FilledButton.icon(
+            onPressed: onLogin,
+            icon: const Icon(Icons.login_rounded),
+            label: const Text('登录 / 设置'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileHero extends StatelessWidget {
+  final UserProfile profile;
+
+  const _ProfileHero({required this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final avatar = profile.avatarUrl;
+    final username = profile.username?.trim().isNotEmpty == true
+        ? profile.username!.trim()
+        : '未知用户';
+
+    return Material(
+      color: colors.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(20),
+      clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
         child: Column(
           children: [
-            Icon(icon, color: theme.colorScheme.primary),
-            const SizedBox(height: 8),
-            Text(value,
-                style: theme.textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            Text(label, style: theme.textTheme.bodySmall),
+            CircleAvatar(
+              radius: 36,
+              backgroundColor: colors.primaryContainer,
+              backgroundImage: avatar?.isNotEmpty == true
+                  ? CachedNetworkImageProvider(avatar!)
+                  : null,
+              child: avatar?.isNotEmpty == true
+                  ? null
+                  : Text(
+                      username.substring(0, 1),
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        color: colors.onPrimaryContainer,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                Text(
+                  username,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (profile.userGroup?.trim().isNotEmpty == true)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colors.primaryContainer,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      profile.userGroup!.trim(),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: colors.onPrimaryContainer,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'UID ${profile.uid}',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.outline,
+              ),
+            ),
+            if (profile.credits != null || profile.gold != null) ...[
+              const SizedBox(height: 9),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 12,
+                runSpacing: 6,
+                children: [
+                  if (profile.credits != null)
+                    _MiniValue(
+                      icon: Icons.stars_rounded,
+                      text: '${profile.credits} 积分',
+                    ),
+                  if (profile.gold != null)
+                    _MiniValue(
+                      icon: Icons.monetization_on_outlined,
+                      text: '${profile.gold} 金币',
+                    ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -506,6 +441,306 @@ class _StatCard extends StatelessWidget {
   }
 }
 
+class _MiniValue extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _MiniValue({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: colors.tertiary),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: colors.onSurfaceVariant,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileStats extends StatelessWidget {
+  final UserProfile profile;
+  final VoidCallback onThreads;
+  final VoidCallback onReplies;
+  final VoidCallback onFriends;
+
+  const _ProfileStats({
+    required this.profile,
+    required this.onThreads,
+    required this.onReplies,
+    required this.onFriends,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: Row(
+        children: [
+          Expanded(
+            child: _StatAction(
+              label: '帖子',
+              value: profile.threads?.toString() ?? '—',
+              onTap: onThreads,
+            ),
+          ),
+          const SizedBox(height: 38, child: VerticalDivider()),
+          Expanded(
+            child: _StatAction(
+              label: '回复',
+              value: profile.posts?.toString() ?? '—',
+              onTap: onReplies,
+            ),
+          ),
+          const SizedBox(height: 38, child: VerticalDivider()),
+          Expanded(
+            child: _StatAction(
+              label: '好友',
+              value: profile.friends?.toString() ?? '—',
+              onTap: onFriends,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatAction extends StatelessWidget {
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  const _StatAction({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
+          children: [
+            Text(
+              value,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickActions extends StatelessWidget {
+  final VoidCallback onMessages;
+  final VoidCallback onFavorites;
+  final VoidCallback onSign;
+  final VoidCallback onSocial;
+
+  const _QuickActions({
+    required this.onMessages,
+    required this.onFavorites,
+    required this.onSign,
+    required this.onSocial,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      color: colors.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: Row(
+        children: [
+          Expanded(
+            child: _QuickAction(
+              icon: Icons.chat_bubble_outline_rounded,
+              label: '私信',
+              color: colors.primary,
+              onTap: onMessages,
+            ),
+          ),
+          Expanded(
+            child: _QuickAction(
+              icon: Icons.bookmarks_outlined,
+              label: '收藏',
+              color: colors.secondary,
+              onTap: onFavorites,
+            ),
+          ),
+          Expanded(
+            child: _QuickAction(
+              icon: Icons.edit_calendar_outlined,
+              label: '签到',
+              color: colors.tertiary,
+              onTap: onSign,
+            ),
+          ),
+          Expanded(
+            child: _QuickAction(
+              icon: Icons.people_outline_rounded,
+              label: '关系',
+              color: colors.primary,
+              onTap: onSocial,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+        child: Column(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.13),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, size: 21, color: color),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              label,
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  final String text;
+
+  const _SectionTitle(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuGroup extends StatelessWidget {
+  final List<_MenuEntry> children;
+
+  const _MenuGroup({required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      color: colors.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            children[i],
+            if (i != children.length - 1)
+              const Divider(height: 1, indent: 58),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MenuEntry extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _MenuEntry({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ListTile(
+      onTap: onTap,
+      leading: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: colors.primaryContainer.withValues(alpha: 0.62),
+          borderRadius: BorderRadius.circular(11),
+        ),
+        alignment: Alignment.center,
+        child: Icon(icon, size: 20, color: colors.onPrimaryContainer),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: Icon(Icons.chevron_right_rounded, color: colors.outline),
+    );
+  }
+}
 
 // 签到页面
 class _SignRankPage extends StatefulWidget {

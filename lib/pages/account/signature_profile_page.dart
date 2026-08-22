@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../widgets/app_state_view.dart';
 
 class SignatureProfilePage extends StatefulWidget {
   const SignatureProfilePage({super.key});
@@ -99,15 +100,16 @@ class _SignatureProfilePageState extends State<SignatureProfilePage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : _error != null
-              ? Center(child: Text(_error!))
+              ? AppStateView.error(message: _error!, onRetry: _load)
               : ListView(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
                   children: [
                     TextField(
                       controller: _bioController,
-                      maxLines: 3,
+                      minLines: 1,
+                      maxLines: 6,
                       maxLength: 200,
                       decoration: const InputDecoration(
                         labelText: '个人简介',
@@ -141,8 +143,8 @@ class _SignatureProfilePageState extends State<SignatureProfilePage> {
                     const SizedBox(height: 16),
                     TextField(
                       controller: _signatureController,
-                      minLines: 4,
-                      maxLines: 8,
+                      minLines: 1,
+                      maxLines: 10,
                       decoration: const InputDecoration(
                         labelText: '个性签名',
                         hintText: '支持论坛可接受的文本 / BBCode',

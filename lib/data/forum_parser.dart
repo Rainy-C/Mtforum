@@ -43,11 +43,26 @@ class ForumParser {
       final forumHref = forumEl?.attributes['href'] ?? '';
       final forumId = RegExp(r'forum-(\d+)').firstMatch(forumHref)?.group(1);
 
-      final bottomText = el.querySelector('.comiis_znalist_bottom')?.text ?? '';
-      final viewCount =
-          RegExp(r'(\d+)\s*阅读').firstMatch(bottomText)?.group(1);
-      final replyCount =
-          RegExp(r'(\d+)\s*评论').firstMatch(bottomText)?.group(1);
+      // 首页门户和板块页使用的 Comiis 模板并不完全一致。首页统计通常
+      // 在 .comiis_znalist_bottom，板块页则可能换成普通列表信息区域，
+      // 甚至只把“回复/浏览”直接写进当前 li。统一从多个候选区域和整条
+      // 帖子文本中取值，避免同一个 ThreadCard 在板块页缺少统计数据。
+      final statText = <String>[
+        el.querySelector('.comiis_znalist_bottom')?.text ?? '',
+        el.querySelector('.forumlist_li_info')?.text ?? '',
+        el.querySelector('.comiis_list_bottom')?.text ?? '',
+        el.querySelector('.comiis_forumlist_bottom')?.text ?? '',
+        el.querySelector('.list_info')?.text ?? '',
+        el.text,
+      ].join(' ');
+      final viewCount = _extractThreadCount(
+        statText,
+        labels: const ['阅读', '浏览', '查看'],
+      );
+      final replyCount = _extractThreadCount(
+        statText,
+        labels: const ['评论', '回复'],
+      );
       final likeCount = RegExp(r'num-all_\d+[^>]*>\s*(\d+)')
           .firstMatch(el.innerHtml)
           ?.group(1);
@@ -60,6 +75,38 @@ class ForumParser {
       );
 
       final timeEl = el.querySelector('.forumlist_li_time .f_d, span.f_d');
+
+      // 缩略图：取前三张（comiis_pyqlist_img 容器内的图片）。
+      final thumbnails = <String>[];
+      for (final img in el.querySelectorAll(
+        '.comiis_pyqlist_img img, .comiis_pyqlist_imgs img, .list_img img, .comiis_list_img img',
+      )) {
+        final src = img.attributes['file'] ??
+            img.attributes['data-src'] ??
+            img.attributes['data-original'] ??
+            img.attributes['src'];
+        final url = _absoluteUrl(src, baseUrl);
+        if (url != null &&
+            !url.contains('smiley') &&
+            !url.contains('/static/image/') &&
+            !thumbnails.contains(url)) {
+          thumbnails.add(url);
+          if (thumbnails.length >= 3) break;
+        }
+      }
+
+      // 隐藏内容标记：兼容文字提示以及模板中 showhide/replyhide
+      // 等隐藏区域标识。列表页只做“存在隐藏内容”的标记，不读取隐藏正文。
+      final itemText = _cleanInline(el.text);
+      final itemHtml = el.innerHtml.toLowerCase();
+      final hasHidden = itemText.contains('本内容被作者隐藏') ||
+          itemText.contains('回复后可见') ||
+          itemText.contains('回复可见') ||
+          itemText.contains('查看隐藏内容') ||
+          itemText.contains('隐藏内容') ||
+          itemHtml.contains('showhide') ||
+          itemHtml.contains('replyhide') ||
+          itemHtml.contains('hidecontent');
 
       result.add(Thread(
         tid: tid,
@@ -83,7 +130,9 @@ class ForumParser {
         viewCount: viewCount,
         likeCount: likeCount,
         lastReplyTime: _nullableText(timeEl?.text),
-        excerpt: _nullableText(el.querySelector('.list_body a')?.text),
+        excerpt: _cleanThreadExcerpt(el.querySelector('.list_body a')?.text),
+        thumbnails: thumbnails,
+        hasHiddenContent: hasHidden,
       ));
     }
 
@@ -176,6 +225,29 @@ class ForumParser {
         document.querySelector('textarea[name="message"]')?.text ??
         '';
 
+    // Discuz 移动端上传组件把 uid/hash 放在 JS 的 uploadformdata 中，
+    // 不是普通 input。附件上传必须使用这组页面级凭证，不能拿 formhash 代替。
+    final uploadBlock = RegExp(
+      r'''uploadformdata\s*:\s*\{([^}]*)\}''',
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(body)?.group(1) ?? '';
+    final uploadUid = RegExp(
+      r'''["']?uid["']?\s*:\s*["']?(\d+)["']?''',
+      caseSensitive: false,
+    ).firstMatch(uploadBlock)?.group(1) ?? '';
+    final uploadHash = RegExp(
+      r'''["']?hash["']?\s*:\s*["']([a-fA-F0-9]+)["']''',
+      caseSensitive: false,
+    ).firstMatch(uploadBlock)?.group(1) ?? '';
+    final maxUploadSizeKb = int.tryParse(
+          RegExp(
+            r'''maxfilesize\s*[:=]\s*["']?(\d+)["']?''',
+            caseSensitive: false,
+          ).firstMatch(body)?.group(1) ?? '',
+        ) ??
+        1024;
+
     return PostEditorForm(
       formhash: formhash,
       posttime: posttime,
@@ -189,6 +261,58 @@ class ForumParser {
       allowNoticeAuthor:
           valueOf('allownoticeauthor').isEmpty ? '1' : valueOf('allownoticeauthor'),
       useSig: valueOf('usesig').isEmpty ? '1' : valueOf('usesig'),
+      uploadUid: uploadUid,
+      uploadHash: uploadHash,
+      maxUploadSizeKb: maxUploadSizeKb,
+    );
+  }
+
+  PostAttachmentUploadResult parsePostAttachmentUploadResponse(String body) {
+    final raw = unwrapAjax(body).trim();
+    final markerIndex = raw.indexOf('DISCUZUPLOAD|');
+    if (markerIndex < 0) {
+      final text = html_parser.parseFragment(raw).text?.trim() ?? '';
+      return PostAttachmentUploadResult(
+        success: false,
+        message: text.isEmpty ? '附件上传失败' : text,
+      );
+    }
+
+    final payload = raw.substring(markerIndex).split(RegExp(r'[\r\n<]')).first;
+    final parts = payload.split('|');
+    if (parts.length < 4 || parts.first != 'DISCUZUPLOAD') {
+      return const PostAttachmentUploadResult(
+        success: false,
+        message: '附件上传响应格式异常',
+      );
+    }
+
+    final status = parts.length > 2 ? parts[2].trim() : '';
+    final aid = parts.length > 3 ? parts[3].trim() : '';
+    final relativePath = parts.length > 5 ? parts[5].trim() : '';
+    final fileName = parts.length > 6 ? parts[6].trim() : '';
+    final limitInfo = parts.length > 7 ? parts[7].trim() : '';
+
+    if (status != '0' || aid.isEmpty) {
+      final reason = limitInfo.isNotEmpty ? limitInfo : '服务器拒绝了附件';
+      return PostAttachmentUploadResult(
+        success: false,
+        message: '上传失败：$reason',
+        limitInfo: limitInfo,
+      );
+    }
+
+    final url = relativePath.isEmpty
+        ? ''
+        : 'https://cdn-bbs.mt2.cn/data/attachment/forum/$relativePath';
+    return PostAttachmentUploadResult(
+      success: true,
+      message: '上传成功',
+      aid: aid,
+      relativePath: relativePath,
+      fileName: fileName,
+      url: url,
+      limitInfo: limitInfo,
     );
   }
 
@@ -257,15 +381,17 @@ class ForumParser {
       final floor = explicitFloor ??
           (isOp ? '1' : '${(page - 1) * 10 + posts.length + 1}');
 
-      final replyToMatch = RegExp(
-        r'^\s*回复\s+(.+?)\s+发表于',
-        caseSensitive: false,
-      ).firstMatch(parsedMessage.text);
-
-      final repquote = fragment.querySelector('a[href*="repquote="]');
-      final repquotePid = RegExp(r'repquote=(\d+)')
-          .firstMatch(repquote?.attributes['href'] ?? '')
-          ?.group(1);
+      final replyRelation = _extractReplyRelation(rawMessage);
+      String? replyToName = replyRelation.name;
+      if ((replyToName == null || replyToName.isEmpty) &&
+          replyRelation.pid != null) {
+        for (final previous in posts.reversed) {
+          if (previous.pid == replyRelation.pid) {
+            replyToName = previous.authorName;
+            break;
+          }
+        }
+      }
 
       posts.add(Post(
         pid: pid,
@@ -279,8 +405,8 @@ class ForumParser {
         isOp: isOp,
         images: parsedMessage.images,
         richContent: parsedMessage.contents,
-        repquotePid: repquotePid,
-        replyToName: replyToMatch?.group(1)?.trim(),
+        repquotePid: replyRelation.pid,
+        replyToName: replyToName,
         hiddenHint: parsedMessage.hiddenHint,
         page: page,
       ));
@@ -339,23 +465,36 @@ class ForumParser {
 
     final fragment = html_parser.parseFragment(raw);
     final message = fragment.querySelector('.comiis_message_table') ??
-        fragment.querySelector('[class*="comiis_message_table"]');
+        fragment.querySelector('[class*="comiis_message_table"]') ??
+        fragment.querySelector('.comiis_message') ??
+        fragment.querySelector('[class*="comiis_message"]') ??
+        fragment.querySelector('.t_f') ??
+        fragment.querySelector('[id^="postmessage"]');
 
     if (message == null) {
+      // 最后回退：取整个片段的纯文本，避免正文完全空白。
+    // 最后回退：取整个片段的纯文本，避免正文完全空白。
       final fallbackText = _stripHtmlFallback(raw);
+      final anyText = fallbackText.isNotEmpty
+          ? fallbackText
+          : _cleanMultiline(fragment.text ?? '');
       return _ParsedMessage(
-        text: fallbackText,
+        text: anyText,
         images: _extractImagesFromRaw(raw, baseUrl),
-        contents: _parseBbCodeText(
-          fallbackText,
-          baseUrl: baseUrl,
+        contents: _promoteCommandSnippets(
+          _parseBbCodeText(
+            anyText,
+            baseUrl: baseUrl,
+          ),
         ),
       );
     }
 
     final images = <String>[];
     for (final image in message.querySelectorAll('.comiis_postimg img, img')) {
-      final candidate = image.attributes['file'] ??
+      final candidate = image.attributes['zoomfile'] ??
+          image.attributes['file'] ??
+          image.attributes['data-original'] ??
           image.attributes['data-src'] ??
           image.attributes['src'];
       final normalized = _absoluteUrl(candidate, baseUrl);
@@ -365,18 +504,48 @@ class ForumParser {
         continue;
       }
 
-      if (!images.contains(normalized)) {
+      if (_isPostContentImage(normalized, image) &&
+          !images.contains(normalized)) {
         images.add(normalized);
       }
     }
 
-    String? hiddenHint;
-    for (final quote in message.querySelectorAll('.comiis_quote').toList()) {
-      final text = _cleanInline(quote.text);
+    // Comiis/Discuz 部分模板会把附件图片节点放到正文容器之外，或者只把
+    // 真正的大图地址写在 zoomfile / data-original 上。列表页仍能拿到预览图，
+    // 但详情页只扫描 comiis_message_table 就会出现“外显有图，点进去没图”。
+    // 因此再从当前楼层原始片段补抓附件图片，并严格过滤头像/表情/站点图标。
+    for (final image in _extractContentImagesFromFloor(raw, baseUrl)) {
+      if (!images.contains(image)) {
+        images.add(image);
+      }
+    }
 
+    String? hiddenHint;
+    // Discuz/Comiis 的“回复可见”提示并不总是放在 .comiis_quote。
+    // 不同主题会使用 showhide / replyhide / hidecontent / locked 等容器。
+    // 只移除明确属于“隐藏提示”的节点；若用户已经有权限看到真实隐藏正文，
+    // 容器内容会继续交给富文本解析器渲染，避免误删真实内容。
+    for (final node in message.querySelectorAll('*').toList()) {
+      final classes = node.classes
+          .map((value) => value.toLowerCase())
+          .toList(growable: false);
+      final mayBeHiddenContainer = classes.any(
+        (value) =>
+            value == 'comiis_quote' ||
+            value.contains('showhide') ||
+            value.contains('replyhide') ||
+            value.contains('hidecontent') ||
+            value == 'locked' ||
+            value.contains('hide_notice'),
+      );
+      if (!mayBeHiddenContainer) {
+        continue;
+      }
+
+      final text = _cleanInline(node.text);
       if (_isHiddenPrompt(text)) {
         hiddenHint ??= text;
-        quote.remove();
+        node.remove();
       }
     }
 
@@ -389,6 +558,22 @@ class ForumParser {
       message,
       baseUrl: baseUrl,
     );
+
+    // 部分移动模板把普通附件列表放在 comiis_message_table 之后。
+    // 与图片相同，再从当前楼层范围补抓一次，并按 URL 去重。
+    final attachmentUrls = contents
+        .where((item) => item.type == PostContentType.attachment)
+        .map((item) => item.url)
+        .whereType<String>()
+        .toSet();
+    for (final attachment in _extractAttachmentsFromFloor(raw, baseUrl)) {
+      if (attachment.url == null || !attachmentUrls.contains(attachment.url)) {
+        contents.add(attachment);
+        if (attachment.url != null) {
+          attachmentUrls.add(attachment.url!);
+        }
+      }
+    }
 
     var cleanedHtml = message.innerHtml
         .replaceAll(
@@ -404,7 +589,7 @@ class ForumParser {
         )
         .replaceAll(RegExp(r'<[^>]+>'), ' ');
 
-    var text = _cleanMultiline(cleanedHtml);
+    var text = _cleanMultiline(_stripBbCodeRemains(cleanedHtml));
     if (text.isEmpty) {
       text = _stripHtmlFallback(raw);
     }
@@ -475,6 +660,196 @@ class ForumParser {
       );
     }
 
+    bool isAttachmentHref(String? href) {
+      if (href == null || href.trim().isEmpty) return false;
+      final lower = href.toLowerCase();
+      return lower.contains('mod=attachment') ||
+          lower.contains('attachment.php') ||
+          RegExp(r'(?:[?&]|&amp;)aid=').hasMatch(lower);
+    }
+
+    String attachmentName(html_dom.Element anchor) {
+      final downloadName = anchor.attributes['download']?.trim();
+      if (downloadName != null && downloadName.isNotEmpty) {
+        return downloadName;
+      }
+      final label = _cleanInline(anchor.text);
+      if (label.isNotEmpty && label != '下载附件' && label != '下载') {
+        return label;
+      }
+      final title = anchor.attributes['title']?.trim();
+      if (title != null && title.isNotEmpty) {
+        return title;
+      }
+      return '附件';
+    }
+
+    bool isRenderableInlineImage(html_dom.Element image) {
+      final candidate = image.attributes['zoomfile'] ??
+          image.attributes['file'] ??
+          image.attributes['data-original'] ??
+          image.attributes['data-src'] ??
+          image.attributes['src'];
+      final url = _absoluteUrl(candidate, baseUrl);
+      if (url == null) return false;
+      final lower = url.toLowerCase();
+      final isEmoji = image.attributes['smilieid'] != null ||
+          image.classes.any(
+            (value) => value.toLowerCase().contains('smilie'),
+          ) ||
+          lower.contains('/static/image/smiley/') ||
+          lower.contains('/static/image/smilies/') ||
+          lower.contains('smiley') ||
+          lower.contains('smilie');
+      return isEmoji || _isPostContentImage(url, image);
+    }
+
+    List<List<String>> tableRows(html_dom.Element table) {
+      final rows = <List<String>>[];
+      for (final tr in table.querySelectorAll('tr')) {
+        html_dom.Element? owner = tr.parent;
+        while (owner != null &&
+            (owner.localName ?? '').toLowerCase() != 'table') {
+          owner = owner.parent;
+        }
+        if (!identical(owner, table)) {
+          continue;
+        }
+        final cells = tr.children
+            .where((cell) {
+              final tag = (cell.localName ?? '').toLowerCase();
+              return tag == 'th' || tag == 'td';
+            })
+            .map((cell) {
+              final value = cell.innerHtml
+                  .replaceAll(
+                    RegExp(r'<br\s*/?>', caseSensitive: false),
+                    '\n',
+                  )
+                  .replaceAll(
+                    RegExp(r'</(?:p|div)>', caseSensitive: false),
+                    '\n',
+                  );
+              return _cleanMultiline(
+                html_parser.parseFragment(value).text ?? cell.text,
+              );
+            })
+            .toList(growable: false);
+        if (cells.isNotEmpty) {
+          rows.add(cells);
+        }
+      }
+      return rows;
+    }
+
+    List<PostContent> quoteInlineContents(html_dom.Element quote) {
+      final result = <PostContent>[];
+      final buffer = StringBuffer();
+
+      void flushQuoteText() {
+        if (buffer.isEmpty) return;
+        final value = _cleanMultiline(buffer.toString());
+        buffer.clear();
+        if (value.isEmpty) return;
+        result.addAll(_parseBbCodeText(value, baseUrl: baseUrl));
+      }
+
+      void walk(html_dom.Node child) {
+        if (child is html_dom.Text) {
+          buffer.write(child.text);
+          return;
+        }
+        if (child is! html_dom.Element) return;
+
+        final tag = (child.localName ?? '').toLowerCase();
+        switch (tag) {
+          case 'br':
+            buffer.write('\n');
+            return;
+          case 'h1':
+          case 'h2':
+          case 'h3':
+          case 'h4':
+          case 'strong':
+          case 'b':
+            flushQuoteText();
+            final label = _cleanInline(child.text);
+            if (label.isNotEmpty) {
+              result.add(PostContent.bold(label));
+              // Comiis 的隐藏内容标题通常是块级 h2，链接应显示在下一行。
+              if (tag.startsWith('h')) {
+                result.add(PostContent.text('\n'));
+              }
+            }
+            return;
+          case 'a':
+            final rawHref = child.attributes['href'];
+            final href = _absoluteUrl(rawHref, baseUrl);
+            final label = _cleanInline(child.text);
+            if (href != null &&
+                href.isNotEmpty &&
+                !href.toLowerCase().startsWith('javascript:')) {
+              flushQuoteText();
+              result.add(PostContent.link(label.isEmpty ? href : label, href));
+            } else {
+              buffer.write(child.text);
+            }
+            return;
+          case 'span':
+          case 'p':
+          case 'div':
+            for (final nested in child.nodes) {
+              walk(nested);
+            }
+            if (tag == 'p' || tag == 'div') buffer.write('\n');
+            return;
+          default:
+            for (final nested in child.nodes) {
+              walk(nested);
+            }
+        }
+      }
+
+      for (final child in quote.nodes) {
+        walk(child);
+      }
+      flushQuoteText();
+
+      // 去掉标题块产生的末尾纯换行，避免卡片底部多出空行。
+      while (result.isNotEmpty &&
+          result.last.type == PostContentType.text &&
+          result.last.text.trim().isEmpty) {
+        result.removeLast();
+      }
+      return result;
+    }
+
+    int tableHeaderRows(html_dom.Element table) {
+      var count = 0;
+      for (final tr in table.querySelectorAll('tr')) {
+        html_dom.Element? owner = tr.parent;
+        while (owner != null &&
+            (owner.localName ?? '').toLowerCase() != 'table') {
+          owner = owner.parent;
+        }
+        if (!identical(owner, table)) {
+          continue;
+        }
+        final directCells = tr.children.where((cell) {
+          final tag = (cell.localName ?? '').toLowerCase();
+          return tag == 'th' || tag == 'td';
+        }).toList(growable: false);
+        if (directCells.isEmpty) continue;
+        if (directCells.any((cell) =>
+            (cell.localName ?? '').toLowerCase() == 'th')) {
+          count++;
+        } else {
+          break;
+        }
+      }
+      return count;
+    }
+
     void processNode(html_dom.Node node) {
       if (node is html_dom.Text) {
         textBuffer.write(node.text);
@@ -488,7 +863,62 @@ class ForumParser {
       final tag = (node.localName ?? '').toLowerCase();
       final classes = node.classes;
 
-      if (classes.contains('comiis_blockcode')) {
+      final lowerClasses = classes.map((value) => value.toLowerCase());
+      final nodeId = (node.attributes['id'] ?? '').toLowerCase();
+      final isCodeContainer = lowerClasses.any(
+            (value) => value == 'blockcode' || value.contains('blockcode'),
+          ) ||
+          nodeId.startsWith('code_') ||
+          node.attributes['data-type']?.toLowerCase() == 'code';
+
+      if (tag == 'table') {
+        final rows = tableRows(node);
+        if (rows.isNotEmpty) {
+          flushText();
+          contents.add(
+            PostContent.table(
+              rows,
+              headerRows: tableHeaderRows(node),
+            ),
+          );
+        }
+        return;
+      }
+
+      final isAttachmentContainer = lowerClasses.any(
+        (value) =>
+            value == 'tattl' ||
+            value == 'attm' ||
+            value == 'attachment' ||
+            value == 'attachments' ||
+            value == 'attachlist' ||
+            value == 'comiis_attach' ||
+            value == 'comiis_attachment',
+      );
+      if (isAttachmentContainer) {
+        var added = false;
+        for (final anchor in node.querySelectorAll('a')) {
+          final href = anchor.attributes['href'];
+          if (!isAttachmentHref(href)) continue;
+          if (anchor.querySelectorAll('img').any(isRenderableInlineImage)) {
+            continue;
+          }
+          final url = _absoluteUrl(href, baseUrl);
+          flushText();
+          contents.add(
+            PostContent.attachment(
+              attachmentName(anchor),
+              url: url,
+            ),
+          );
+          added = true;
+        }
+        if (added) {
+          return;
+        }
+      }
+
+      if (isCodeContainer) {
         flushText();
         final code = codeText(node);
         if (code.isNotEmpty) {
@@ -498,6 +928,62 @@ class ForumParser {
       }
 
       if (classes.contains('comiis_quote')) {
+        // Comiis 同时会把普通引用和“已解锁的隐藏内容/下载内容”放进
+        // .comiis_quote。后者内部可能包含真正的 <a href>、附件或图片。
+        // 旧逻辑直接 node.text 会把它们全部压平成纯文字，例如：
+        //   本帖隐藏的内容：下载链接
+        // 从而导致“下载链接”无法点击。
+        final hasUsefulAnchor = node.querySelectorAll('a[href]').any((anchor) {
+          final rawHref = (anchor.attributes['href'] ?? '')
+              .replaceAll('&amp;', '&')
+              .trim();
+          if (rawHref.isEmpty ||
+              rawHref.toLowerCase().startsWith('javascript:')) {
+            return false;
+          }
+          final lower = rawHref.toLowerCase();
+          return !lower.contains('action=reply') &&
+              !lower.contains('repquote=') &&
+              !lower.contains('showmessage(');
+        });
+        final hasRenderableImage =
+            node.querySelectorAll('img').any(isRenderableInlineImage);
+        final hasAttachment = node.querySelectorAll('a[href]').any(
+              (anchor) => isAttachmentHref(anchor.attributes['href']),
+            );
+        final hasRawLink = RegExp(
+          r'''(?:https?://|www\.|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}/)''',
+          caseSensitive: false,
+        ).hasMatch(node.text);
+
+        if ((hasUsefulAnchor || hasRawLink) &&
+            !hasRenderableImage &&
+            !hasAttachment) {
+          // 已解锁隐藏内容最常见的真实结构：
+          // <div class="comiis_quote">
+          //   <h2>本帖隐藏的内容:</h2>
+          //   <a href="...">下载链接</a>
+          // </div>
+          // 保留 quote 卡片视觉，同时让内部链接维持可点击语义。
+          final children = quoteInlineContents(node);
+          if (children.isNotEmpty) {
+            flushText();
+            contents.add(PostContent.richQuote(children));
+            return;
+          }
+        }
+
+        if (hasRenderableImage || hasAttachment) {
+          // 图片/附件结构继续按完整富文本递归，避免丢失媒体。
+          flushText();
+          for (final child in node.nodes) {
+            processNode(child);
+          }
+          flushText();
+          return;
+        }
+
+        // 纯文字引用仍维持原来的引用卡片样式。
         flushText();
         final quote = _cleanMultiline(node.text);
         if (quote.isNotEmpty) {
@@ -511,6 +997,37 @@ class ForumParser {
             value.toLowerCase().contains('free') ||
             value.toLowerCase().contains('showhide'),
       )) {
+        // 已解锁的隐藏/付费内容里经常包含真实 <a href>、图片或裸链接。
+        // 旧逻辑直接 node.text 压平成 PostContent.free，会把下载地址吃掉，
+        // 最终只能看到“下载链接”几个字。只对纯提示文本使用 free 卡片；
+        // 一旦容器中存在可交互内容，就继续按普通富文本递归解析。
+        final usefulAnchor = node.querySelectorAll('a[href]').any((anchor) {
+          final href = (anchor.attributes['href'] ?? '')
+              .replaceAll('&amp;', '&')
+              .trim();
+          if (href.isEmpty || href.toLowerCase().startsWith('javascript:')) {
+            return false;
+          }
+          final lower = href.toLowerCase();
+          return !lower.contains('action=reply') &&
+              !lower.contains('repquote=') &&
+              !lower.contains('showmessage(');
+        });
+        final hasImage = node.querySelectorAll('img').any(isRenderableInlineImage);
+        final hasRawLink = RegExp(
+          r'''(?:https?://|www\.|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}/)''',
+          caseSensitive: false,
+        ).hasMatch(node.text);
+
+        if (usefulAnchor || hasImage || hasRawLink) {
+          flushText();
+          for (final child in node.nodes) {
+            processNode(child);
+          }
+          flushText();
+          return;
+        }
+
         final freeText = _cleanMultiline(node.text);
         if (freeText.isNotEmpty) {
           flushText();
@@ -534,8 +1051,35 @@ class ForumParser {
           return;
 
         case 'a':
-          final href = _absoluteUrl(node.attributes['href'], baseUrl);
+          final rawHref = node.attributes['href'];
+          final href = _absoluteUrl(rawHref, baseUrl);
           final label = _cleanInline(node.text);
+
+          // Discuz 图片通常被 <a> 包裹用于 Web 端放大查看。
+          // 若先按普通链接处理，会吞掉内部 img，最终只能依赖“游离图片”补偿，
+          // 图片顺序也会错。这里优先保留图片/表情节点。
+          final wrappedImages = node
+              .querySelectorAll('img')
+              .where(isRenderableInlineImage)
+              .toList(growable: false);
+          if (wrappedImages.isNotEmpty) {
+            flushText();
+            for (final image in wrappedImages) {
+              processNode(image);
+            }
+            return;
+          }
+
+          if (isAttachmentHref(rawHref)) {
+            flushText();
+            contents.add(
+              PostContent.attachment(
+                attachmentName(node),
+                url: href,
+              ),
+            );
+            return;
+          }
 
           if (href != null &&
               href.isNotEmpty &&
@@ -553,7 +1097,9 @@ class ForumParser {
           return;
 
         case 'img':
-          final rawUrl = node.attributes['file'] ??
+          final rawUrl = node.attributes['zoomfile'] ??
+              node.attributes['file'] ??
+              node.attributes['data-original'] ??
               node.attributes['data-src'] ??
               node.attributes['src'];
           final url = _absoluteUrl(rawUrl, baseUrl);
@@ -563,10 +1109,16 @@ class ForumParser {
 
           flushText();
 
+          final lowerUrl = url.toLowerCase();
           final isEmoji =
               node.attributes['smilieid'] != null ||
-              url.contains('/static/image/smiley/') ||
-              url.contains('smiley');
+              node.classes.any(
+                (value) => value.toLowerCase().contains('smilie'),
+              ) ||
+              lowerUrl.contains('/static/image/smiley/') ||
+              lowerUrl.contains('/static/image/smilies/') ||
+              lowerUrl.contains('smiley') ||
+              lowerUrl.contains('smilie');
 
           if (isEmoji) {
             contents.add(PostContent.emoji(url));
@@ -660,7 +1212,7 @@ class ForumParser {
     }
 
     flushText();
-    return _normalizeRichContents(contents);
+    return _promoteCommandSnippets(_normalizeRichContents(contents));
   }
 
   /// 兼容极少数页面仍把 BBCode 原文直接塞进正文的情况。
@@ -683,7 +1235,9 @@ class ForumParser {
       r'|\[flash\](.*?)\[/flash\]'
       r'|\[quote\](.*?)\[/quote\]'
       r'|\[code\](.*?)\[/code\]'
-      r'|\[free\](.*?)\[/free\]',
+      r'|\[free\](.*?)\[/free\]'
+      r'|\[attach\](.*?)\[/attach\]'
+      r'|\[attachimg\](.*?)\[/attachimg\]',
       caseSensitive: false,
       dotAll: true,
     );
@@ -736,6 +1290,17 @@ class ForumParser {
         result.add(PostContent.code(match.group(8)!.trim()));
       } else if (match.group(9) != null) {
         result.add(PostContent.free(match.group(9)!.trim()));
+      } else if (match.group(10) != null || match.group(11) != null) {
+        final aid = (match.group(10) ?? match.group(11) ?? '').trim();
+        final url = aid.isEmpty
+            ? null
+            : '$baseUrl/forum.php?mod=attachment&aid=$aid';
+        result.add(
+          PostContent.attachment(
+            aid.isEmpty ? '附件' : '附件 #$aid',
+            url: url,
+          ),
+        );
       }
 
       cursor = match.end;
@@ -763,6 +1328,27 @@ class ForumParser {
     return _normalizeRichContents(result);
   }
 
+  /// 清理未匹配/未闭合的 BBCode 残留标记，避免原样显示给用户。
+  String _stripBbCodeRemains(String input) {
+    return input
+        .replaceAll(
+          RegExp(r'\[url=[^\]]*\]', caseSensitive: false),
+          '',
+        )
+        .replaceAll(
+          RegExp(
+              r'\[/(?:url|img|audio|media|flash|quote|code|free|hide|attach|attachimg)\]',
+              caseSensitive: false),
+          '',
+        )
+        .replaceAll(
+          RegExp(
+              r'\[(?:url|img|audio|media|flash|quote|code|free|hide|attach|attachimg)\]',
+              caseSensitive: false),
+          '',
+        );
+  }
+
   void _appendLinkifiedText(
     List<PostContent> output,
     String input, {
@@ -771,6 +1357,13 @@ class ForumParser {
     if (input.isEmpty) {
       return;
     }
+
+    // 清理未匹配/未闭合的 BBCode 残留标记，避免原样显示给用户。
+    final cleaned = _stripBbCodeRemains(input);
+    if (cleaned.isEmpty) {
+      return;
+    }
+    input = cleaned;
 
     final linkPattern = RegExp(
       r'''(?:(?:https?://|www\.)[^\s<>"']+|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:/[^\s<>"']*)?)''',
@@ -875,15 +1468,238 @@ class ForumParser {
     return result;
   }
 
+  /// 将论坛里没有包进 [code]/<pre> 的常见命令行片段提升为代码块。
+  ///
+  /// 一些帖子会写成“启动： npx ...”或“安装： git clone <自动链接>”，
+  /// Discuz 会把 URL 单独转成 <a>，原解析只能显示成普通段落。这里采用
+  /// 保守规则：仅识别明显的命令前缀，并要求出现在行首或冒号之后。
+  List<PostContent> _promoteCommandSnippets(List<PostContent> input) {
+    final result = <PostContent>[];
+    final commandPattern = RegExp(
+      r'(^|[\n：:]\s*)('
+      r'git\s+clone(?:[ \t]+[^\n]+)?'
+      r'|(?:npx|curl|wget)(?:[ \t]+[^\n]+)?'
+      r'|(?:npm|pnpm|yarn|adb|fastboot|flutter|dart|python(?:3)?|pip(?:3)?|docker|go|cargo|gradle|\./gradlew)[ \t]+[^\n]+'
+      r')',
+      caseSensitive: false,
+      multiLine: true,
+    );
+
+    bool mayAppendAdjacentLink(String command) {
+      final value = command.trim();
+      if (RegExp(r'[，。；！？：\u4e00-\u9fff]').hasMatch(value)) {
+        return false;
+      }
+      return RegExp(
+        r'^(?:git\s+clone|npx|curl|wget|npm\s+(?:i|install)|pnpm\s+(?:add|dlx)|yarn\s+(?:add|dlx))\b',
+        caseSensitive: false,
+      ).hasMatch(value);
+    }
+
+    var i = 0;
+    while (i < input.length) {
+      final item = input[i];
+      if (item.type != PostContentType.text) {
+        result.add(item);
+        i++;
+        continue;
+      }
+
+      final text = item.text;
+      final matches = commandPattern.allMatches(text).toList();
+      if (matches.isEmpty) {
+        result.add(item);
+        i++;
+        continue;
+      }
+
+      var cursor = 0;
+      var consumeNextLink = false;
+      for (final match in matches) {
+        final commandStart = match.start + (match.group(1)?.length ?? 0);
+        if (commandStart > cursor) {
+          final prefix = text.substring(cursor, commandStart).trimRight();
+          if (prefix.isNotEmpty) {
+            result.add(PostContent.text(prefix));
+          }
+        }
+
+        var command = text.substring(commandStart, match.end).trim();
+
+        // Discuz 会自动把命令参数里的 URL 拆成独立 <a> 节点。
+        // 例如“git clone https://...”和“npx https://...”。
+        // 仅当命令位于当前文本节点末尾、且命令本身没有中文说明时拼接，
+        // 避免误吞后面的普通文档链接。
+        if (match.end == text.length &&
+            mayAppendAdjacentLink(command) &&
+            i + 1 < input.length &&
+            input[i + 1].type == PostContentType.link) {
+          final link = input[i + 1];
+          final target = (link.url?.trim().isNotEmpty == true)
+              ? link.url!.trim()
+              : link.text.trim();
+          if (target.isNotEmpty) {
+            command = '$command $target';
+            consumeNextLink = true;
+          }
+        }
+
+        result.add(PostContent.code(command));
+        cursor = match.end;
+      }
+
+      if (cursor < text.length) {
+        final suffix = text.substring(cursor).trimLeft();
+        if (suffix.isNotEmpty) {
+          result.add(PostContent.text(suffix));
+        }
+      }
+
+      if (consumeNextLink) {
+        i++;
+      }
+      i++;
+    }
+
+    return _normalizeRichContents(result);
+  }
+
+  bool _isPostContentImage(String url, html_dom.Element image) {
+    final lower = url.toLowerCase();
+    final classes = image.classes.map((value) => value.toLowerCase()).toSet();
+    if (lower.contains('smiley') ||
+        lower.contains('/static/image/') ||
+        lower.contains('avatar.php') ||
+        lower.contains('/uc_server/avatar') ||
+        classes.contains('top_tximg') ||
+        classes.contains('avatar')) {
+      return false;
+    }
+
+    var insidePostBody = false;
+    var insideAttachmentContainer = false;
+    html_dom.Element? parent = image.parent;
+    while (parent != null) {
+      final parentClasses =
+          parent.classes.map((value) => value.toLowerCase()).toList();
+      if (parentClasses.any(
+        (value) =>
+            value.contains('comiis_message') ||
+            value.contains('comiis_postimg') ||
+            value == 't_f',
+      )) {
+        insidePostBody = true;
+      }
+      if (parentClasses.any(
+        (value) =>
+            value.contains('attachment') ||
+            value.contains('attachlist') ||
+            value.contains('comiis_attach') ||
+            value == 't_att' ||
+            value == 'pattl',
+      )) {
+        insideAttachmentContainer = true;
+      }
+      parent = parent.parent;
+    }
+
+    // 楼层补图扫描会遍历 pid 块中的所有 <img>。Comiis 会在“最新评论”
+    // 以及固定楼层间插入板块/推荐模块，这些图标通常位于
+    // /data/attachment/common/ 或其他普通图片 URL。过去只要 URL 以
+    // .png/.jpg 结尾就会被当成帖子图片，因此出现“每隔若干楼混入板块图标”。
+    //
+    // 正文里的普通外链图片已经由 insidePostBody 覆盖；正文外只允许明确的
+    // 帖子附件特征（forum 附件目录、aid、zoomfile/file 或附件容器）。
+    return insidePostBody ||
+        insideAttachmentContainer ||
+        lower.contains('/data/attachment/forum/') ||
+        image.attributes['aid'] != null ||
+        image.attributes['zoomfile'] != null ||
+        image.attributes['file'] != null ||
+        classes.contains('zoom');
+  }
+
+  List<String> _extractContentImagesFromFloor(String raw, String baseUrl) {
+    final fragment = html_parser.parseFragment(raw);
+    final result = <String>[];
+
+    for (final image in fragment.querySelectorAll('img')) {
+      final candidate = image.attributes['zoomfile'] ??
+          image.attributes['file'] ??
+          image.attributes['data-original'] ??
+          image.attributes['data-src'] ??
+          image.attributes['src'];
+      final url = _absoluteUrl(candidate, baseUrl);
+      if (url == null || !_isPostContentImage(url, image)) {
+        continue;
+      }
+      if (!result.contains(url)) {
+        result.add(url);
+      }
+    }
+
+    return result;
+  }
+
+  List<PostContent> _extractAttachmentsFromFloor(
+    String raw,
+    String baseUrl,
+  ) {
+    final fragment = html_parser.parseFragment(raw);
+    final result = <PostContent>[];
+    final seen = <String>{};
+
+    for (final anchor in fragment.querySelectorAll('a')) {
+      final rawHref = anchor.attributes['href'];
+      if (rawHref == null || rawHref.trim().isEmpty) continue;
+      final lower = rawHref.toLowerCase();
+      final isAttachment = lower.contains('mod=attachment') ||
+          lower.contains('attachment.php') ||
+          RegExp(r'(?:[?&]|&amp;)aid=').hasMatch(lower);
+      if (!isAttachment) continue;
+
+      final wrapsPostImage = anchor.querySelectorAll('img').any((image) {
+        final candidate = image.attributes['zoomfile'] ??
+            image.attributes['file'] ??
+            image.attributes['data-original'] ??
+            image.attributes['data-src'] ??
+            image.attributes['src'];
+        final imageUrl = _absoluteUrl(candidate, baseUrl);
+        return imageUrl != null && _isPostContentImage(imageUrl, image);
+      });
+      if (wrapsPostImage) continue;
+
+      final url = _absoluteUrl(rawHref, baseUrl);
+      final dedupeKey = url ?? rawHref;
+      if (!seen.add(dedupeKey)) continue;
+
+      var name = _cleanInline(anchor.text);
+      if (name.isEmpty || name == '下载附件' || name == '下载') {
+        name = anchor.attributes['download']?.trim() ??
+            anchor.attributes['title']?.trim() ??
+            '附件';
+      }
+      result.add(PostContent.attachment(name, url: url));
+    }
+
+    return result;
+  }
+
   List<String> _extractImagesFromRaw(String raw, String baseUrl) {
     final result = <String>[];
     final pattern = RegExp(
-      r'''<img\b[^>]*(?:src|file|data-src)\s*=\s*['"]([^'"]+)['"][^>]*>''',
+      r'''<img\b[^>]*(?:zoomfile|file|data-original|data-src|src)\s*=\s*['"]([^'"]+)['"][^>]*>''',
       caseSensitive: false,
     );
     for (final match in pattern.allMatches(raw)) {
       final url = _absoluteUrl(match.group(1), baseUrl);
-      if (url == null || url.contains('smiley')) continue;
+      if (url == null ||
+          url.contains('smiley') ||
+          url.contains('/static/image/') ||
+          url.contains('avatar.php') ||
+          url.contains('/uc_server/avatar')) {
+        continue;
+      }
       if (!result.contains(url)) result.add(url);
     }
     return result;
@@ -933,10 +1749,148 @@ class ForumParser {
   }
 
   bool _isHiddenPrompt(String text) {
-    return text.contains('如果您要查看本帖隐藏内容请回复') ||
-        text.contains('回复后可见') ||
-        text.contains('回复可见') ||
-        (text.contains('隐藏内容') && text.contains('请回复'));
+    final normalized = _cleanInline(text);
+    return normalized.contains('如果您要查看本帖隐藏内容请回复') ||
+        normalized.contains('回复后可见') ||
+        normalized.contains('回复可见') ||
+        normalized.contains('回复后才可见') ||
+        normalized.contains('回复后才可以查看') ||
+        normalized.contains('回复后才可以浏览') ||
+        normalized.contains('需要回复才可以查看') ||
+        normalized.contains('需要回复才可以浏览') ||
+        normalized.contains('需要回复才能看到') ||
+        normalized.contains('需要回复才能查看') ||
+        normalized.contains('您没有权限查看') ||
+        normalized.contains('没有权限查看') ||
+        normalized.contains('无权查看') ||
+        (normalized.contains('阅读权限') && normalized.contains('不足')) ||
+        (normalized.contains('隐藏内容') &&
+            (normalized.contains('请回复') || normalized.contains('回复')));
+  }
+
+  String? _extractThreadCount(
+    String text, {
+    required List<String> labels,
+  }) {
+    final normalized = _cleanInline(text);
+    for (final label in labels) {
+      final valueFirst = RegExp(
+        '(\\d+)\\s*${RegExp.escape(label)}',
+        caseSensitive: false,
+      ).firstMatch(normalized)?.group(1);
+      if (valueFirst != null && valueFirst.isNotEmpty) return valueFirst;
+
+      final labelFirst = RegExp(
+        '${RegExp.escape(label)}\\s*[:：]?\\s*(\\d+)',
+        caseSensitive: false,
+      ).firstMatch(normalized)?.group(1);
+      if (labelFirst != null && labelFirst.isNotEmpty) return labelFirst;
+    }
+    return null;
+  }
+
+  _ReplyRelation _extractReplyRelation(String rawMessage) {
+    if (rawMessage.trim().isEmpty) {
+      return const _ReplyRelation();
+    }
+
+    final fragment = html_parser.parseFragment(rawMessage);
+    final candidates = <html_dom.Element>[
+      ...fragment.querySelectorAll('.comiis_quote'),
+      ...fragment.querySelectorAll('blockquote'),
+      ...fragment.querySelectorAll('.quote'),
+    ];
+
+    for (final quote in candidates) {
+      final quoteText = _cleanInline(quote.text);
+      if (quoteText.isEmpty) continue;
+
+      String? pid;
+      for (final anchor in quote.querySelectorAll('a[href]')) {
+        final href = (anchor.attributes['href'] ?? '')
+            .replaceAll('&amp;', '&');
+        if (!href.contains('goto=findpost') && !href.contains('pid=')) {
+          continue;
+        }
+        final match = RegExp(r'(?:[?&]|^)pid=(\d+)').firstMatch(href);
+        if (match != null) {
+          pid = match.group(1);
+          break;
+        }
+      }
+
+      String? name;
+      final patterns = <RegExp>[
+        RegExp(r'(?:^|\s)回复\s+(.+?)\s+(?:的帖子|发表于)'),
+        RegExp(r'(?:^|\s)([^\s].*?)\s+发表于\s+\d{4}[-/.年]'),
+        RegExp(r'(?:^|\s)([^\s].*?)\s+发表于\s+(?:今天|昨天|前天|\d+\s*小时前)'),
+      ];
+      for (final pattern in patterns) {
+        final match = pattern.firstMatch(quoteText);
+        if (match != null) {
+          final value = _cleanInline(match.group(1) ?? '');
+          if (value.isNotEmpty &&
+              !value.contains('本帖隐藏') &&
+              !value.contains('隐藏的内容')) {
+            name = value;
+            break;
+          }
+        }
+      }
+
+      if (pid != null || name != null) {
+        return _ReplyRelation(pid: pid, name: name);
+      }
+    }
+
+    // 桌面/部分模板会把被回复楼层写成 redirect/findpost 链接，
+    // 即使 HTML parser 修复了 DOM，也可以从原始正文中回退提取父 PID。
+    final rawPid = RegExp(
+      r'''(?:goto=findpost[^"'<>]*?[?&]|[?&])pid=(\d+)''',
+      caseSensitive: false,
+    ).firstMatch(rawMessage)?.group(1);
+
+    final plain = _cleanInline(fragment.text ?? '');
+    String? rawName;
+    for (final pattern in <RegExp>[
+      RegExp(r'(?:^|\s)回复\s+(.+?)\s+(?:的帖子|发表于)'),
+      RegExp(r'(?:^|\s)([^\s].*?)\s+发表于\s+\d{4}[-/.年]'),
+    ]) {
+      final match = pattern.firstMatch(plain);
+      if (match != null) {
+        final value = _cleanInline(match.group(1) ?? '');
+        if (value.isNotEmpty) {
+          rawName = value;
+          break;
+        }
+      }
+    }
+
+    return _ReplyRelation(pid: rawPid, name: rawName);
+  }
+
+  String? _cleanThreadExcerpt(String? value) {
+    if (value == null) return null;
+
+    var cleaned = _cleanInline(value);
+    // 列表已经通过 hasHiddenContent 显示“隐藏”标记，摘要中继续显示
+    // Discuz/Comiis 的隐藏占位提示只会重复占空间并影响阅读。这里只
+    // 过滤模板提示，不尝试恢复或泄露真正的隐藏正文。
+    cleaned = cleaned
+        .replaceAll(
+          RegExp(r'[*＊\s]*本(?:帖)?内容被作者隐藏[*＊\s]*'),
+          ' ',
+        )
+        .replaceAll(
+          RegExp(r'[*＊\s]*本帖隐藏的内容\s*[:：]?[*＊\s]*'),
+          ' ',
+        )
+        .replaceAll(
+          RegExp(r'[*＊\s]*(?:回复后可见|回复可见|查看隐藏内容)[*＊\s]*'),
+          ' ',
+        );
+    cleaned = _cleanInline(cleaned);
+    return cleaned.isEmpty ? null : cleaned;
   }
 
   String? _nullableText(String? value) {
@@ -989,6 +1943,13 @@ class ForumParser {
     if (value.startsWith('/')) return '$baseUrl$value';
     return '$baseUrl/$value';
   }
+}
+
+class _ReplyRelation {
+  final String? pid;
+  final String? name;
+
+  const _ReplyRelation({this.pid, this.name});
 }
 
 class _ParsedMessage {

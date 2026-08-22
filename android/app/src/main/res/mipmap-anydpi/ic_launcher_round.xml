@@ -2,34 +2,21 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp"
     android:height="48dp"
-    android:viewportWidth="200"
-    android:viewportHeight="200">
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <!-- Rounded blue background from the supplied SVG -->
     <path
-        android:pathData="M28,8 H172 Q192,8 192,28 V172 Q192,192 172,192 H28 Q8,192 8,172 V28 Q8,8 28,8 Z"
-        android:fillColor="#F7F8FC" />
-    <group
-        android:translateX="23"
-        android:translateY="36">
-        <path
-            android:pathData="M20,108 L48,56 L60,76 L80,52 L100,32 Q108,20 122,20 L134,20"
-            android:fillColor="@android:color/transparent"
-            android:strokeColor="#182463"
-            android:strokeWidth="12"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="M122,26 L122,108"
-            android:fillColor="@android:color/transparent"
-            android:strokeColor="#182463"
-            android:strokeWidth="12"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="M98,42 L98,108"
-            android:fillColor="@android:color/transparent"
-            android:strokeColor="#182463"
-            android:strokeWidth="12"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-    </group>
+        android:fillColor="#FF6FA3FF"
+        android:pathData="M128,0 H384 A128,128 0,0 1,512 128 V384 A128,128 0,0 1,384 512 H128 A128,128 0,0 1,0 384 V128 A128,128 0,0 1,128 0 Z" />
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M128,168 A30,30 0,0 1,158 138 H228 L254,168 H384 A30,30 0,0 1,414 198 V310 A30,30 0,0 1,384 340 H344 L306,382 V340 H158 A30,30 0,0 1,128 310 Z" />
+    <path
+        android:fillColor="#FF6FA3FF"
+        android:pathData="M182,232 H212 L242,288 L272,232 H302 V320 H280 V262 L254,310 H230 L204,262 V320 H182 Z" />
+    <path
+        android:fillColor="#FF6FA3FF"
+        android:pathData="M312,232 H378 V254 H356 V320 H334 V254 H312 Z" />
 </vector>

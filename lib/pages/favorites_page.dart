@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
-import 'thread_detail_page.dart';
+import '../widgets/app_state_view.dart';
+import '../routes/thread_routes.dart';
 
 class FavoritesPage extends StatefulWidget {
   const FavoritesPage({super.key});
@@ -141,9 +142,7 @@ class _FavoritesPageState extends State<FavoritesPage>
     if (item.isThread) {
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => ThreadDetailPage(tid: item.tid!),
-        ),
+        buildThreadRoute(item.tid!),
       );
       return;
     }
@@ -177,12 +176,12 @@ class _FavoritesPageState extends State<FavoritesPage>
           if (_loading)
             const SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(child: CircularProgressIndicator()),
+              child: AppStateView.loading(),
             )
           else if (_error != null)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: _FavoriteError(
+              child: AppStateView.error(
                 message: _error!,
                 onRetry: _reload,
               ),
@@ -190,18 +189,15 @@ class _FavoritesPageState extends State<FavoritesPage>
           else if (_items.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(
-                child: Text(
-                  '暂无收藏',
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.outline,
-                  ),
-                ),
+              child: const AppStateView.empty(
+                icon: Icons.bookmark_border_rounded,
+                title: '暂无收藏',
+                message: '收藏的帖子会出现在这里。',
               ),
             )
           else
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 20),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {

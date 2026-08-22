@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../widgets/app_state_view.dart';
 
 class InvitePage extends StatefulWidget {
   const InvitePage({super.key});
@@ -52,9 +53,9 @@ class _InvitePageState extends State<InvitePage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : _error != null
-              ? Center(child: Text(_error!))
+              ? AppStateView.error(message: _error!, onRetry: _load)
               : Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),

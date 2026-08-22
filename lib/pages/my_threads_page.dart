@@ -1,12 +1,22 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
-import 'thread_detail_page.dart';
+import '../widgets/app_state_view.dart';
+import '../widgets/thread_card.dart';
+import '../routes/thread_routes.dart';
 
 class MyThreadsPage extends StatefulWidget {
-  const MyThreadsPage({super.key});
+  final String? uid;
+  final String? username;
+  final String initialType;
+
+  const MyThreadsPage({
+    super.key,
+    this.uid,
+    this.username,
+    this.initialType = 'thread',
+  });
 
   @override
   State<MyThreadsPage> createState() => _MyThreadsPageState();
@@ -19,8 +29,8 @@ class _MyThreadsPageState extends State<MyThreadsPage>
 
   late final TabController _tabController;
 
-  final _types = const ['thread', 'reply', 'postcomment'];
-  final _labels = const ['主题', '回复', '点评'];
+  late final List<String> _types;
+  late final List<String> _labels;
 
   List<Thread> _items = [];
   int _page = 1;
@@ -32,7 +42,19 @@ class _MyThreadsPageState extends State<MyThreadsPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: _types.length, vsync: this);
+    if (widget.uid == null) {
+      _types = const ['thread', 'reply', 'postcomment'];
+      _labels = const ['主题', '回复', '点评'];
+    } else {
+      _types = const ['thread', 'reply'];
+      _labels = const ['主题', '回复'];
+    }
+    final initialIndex = _types.indexOf(widget.initialType);
+    _tabController = TabController(
+      length: _types.length,
+      initialIndex: initialIndex < 0 ? 0 : initialIndex,
+      vsync: this,
+    );
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
         _reload();
@@ -74,10 +96,14 @@ class _MyThreadsPageState extends State<MyThreadsPage>
     });
 
     try {
-      final items = await _api.getMyThreads(
-        type: _types[_tabController.index],
-        page: 1,
-      );
+      final type = _types[_tabController.index];
+      final items = widget.uid == null
+          ? await _api.getMyThreads(type: type, page: 1)
+          : await _api.getUserThreads(
+              uid: widget.uid!,
+              type: type,
+              page: 1,
+            );
       if (!mounted) {
         return;
       }
@@ -107,10 +133,14 @@ class _MyThreadsPageState extends State<MyThreadsPage>
 
     try {
       final nextPage = _page + 1;
-      final next = await _api.getMyThreads(
-        type: _types[_tabController.index],
-        page: nextPage,
-      );
+      final type = _types[_tabController.index];
+      final next = widget.uid == null
+          ? await _api.getMyThreads(type: type, page: nextPage)
+          : await _api.getUserThreads(
+              uid: widget.uid!,
+              type: type,
+              page: nextPage,
+            );
 
       if (!mounted) {
         return;
@@ -143,7 +173,11 @@ class _MyThreadsPageState extends State<MyThreadsPage>
         controller: _scrollController,
         slivers: [
           SliverAppBar(
-            title: const Text('我的帖子'),
+            title: Text(
+              widget.uid == null
+                  ? '我的帖子'
+                  : '${widget.username ?? '用户'}的内容',
+            ),
             pinned: true,
             bottom: TabBar(
               controller: _tabController,
@@ -153,12 +187,12 @@ class _MyThreadsPageState extends State<MyThreadsPage>
           if (_loading)
             const SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(child: CircularProgressIndicator()),
+              child: AppStateView.loading(),
             )
           else if (_error != null)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: _ErrorState(
+              child: AppStateView.error(
                 message: _error!,
                 onRetry: _reload,
               ),
@@ -166,18 +200,15 @@ class _MyThreadsPageState extends State<MyThreadsPage>
           else if (_items.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(
-                child: Text(
-                  '暂无${_labels[_tabController.index]}记录',
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.outline,
-                  ),
-                ),
+              child: AppStateView.empty(
+                icon: Icons.article_outlined,
+                title: '暂无${_labels[_tabController.index]}记录',
+                message: '当前分类还没有内容。',
               ),
             )
           else
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 22),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
@@ -198,14 +229,12 @@ class _MyThreadsPageState extends State<MyThreadsPage>
                     }
 
                     final item = _items[index];
-                    return _ThreadCard(
-                      item: item,
+                    return ThreadCard(
+                      thread: item,
                       onTap: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(
-                            builder: (_) => ThreadDetailPage(tid: item.tid),
-                          ),
+                          buildThreadRoute(item.tid),
                         );
                       },
                     );
@@ -215,164 +244,6 @@ class _MyThreadsPageState extends State<MyThreadsPage>
               ),
             ),
         ],
-      ),
-    );
-  }
-}
-
-class _ThreadCard extends StatelessWidget {
-  final Thread item;
-  final VoidCallback onTap;
-
-  const _ThreadCard({
-    required this.item,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (item.thumbnails.isNotEmpty) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: CachedNetworkImage(
-                    imageUrl: item.thumbnails.first,
-                    width: 74,
-                    height: 74,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) =>
-                        const SizedBox(width: 74, height: 74),
-                  ),
-                ),
-                const SizedBox(width: 12),
-              ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title ?? '无标题',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (item.excerpt?.isNotEmpty ?? false) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        item.excerpt!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.outline,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 4,
-                      children: [
-                        if (item.likeCount != null)
-                          _Meta(
-                            icon: Icons.thumb_up_alt_outlined,
-                            text: item.likeCount!,
-                          ),
-                        if (item.replyCount != null)
-                          _Meta(
-                            icon: Icons.chat_bubble_outline_rounded,
-                            text: item.replyCount!,
-                          ),
-                        if (item.viewCount != null)
-                          _Meta(
-                            icon: Icons.visibility_outlined,
-                            text: item.viewCount!,
-                          ),
-                        if (item.lastReplyTime != null)
-                          _Meta(
-                            icon: Icons.schedule_rounded,
-                            text: item.lastReplyTime!,
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Meta extends StatelessWidget {
-  final IconData icon;
-  final String text;
-
-  const _Meta({
-    required this.icon,
-    required this.text,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.outline;
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(width: 3),
-        Text(
-          text,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: color,
-              ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ErrorState extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-
-  const _ErrorState({
-    required this.message,
-    required this.onRetry,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            FilledButton.tonal(
-              onPressed: onRetry,
-              child: const Text('重试'),
-            ),
-          ],
-        ),
       ),
     );
   }

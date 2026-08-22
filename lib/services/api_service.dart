@@ -382,12 +382,32 @@ class ApiService {
       options: Options(
         responseType: ResponseType.plain,
         followRedirects: true,
-        validateStatus: (status) => status != null && status < 400,
+        // Discuz 对已删除/不存在/审核中的主题会直接返回 404，并在响应体中
+        // 给出可读提示。这里允许 4xx 返回给业务层处理，避免 Dio 先抛出
+        // 一整段 bad response 异常给 UI。
+        validateStatus: (status) => status != null && status < 500,
       ),
     );
 
+    final body = response.data ?? '';
+    final status = response.statusCode ?? 0;
+    final missingThread = status == 404 ||
+        body.contains('指定的主题不存在或已被删除或正在被审核') ||
+        body.contains('指定的主题不存在') ||
+        body.contains('主题不存在或已被删除');
+
+    if (missingThread) {
+      throw StateError('帖子不存在、已被删除或正在审核');
+    }
+    if (status == 401 || status == 403) {
+      throw StateError('当前账号无权查看此帖子，请检查登录状态或帖子权限');
+    }
+    if (status >= 400) {
+      throw StateError('帖子加载失败（HTTP $status）');
+    }
+
     final detail = _parser.parseThreadDetail(
-      response.data ?? '',
+      body,
       tid: tid,
       page: page,
       baseUrl: baseUrl,
@@ -428,15 +448,20 @@ class ApiService {
     var body = await request();
     var form = _parser.parsePostEditorForm(body, fallbackFid: fid);
 
-    // 个别移动端响应会先返回“数据加载中”壳页；只在表单字段缺失时
-    // 追加 mobile=2 再取一次同一个 GET 页面，不改变任何写操作参数。
-    if (form.formhash.isEmpty || form.posttime.isEmpty) {
+    // 个别移动端响应会先返回“数据加载中”壳页，或者首屏表单虽完整但
+    // 没输出附件上传的 uploadformdata。缺任一关键字段时用 mobile=2 再取一次。
+    if (form.formhash.isEmpty || form.posttime.isEmpty || !form.canUploadImages) {
       final retryBody = await request(mobileFallback: true);
       final retryForm = _parser.parsePostEditorForm(
         retryBody,
         fallbackFid: fid,
       );
-      if (retryForm.formhash.isNotEmpty && retryForm.posttime.isNotEmpty) {
+      final retryHasBaseForm =
+          retryForm.formhash.isNotEmpty && retryForm.posttime.isNotEmpty;
+      final shouldUseRetry = retryHasBaseForm &&
+          ((form.formhash.isEmpty || form.posttime.isEmpty) ||
+              (!form.canUploadImages && retryForm.canUploadImages));
+      if (shouldUseRetry) {
         body = retryBody;
         form = retryForm;
       }
@@ -449,6 +474,110 @@ class ApiService {
     }
     _rememberFormhash(form.formhash);
     return form;
+  }
+
+  Future<PostAttachmentUploadResult> uploadPostImage({
+    required PostEditorForm form,
+    required List<int> bytes,
+    required String fileName,
+  }) async {
+    if (!isLoggedIn) {
+      return const PostAttachmentUploadResult(
+        success: false,
+        message: '请先登录',
+      );
+    }
+    if (!form.canUploadImages) {
+      return const PostAttachmentUploadResult(
+        success: false,
+        message: '当前发帖页未提供附件上传凭证，请重新打开编辑器',
+      );
+    }
+    if (bytes.isEmpty) {
+      return const PostAttachmentUploadResult(
+        success: false,
+        message: '图片文件为空',
+      );
+    }
+    if (bytes.length > form.maxUploadSizeKb * 1024) {
+      return PostAttachmentUploadResult(
+        success: false,
+        message: '图片超过 ${form.maxUploadSizeKb}KB 限制',
+      );
+    }
+
+    final response = await _dio.post<String>(
+      '/misc.php',
+      queryParameters: const {
+        'mod': 'swfupload',
+        'operation': 'upload',
+        'type': 'image',
+        'inajax': 'yes',
+        'infloat': 'yes',
+        'simple': 2,
+      },
+      data: FormData.fromMap({
+        'Filedata': MultipartFile.fromBytes(bytes, filename: fileName),
+        'uid': form.uploadUid,
+        'hash': form.uploadHash,
+      }),
+      options: Options(
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': _postEditorReferer(form),
+        },
+        responseType: ResponseType.plain,
+        followRedirects: true,
+      ),
+    );
+
+    return _parser.parsePostAttachmentUploadResponse(response.data ?? '');
+  }
+
+  Future<bool> deletePostAttachment({
+    required PostEditorForm form,
+    required String aid,
+  }) async {
+    if (!isLoggedIn || aid.trim().isEmpty) return false;
+
+    final hash = form.formhash.isNotEmpty ? form.formhash : await getFormhash();
+    final response = await _dio.get<String>(
+      '/forum.php',
+      queryParameters: {
+        'mod': 'ajax',
+        'action': 'deleteattach',
+        'inajax': 'yes',
+        'formhash': hash,
+        'aids[]': aid.trim(),
+      },
+      options: Options(
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': _postEditorReferer(form),
+        },
+        responseType: ResponseType.plain,
+        followRedirects: true,
+        validateStatus: (status) => status != null && status < 400,
+      ),
+    );
+
+    final body = response.data ?? '';
+    final message = _extractAjaxMessage(body);
+    final lower = message.toLowerCase();
+    final explicitFailure = message.contains('无权') ||
+        message.contains('失败') ||
+        message.contains('不存在') ||
+        message.contains('错误') ||
+        lower.contains('error');
+    return !explicitFailure;
+  }
+
+  String _postEditorReferer(PostEditorForm form) {
+    if (form.tid.isNotEmpty && form.pid.isNotEmpty) {
+      return '$baseUrl/forum.php?mod=post&action=edit'
+          '&fid=${form.fid}&tid=${form.tid}&pid=${form.pid}&page=${form.page}';
+    }
+    return '$baseUrl/forum.php?mod=post&action=newthread&fid=${form.fid}';
   }
 
   Future<ThreadSubmitResult> submitNewThread({
@@ -557,6 +686,7 @@ class ApiService {
         'tid': tid,
         'pid': pid,
         'page': page,
+        'mobile': 2,
       },
       options: Options(
         headers: {
@@ -671,8 +801,18 @@ class ApiService {
       return const ReplyResult(success: false, message: '请先登录');
     }
 
-    final hash = await getFormhash();
-    final query = <String, dynamic>{
+    // Discuz 的“回复指定楼层”不是简单在最终 POST 上带 repquote。
+    // 正确流程是先 GET action=reply&repquote=目标PID，让服务端生成
+    // noticeauthor / noticetrimstr / noticeauthormsg / reppid / reppost 等
+    // 隐藏字段，再把这些字段随表单一起 POST。跳过这一步时，服务端会把
+    // 回复保存成普通回帖，客户端刷新后自然无法判断“回复了谁”。
+    final data = <String, dynamic>{
+      'formhash': await getFormhash(),
+      'noticeauthor': noticeauthor,
+      'message': message,
+    };
+
+    var postQuery = <String, dynamic>{
       'mod': 'post',
       'action': 'reply',
       'fid': fid,
@@ -684,18 +824,71 @@ class ApiService {
       'loc': 1,
       'inajax': 1,
     };
-    if (repquotePid != null && repquotePid.isNotEmpty) {
-      query['repquote'] = repquotePid;
+
+    if (repquotePid != null && repquotePid.trim().isNotEmpty) {
+      final targetPid = repquotePid.trim();
+      final formResponse = await _dio.get<String>(
+        '/forum.php',
+        queryParameters: {
+          'mod': 'post',
+          'action': 'reply',
+          'fid': fid,
+          'tid': tid,
+          'repquote': targetPid,
+          'extra': 'page=1',
+          'page': 1,
+          'mobile': 2,
+        },
+        options: Options(
+          headers: {
+            'Referer': '$baseUrl/thread-$tid-1-1.html',
+          },
+          responseType: ResponseType.plain,
+          followRedirects: true,
+        ),
+      );
+
+      final formBody = formResponse.data ?? '';
+      final document = html_parser.parse(formBody);
+      final form = document.querySelector(
+        'form#postform, form[action*="mod=post"][action*="action=reply"]',
+      );
+      if (form == null) {
+        final readable = _extractAjaxMessage(formBody);
+        return ReplyResult(
+          success: false,
+          message: readable.isEmpty
+              ? '未获取到指定楼层的回复表单，请刷新帖子后重试'
+              : readable,
+        );
+      }
+
+      for (final input in form.querySelectorAll('input[name]')) {
+        final name = input.attributes['name']?.trim() ?? '';
+        if (name.isEmpty) continue;
+        final type = (input.attributes['type'] ?? '').toLowerCase();
+        if (type == 'submit' || type == 'button' || type == 'file') continue;
+        data[name] = input.attributes['value'] ?? '';
+      }
+      data['message'] = message;
+      data['replysubmit'] = 'yes';
+
+      final action = (form.attributes['action'] ?? '')
+          .replaceAll('&amp;', '&')
+          .trim();
+      if (action.isNotEmpty) {
+        final uri = Uri.parse(baseUrl).resolve(action);
+        postQuery = Map<String, dynamic>.from(uri.queryParameters);
+        // 保持客户端 AJAX 提交方式，只改变 Discuz 表单要求的真实字段。
+        postQuery.putIfAbsent('inajax', () => 1);
+        postQuery.putIfAbsent('handlekey', () => 'fastpost');
+      }
     }
 
     final response = await _dio.post<String>(
       '/forum.php',
-      queryParameters: query,
-      data: {
-        'formhash': hash,
-        'noticeauthor': noticeauthor,
-        'message': message,
-      },
+      queryParameters: postQuery,
+      data: data,
       options: Options(
         contentType: Headers.formUrlEncodedContentType,
         headers: {
@@ -775,9 +968,14 @@ class ApiService {
               title: thread.title,
               authorUid: thread.authorUid,
               authorName: thread.authorName,
+              avatarUrl: thread.avatarUrl,
               forumName: thread.forumName,
               postTime: thread.lastReplyTime,
               excerpt: thread.excerpt,
+              replyCount: thread.replyCount,
+              viewCount: thread.viewCount,
+              thumbnails: thread.thumbnails,
+              hasHiddenContent: thread.hasHiddenContent,
             ))
         .toList();
   }
@@ -785,7 +983,7 @@ class ApiService {
   Future<UserProfile> getProfile() async {
     final response = await _dio.get<String>(
       '/home.php',
-      queryParameters: const {'mod': 'space', 'do': 'profile'},
+      queryParameters: const {'mod': 'space', 'do': 'profile', 'mobile': 2},
       options: Options(
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -797,32 +995,90 @@ class ApiService {
     final uid = RegExp(r"discuz_uid\s*=\s*'?(\d+)")
             .firstMatch(body)
             ?.group(1) ??
+        _currentUid ??
         '0';
     if (uid != '0') _currentUid = uid;
 
-    var username = document.querySelector('.comiis_uinfo_a, .vh')?.text.trim();
-    username ??= document.querySelector('h2')?.text.trim();
+    // 先沿用旧链路读取当前页上一直稳定的基础字段，避免模板差异导致回归。
+    var fallbackUsername =
+        document.querySelector('.comiis_uinfo_a, .vh')?.text.trim();
+    fallbackUsername ??= document.querySelector('h2')?.text.trim();
+    final fallbackAvatar = _absoluteUrl(
+      document.querySelector('img[src*="avatar"]')?.attributes['src'],
+    );
 
-    int? credits;
-    int? gold;
+    int? fallbackCredits;
+    int? fallbackGold;
     final matches = RegExp(r'<em[^>]*>(\d+)</em>\s*<p[^>]*>([^<]+)')
         .allMatches(body);
     for (final match in matches) {
       final value = int.tryParse(match.group(1) ?? '');
       final label = match.group(2)?.trim() ?? '';
       if (value == null) continue;
-      if (label.contains('积分')) credits = value;
-      if (label.contains('金币')) gold = value;
+      if (label.contains('积分')) fallbackCredits = value;
+      if (label.contains('金币')) fallbackGold = value;
     }
+
+    // “我的”与用户主页共享同一套真实 DOM 统计解析。之前这里只解析基础字段，
+    // 导致帖子、回复、好友一直为 null，UI 再把 null 错误显示成了 0。
+    var parsed = _userCenterParser.parseCurrentProfile(
+      body,
+      uid: uid,
+      baseUrl: baseUrl,
+    );
+
+    // 某些 Comiis 模板在“不带 uid 的自己的资料页”会省略统计栏。只在三个
+    // 核心统计都缺失时，再请求一次明确 uid 的真实用户主页，避免每次多打一请求。
+    if (uid != '0' &&
+        parsed.threads == null &&
+        parsed.posts == null &&
+        parsed.friends == null) {
+      try {
+        final statsResponse = await _dio.get<String>(
+          '/home.php',
+          queryParameters: {
+            'mod': 'space',
+            'uid': uid,
+            'do': 'profile',
+            'mobile': 2,
+          },
+          options: Options(
+            responseType: ResponseType.plain,
+            followRedirects: true,
+          ),
+        );
+        parsed = _userCenterParser.parseCurrentProfile(
+          statsResponse.data ?? '',
+          uid: uid,
+          baseUrl: baseUrl,
+        );
+      } catch (_) {
+        // 统计补充失败不影响“我的”基础资料；UI 用“—”表示未知，而不是伪造 0。
+      }
+    }
+
+    final parsedUsername = parsed.username?.trim() ?? "";
+    final parsedUsernameUsable = parsedUsername.isNotEmpty &&
+        parsedUsername != 'UID $uid' &&
+        parsedUsername != '未知用户';
 
     return UserProfile(
       uid: uid,
-      username: username?.isNotEmpty == true ? username : '未知用户',
-      avatarUrl: _absoluteUrl(
-        document.querySelector('img[src*="avatar"]')?.attributes['src'],
-      ),
-      credits: credits,
-      gold: gold,
+      username: parsedUsernameUsable
+          ? parsedUsername
+          : (fallbackUsername?.isNotEmpty == true
+              ? fallbackUsername
+              : '未知用户'),
+      avatarUrl: parsed.avatarUrl ?? fallbackAvatar,
+      userGroup: parsed.userGroup,
+      credits: parsed.credits ?? fallbackCredits,
+      gold: parsed.gold ?? fallbackGold,
+      contribution: parsed.contribution,
+      threads: parsed.threads,
+      posts: parsed.posts,
+      friends: parsed.friends,
+      regDate: parsed.regDate,
+      lastVisit: parsed.lastVisit,
     );
   }
 
@@ -1084,6 +1340,37 @@ class ApiService {
     );
   }
 
+  Future<List<Thread>> getUserThreads({
+    required String uid,
+    String type = 'thread',
+    int page = 1,
+  }) async {
+    final response = await _dio.get<String>(
+      '/home.php',
+      queryParameters: {
+        'mod': 'space',
+        'uid': uid,
+        'do': 'thread',
+        'view': 'me',
+        'type': type,
+        'from': 'space',
+        'page': page,
+      },
+      options: Options(
+        headers: {
+          'Referer': '$baseUrl/home.php?mod=space&uid=$uid&do=profile&mobile=2',
+        },
+        responseType: ResponseType.plain,
+        followRedirects: true,
+      ),
+    );
+
+    return _accountParser.parseMyThreads(
+      response.data ?? '',
+      baseUrl: baseUrl,
+    );
+  }
+
   Future<List<FavoriteItem>> getMyFavorites({
     String type = 'all',
     int page = 1,
@@ -1317,7 +1604,8 @@ class ApiService {
     required String uid,
     int page = 1,
   }) async {
-    if (!isLoggedIn) {
+    if (!isLoggedIn &&
+        (type == 'visitor' || type == 'trace' || type == 'blacklist')) {
       throw StateError('请先登录');
     }
 
@@ -1327,7 +1615,10 @@ class ApiService {
       case 'friend':
         query = {
           'mod': 'space',
+          'uid': uid,
           'do': 'friend',
+          'view': 'me',
+          'from': 'space',
           'page': page,
         };
         break;
@@ -1388,6 +1679,28 @@ class ApiService {
       response.data ?? '',
       baseUrl: baseUrl,
     );
+  }
+
+  Future<bool> isUserBlocked(String uid) async {
+    if (!isLoggedIn || uid.isEmpty) return false;
+
+    // 黑名单没有稳定的单用户状态接口，直接以真实黑名单列表为准。
+    // 通常只有一页；这里继续翻页，避免用户较多时只检查到第一页。
+    final seen = <String>{};
+    for (var page = 1; page <= 20; page++) {
+      final users = await getSocialUsers(
+        type: 'blacklist',
+        uid: currentUid ?? '',
+        page: page,
+      );
+      if (users.any((user) => user.uid == uid)) return true;
+      if (users.isEmpty) break;
+
+      final before = seen.length;
+      seen.addAll(users.map((user) => user.uid));
+      if (seen.length == before) break;
+    }
+    return false;
   }
 
   Future<List<FriendRequestItem>> getFriendRequests() async {
@@ -1641,6 +1954,139 @@ class ApiService {
         success: false,
         message: '操作失败：$e',
       );
+    }
+  }
+
+  /// 主动加好友（发送好友请求）。
+  Future<OperationResult> addFriend({
+    required String uid,
+    String note = '',
+  }) async {
+    if (!isLoggedIn) {
+      return const OperationResult(success: false, message: '请先登录');
+    }
+    try {
+      final formhash = await getFormhash();
+      final response = await _dio.post<String>(
+        '/home.php',
+        queryParameters: {
+          'mod': 'spacecp',
+          'ac': 'friend',
+          'op': 'add',
+          'uid': uid,
+          'inajax': 1,
+        },
+        data: {
+          'formhash': formhash,
+          'referer': '$baseUrl/home.php?mod=space&uid=$uid&do=profile',
+          'addsubmit': 'true',
+          'note': note,
+        },
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer':
+                '$baseUrl/home.php?mod=spacecp&ac=friend&op=add&uid=$uid&mobile=2',
+          },
+          responseType: ResponseType.plain,
+        ),
+      );
+
+      final text = _extractAjaxMessage(response.data ?? '');
+      final success = text.contains('好友请求已发送') ||
+          text.contains('succeedhandle') ||
+          text.contains('已经') && text.contains('好友');
+      return OperationResult(
+        success: success,
+        message: text.isEmpty ? (success ? '好友请求已发送' : '操作失败') : text,
+      );
+    } catch (e) {
+      return OperationResult(success: false, message: '操作失败：$e');
+    }
+  }
+
+  /// 拉黑用户（加入黑名单）。
+  Future<OperationResult> blockUser({
+    required String uid,
+    required String username,
+  }) async {
+    if (!isLoggedIn) {
+      return const OperationResult(success: false, message: '请先登录');
+    }
+    try {
+      final formhash = await getFormhash();
+      final response = await _dio.post<String>(
+        '/home.php',
+        queryParameters: {
+          'mod': 'spacecp',
+          'ac': 'friend',
+          'op': 'blacklist',
+          'start': '',
+          'inajax': 1,
+        },
+        data: {
+          'blacklistsubmit': 'true',
+          'formhash': formhash,
+          'username': username,
+        },
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer':
+                '$baseUrl/home.php?mod=space&uid=$uid&do=profile&mobile=2',
+          },
+          responseType: ResponseType.plain,
+        ),
+      );
+
+      final text = _extractAjaxMessage(response.data ?? '');
+      final success = text.contains('成功') || text.contains('succeedhandle');
+      return OperationResult(
+        success: success,
+        message: text.isEmpty ? (success ? '已加入黑名单' : '操作失败') : text,
+      );
+    } catch (e) {
+      return OperationResult(success: false, message: '操作失败：$e');
+    }
+  }
+
+  /// 取消拉黑（移出黑名单）。
+  Future<OperationResult> unblockUser({required String uid}) async {
+    if (!isLoggedIn) {
+      return const OperationResult(success: false, message: '请先登录');
+    }
+    try {
+      final response = await _dio.get<String>(
+        '/home.php',
+        queryParameters: {
+          'mod': 'spacecp',
+          'ac': 'friend',
+          'op': 'blacklist',
+          'subop': 'delete',
+          'uid': uid,
+          'start': '',
+          'inajax': 1,
+        },
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer':
+                '$baseUrl/home.php?mod=space&do=friend&view=blacklist&mobile=2',
+          },
+          responseType: ResponseType.plain,
+        ),
+      );
+
+      final text = _extractAjaxMessage(response.data ?? '');
+      final success = text.contains('成功') || text.contains('succeedhandle');
+      return OperationResult(
+        success: success,
+        message: text.isEmpty ? (success ? '已移出黑名单' : '操作失败') : text,
+      );
+    } catch (e) {
+      return OperationResult(success: false, message: '操作失败：$e');
     }
   }
 
@@ -2288,6 +2734,57 @@ class ApiService {
     );
   }
 
+
+  /// 获取消息中心未读汇总。
+  ///
+  /// 私信/论坛通知优先从普通论坛页的全局 `newpm/newprompt` 状态读取，
+  /// 不主动打开通知中心，避免“为了查未读数反而把提醒标成已读”。
+  /// 好友申请使用真实待处理请求列表计数。
+  Future<MessageUnreadSummary> getMessageUnreadSummary() async {
+    if (!isLoggedIn) return const MessageUnreadSummary.empty();
+
+    var global = const MessageUnreadSummary.empty();
+    try {
+      final response = await _dio.get<String>(
+        '/forum.php',
+        queryParameters: const {'mobile': 2},
+        options: Options(
+          responseType: ResponseType.plain,
+          followRedirects: true,
+        ),
+      );
+      global = _userCenterParser.parseGlobalMessageUnread(response.data ?? '');
+    } catch (_) {
+      // 全局未读探测失败不影响其它两项。
+    }
+
+    var pm = global.privateMessages;
+    if (!pm.isVisible) {
+      try {
+        if (await checkNewPrivateMessage()) {
+          pm = const UnreadBadgeInfo(count: null, hasUnread: true);
+        }
+      } catch (_) {}
+    }
+
+    var friendRequests = const UnreadBadgeInfo.none();
+    try {
+      final requests = await getFriendRequests();
+      friendRequests = UnreadBadgeInfo(
+        count: requests.length,
+        hasUnread: requests.isNotEmpty,
+      );
+    } catch (_) {
+      // 好友申请探测失败时不伪造数量。
+    }
+
+    return MessageUnreadSummary(
+      privateMessages: pm,
+      notices: global.notices,
+      friendRequests: friendRequests,
+    );
+  }
+
   Future<bool> checkNewPrivateMessage() async {
     if (!isLoggedIn) return false;
 
@@ -2310,6 +2807,354 @@ class ApiService {
     } catch (_) {
       return false;
     }
+  }
+
+  Future<List<WallComment>> getWallComments(String uid) async {
+    final targetUid = uid.trim();
+    if (targetUid.isEmpty) return const [];
+
+    final response = await _dio.get<String>(
+      '/home.php',
+      queryParameters: {
+        'mod': 'space',
+        'uid': targetUid,
+        'do': 'wall',
+        'mobile': 2,
+      },
+      options: Options(
+        headers: {
+          'Referer': '$baseUrl/home.php?mod=space&uid=$targetUid&do=profile',
+        },
+        responseType: ResponseType.plain,
+        followRedirects: true,
+      ),
+    );
+
+    return _userCenterParser.parseWallComments(
+      response.data ?? '',
+      baseUrl: baseUrl,
+    );
+  }
+
+  Future<OperationResult> postWallComment({
+    required String uid,
+    required String message,
+  }) async {
+    if (!isLoggedIn) {
+      return const OperationResult(success: false, message: '请先登录');
+    }
+
+    final targetUid = uid.trim();
+    final text = message.trim();
+    if (targetUid.isEmpty) {
+      return const OperationResult(success: false, message: '目标用户无效');
+    }
+    if (text.isEmpty) {
+      return const OperationResult(success: false, message: '留言内容不能为空');
+    }
+
+    try {
+      final hash = await getFormhash();
+      final wallPath = 'home.php?mod=space&uid=$targetUid&do=wall';
+      final response = await _dio.post<String>(
+        '/home.php',
+        queryParameters: const {
+          'mod': 'spacecp',
+          'ac': 'comment',
+          'inajax': 1,
+        },
+        data: {
+          'formhash': hash,
+          'referer': wallPath,
+          'id': targetUid,
+          'idtype': 'uid',
+          'handlekey': 'qcwall_$targetUid',
+          'commentsubmit': 'true',
+          'quickcomment': 'true',
+          'message': text,
+        },
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': '$baseUrl/$wallPath',
+          },
+          contentType: Headers.formUrlEncodedContentType,
+          responseType: ResponseType.plain,
+          followRedirects: true,
+        ),
+      );
+
+      final body = response.data ?? '';
+      final responseMessage = _extractAjaxMessage(body);
+      final success = body.contains('操作成功') ||
+          responseMessage.contains('操作成功') ||
+          responseMessage.contains('留言成功');
+
+      return OperationResult(
+        success: success,
+        message: success
+            ? '留言成功'
+            : (responseMessage.isEmpty ? '留言失败' : responseMessage),
+      );
+    } catch (e) {
+      return OperationResult(success: false, message: '留言失败：$e');
+    }
+  }
+
+  Future<OperationResult> deleteWallComment({
+    required String uid,
+    required String cid,
+  }) async {
+    if (!isLoggedIn) {
+      return const OperationResult(success: false, message: '请先登录');
+    }
+
+    final targetUid = uid.trim();
+    final commentId = cid.trim();
+    if (targetUid.isEmpty || commentId.isEmpty) {
+      return const OperationResult(success: false, message: '留言参数无效');
+    }
+
+    try {
+      final hash = await getFormhash();
+      final wallPath = 'home.php?mod=space&uid=$targetUid&do=wall';
+      final response = await _dio.post<String>(
+        '/home.php',
+        queryParameters: {
+          'mod': 'spacecp',
+          'ac': 'comment',
+          'op': 'delete',
+          'cid': commentId,
+          'inajax': 1,
+        },
+        data: {
+          'formhash': hash,
+          'referer': wallPath,
+          'deletesubmit': 'true',
+        },
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': '$baseUrl/$wallPath',
+          },
+          contentType: Headers.formUrlEncodedContentType,
+          responseType: ResponseType.plain,
+          followRedirects: true,
+        ),
+      );
+
+      final body = response.data ?? '';
+      final responseMessage = _extractAjaxMessage(body);
+      final success = body.contains('操作成功') ||
+          responseMessage.contains('操作成功') ||
+          responseMessage.contains('删除成功');
+
+      return OperationResult(
+        success: success,
+        message: success
+            ? '留言已删除'
+            : (responseMessage.isEmpty ? '删除失败' : responseMessage),
+      );
+    } catch (e) {
+      return OperationResult(success: false, message: '删除失败：$e');
+    }
+  }
+
+  Future<UserGroupData> getUserGroupData() async {
+    if (!isLoggedIn) {
+      throw StateError('请先登录');
+    }
+
+    final response = await _dio.get<String>(
+      '/home.php',
+      queryParameters: const {
+        'mod': 'spacecp',
+        'ac': 'usergroup',
+        'mobile': 2,
+      },
+      options: Options(
+        responseType: ResponseType.plain,
+        followRedirects: true,
+      ),
+    );
+
+    return _accountParser.parseUserGroup(response.data ?? '');
+  }
+
+  Future<List<NoticeItem>> getNotices({
+    required String view,
+    String? type,
+    int page = 1,
+  }) async {
+    final data = await getNoticePage(
+      view: view,
+      type: type,
+      page: page,
+    );
+    return data.items;
+  }
+
+  Future<NoticePageData> getNoticePage({
+    required String view,
+    String? type,
+    int page = 1,
+  }) async {
+    if (!isLoggedIn) throw StateError('请先登录');
+
+    final safePage = page < 1 ? 1 : page;
+    final query = <String, dynamic>{
+      'mod': 'space',
+      'do': 'notice',
+      'view': view,
+      'mobile': 2,
+    };
+    final noticeType = type?.trim() ?? '';
+    if (noticeType.isNotEmpty) query['type'] = noticeType;
+    if (safePage > 1) query['page'] = safePage;
+
+    final response = await _dio.get<String>(
+      '/home.php',
+      queryParameters: query,
+      options: Options(
+        responseType: ResponseType.plain,
+        followRedirects: true,
+      ),
+    );
+
+    return _userCenterParser.parseNoticePage(
+      response.data ?? '',
+      baseUrl: baseUrl,
+      currentPage: safePage,
+    );
+  }
+
+  Future<OperationResult> ignoreNotice(String? actionUrl) async {
+    if (!isLoggedIn) {
+      return const OperationResult(success: false, message: '请先登录');
+    }
+    if (actionUrl == null || actionUrl.trim().isEmpty) {
+      return const OperationResult(success: false, message: '屏蔽地址无效');
+    }
+
+    try {
+      final uri = Uri.parse(actionUrl.replaceAll('&amp;', '&'));
+      final getQuery = Map<String, dynamic>.from(uri.queryParameters)
+        ..['inajax'] = 1;
+
+      final confirm = await _dio.get<String>(
+        uri.path.isEmpty ? '/home.php' : uri.path,
+        queryParameters: getQuery,
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': '$baseUrl/home.php?mod=space&do=notice&mobile=2',
+          },
+          responseType: ResponseType.plain,
+          followRedirects: true,
+        ),
+      );
+
+      var confirmBody = confirm.data ?? '';
+      final cdata = RegExp(
+        r'<!\[CDATA\[(.*?)\]\]>',
+        dotAll: true,
+        caseSensitive: false,
+      ).firstMatch(confirmBody);
+      if (cdata != null) confirmBody = cdata.group(1) ?? confirmBody;
+
+      final document = html_parser.parseFragment(confirmBody);
+      final form = document.querySelector('form');
+      if (form == null) {
+        final message = _extractAjaxMessage(confirmBody);
+        return OperationResult(
+          success: false,
+          message: message.isEmpty ? '未获取到屏蔽确认表单' : message,
+        );
+      }
+
+      final data = <String, dynamic>{};
+      for (final input in form.querySelectorAll('input[name]')) {
+        final name = input.attributes['name']?.trim() ?? '';
+        if (name.isEmpty) continue;
+        final type = (input.attributes['type'] ?? '').toLowerCase();
+        if ((type == 'checkbox' || type == 'radio') &&
+            !input.attributes.containsKey('checked')) {
+          continue;
+        }
+        data[name] = input.attributes['value'] ?? '';
+      }
+      for (final button in form.querySelectorAll('button[name]')) {
+        final name = button.attributes['name']?.trim() ?? '';
+        if (name.isEmpty) continue;
+        data.putIfAbsent(name, () => button.attributes['value'] ?? 'true');
+      }
+      data.putIfAbsent('formhash', () => _formhash ?? '');
+      if ((data['formhash'] as String?)?.isEmpty ?? true) {
+        data['formhash'] = await getFormhash();
+      }
+      data.putIfAbsent('ignoresubmit', () => 'true');
+
+      final actionRaw =
+          (form.attributes['action'] ?? actionUrl).replaceAll('&amp;', '&');
+      final actionUri = Uri.parse(Uri.parse(baseUrl).resolve(actionRaw).toString());
+      final postQuery = Map<String, dynamic>.from(actionUri.queryParameters)
+        ..['inajax'] = 1;
+
+      final response = await _dio.post<String>(
+        actionUri.path.isEmpty ? '/home.php' : actionUri.path,
+        queryParameters: postQuery,
+        data: data,
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': actionUrl,
+          },
+          contentType: Headers.formUrlEncodedContentType,
+          responseType: ResponseType.plain,
+          followRedirects: true,
+        ),
+      );
+
+      final body = response.data ?? '';
+      final message = _extractAjaxMessage(body);
+      final failed = body.contains('操作失败') ||
+          body.contains('错误') ||
+          message.contains('失败') ||
+          message.contains('错误');
+      final success = !failed &&
+          (body.contains('操作成功') ||
+              body.contains('设置成功') ||
+              body.contains('屏蔽成功') ||
+              body.contains('succeedhandle_') ||
+              message.contains('成功'));
+
+      return OperationResult(
+        success: success,
+        message: success
+            ? (message.isEmpty ? '已屏蔽此来源的通知' : message)
+            : (message.isEmpty ? '屏蔽失败' : message),
+      );
+    } catch (e) {
+      return OperationResult(success: false, message: '屏蔽失败：$e');
+    }
+  }
+
+  Future<RenameStatusData> getRenameStatus() async {
+    if (!isLoggedIn) throw StateError('请先登录');
+
+    final response = await _dio.get<String>(
+      '/plugin.php',
+      queryParameters: const {
+        'id': 'nimba_rename',
+        'mobile': 2,
+      },
+      options: Options(
+        responseType: ResponseType.plain,
+        followRedirects: true,
+      ),
+    );
+
+    return _userCenterParser.parseRenameStatus(response.data ?? '');
   }
 
   Future<RemoteTextPageData> getAccountToolPage(
@@ -2353,23 +3198,6 @@ class ApiService {
         };
         fallbackTitle = '修改密码';
         break;
-      case 'usergroup':
-        path = '/home.php';
-        query = {
-          'mod': 'spacecp',
-          'ac': 'usergroup',
-        };
-        fallbackTitle = '用户组';
-        break;
-      case 'usergroup_list':
-        path = '/home.php';
-        query = {
-          'mod': 'spacecp',
-          'ac': 'usergroup',
-          'do': 'list',
-        };
-        fallbackTitle = '用户组列表';
-        break;
       case 'invite':
         path = '/home.php';
         query = {
@@ -2395,16 +3223,6 @@ class ApiService {
         };
         fallbackTitle = '短信设置';
         break;
-      case 'rename':
-        path = '/home.php';
-        query = {
-          'mod': 'spacecp',
-          'ac': 'plugin',
-          'id': 'comiis_sms:comiis_setup',
-          'mods': 'rename',
-        };
-        fallbackTitle = '改名';
-        break;
       case 'profile_view':
         path = '/home.php';
         query = {
@@ -2414,17 +3232,6 @@ class ApiService {
           'from': 'space',
         };
         fallbackTitle = '我的资料';
-        break;
-      case 'wall':
-        path = '/home.php';
-        query = {
-          'mod': 'space',
-          'uid': uid ?? '',
-          'do': 'wall',
-          'view': 'me',
-          'from': 'space',
-        };
-        fallbackTitle = '留言墙';
         break;
       default:
         throw ArgumentError.value(key, 'key');
@@ -2505,6 +3312,33 @@ class ApiService {
     return _portalParser.parseMallDetail(
       response.data ?? '',
       tid: tid,
+      baseUrl: baseUrl,
+    );
+  }
+
+  /// 获取论坛排行榜。
+  /// view: credit(积分) / post(发帖) / onlinetime(活跃) / beauty(美女) / handsome(帅哥)
+  Future<List<RankItem>> getRanklist({
+    String view = 'credit',
+  }) async {
+    final response = await _dio.get<String>(
+      '/misc.php',
+      queryParameters: {
+        'mod': 'ranklist',
+        'type': 'member',
+        'view': view,
+        if (view == 'onlinetime') 'orderby': 'all',
+        'mobile': 2,
+      },
+      options: Options(
+        responseType: ResponseType.plain,
+        followRedirects: true,
+        validateStatus: (status) => status != null && status < 400,
+      ),
+    );
+
+    return _portalParser.parseRanklist(
+      response.data ?? '',
       baseUrl: baseUrl,
     );
   }
@@ -2645,6 +3479,7 @@ class ApiService {
 
   Future<List<Thread>> getForumThreads({
     required String fid,
+    String? forumName,
     int page = 1,
   }) async {
     final response = await _dio.get<String>(
@@ -2655,13 +3490,34 @@ class ApiService {
       ),
     );
 
-    return _parser.parseThreadList(
+    final items = _parser.parseThreadList(
       response.data ?? '',
       baseUrl: baseUrl,
     );
+
+    // 板块列表页本身通常不会在每一条帖子里重复输出“来自 xx 板块”，
+    // 但首页门户会输出。统一在数据层补齐当前板块上下文，这样首页、
+    // 搜索、板块等页面使用同一个 ThreadCard 时信息层级完全一致。
+    final normalizedForumName = forumName?.trim() ?? '';
+    return items.map((thread) {
+      final hasForumName = thread.forumName?.trim().isNotEmpty == true;
+      final hasForumId = thread.forumId?.trim().isNotEmpty == true;
+      if ((hasForumName || normalizedForumName.isEmpty) && hasForumId) {
+        return thread;
+      }
+      return thread.copyWith(
+        forumName: hasForumName ? thread.forumName : normalizedForumName,
+        forumId: hasForumId ? thread.forumId : fid,
+      );
+    }).toList(growable: false);
   }
 
-  Future<LoginResult> login(String username, String password) async {
+  Future<LoginResult> login(
+    String username,
+    String password, {
+    int questionId = 0,
+    String answer = '',
+  }) async {
     await _cookieJar.deleteAll();
     _auth = null;
     _saltkey = null;
@@ -2713,8 +3569,8 @@ class ApiService {
         'cookietime': '31104000',
         'username': username,
         'password': password,
-        'questionid': '0',
-        'answer': '',
+        'questionid': '$questionId',
+        'answer': answer,
       },
       options: Options(
         contentType: Headers.formUrlEncodedContentType,
