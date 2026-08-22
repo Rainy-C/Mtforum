@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../widgets/app_state_view.dart';
 
 class MallPage extends StatefulWidget {
   const MallPage({super.key});
@@ -167,26 +168,26 @@ class _MallPageState extends State<MallPage> {
             ),
             if (_loading && _items.isEmpty)
               const SliverFillRemaining(
-                child: Center(child: CircularProgressIndicator()),
+                child: AppStateView.loading(),
               )
             else if (_error != null && _items.isEmpty)
               SliverFillRemaining(
-                child: Center(child: Text(_error!)),
+                child: AppStateView.error(
+                  message: _error!,
+                  onRetry: _loadFirst,
+                ),
               )
             else if (_items.isEmpty)
               SliverFillRemaining(
-                child: Center(
-                  child: Text(
-                    '暂无商品',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.outline,
-                    ),
-                  ),
+                child: const AppStateView.empty(
+                  icon: Icons.shopping_bag_outlined,
+                  title: '暂无商品',
+                  message: '商城目前还没有可兑换商品。',
                 ),
               )
             else
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(10, 4, 10, 20),
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                 sliver: SliverGrid.builder(
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                     maxCrossAxisExtent: 420,
@@ -482,13 +483,13 @@ class _MallDetailPageState extends State<MallDetailPage> {
         title: const Text('商品详情'),
       ),
       body: _loading && _detail == null
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : _error != null && _detail == null
-              ? Center(child: Text(_error!))
+              ? AppStateView.error(message: _error!, onRetry: _load)
               : _detail == null
                   ? const SizedBox.shrink()
                   : ListView(
-                      padding: const EdgeInsets.fromLTRB(14, 8, 14, 28),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                       children: [
                         if (_detail!.imageUrl != null)
                           ClipRRect(

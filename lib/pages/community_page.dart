@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import '../data/portal_parser.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
-import 'thread_detail_page.dart';
+import '../widgets/app_state_view.dart';
+import '../widgets/thread_card.dart';
+import '../routes/thread_routes.dart';
 import 'thread_editor_page.dart';
 
 class CommunityPage extends StatefulWidget {
@@ -78,36 +80,18 @@ class _CommunityPageState extends State<CommunityPage> {
             ),
             if (_loading && _groups.isEmpty)
               const SliverFillRemaining(
-                child: Center(child: CircularProgressIndicator()),
+                child: AppStateView.loading(),
               )
             else if (_error != null && _groups.isEmpty)
               SliverFillRemaining(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.forum_outlined,
-                          size: 48,
-                          color: colors.outline,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(_error!, textAlign: TextAlign.center),
-                        const SizedBox(height: 14),
-                        FilledButton(
-                          onPressed: _load,
-                          child: const Text('重试'),
-                        ),
-                      ],
-                    ),
-                  ),
+                child: AppStateView.error(
+                  message: _error!,
+                  onRetry: _load,
                 ),
               )
             else
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                 sliver: SliverList.builder(
                   itemCount: _groups.length,
                   itemBuilder: (context, index) {
@@ -292,6 +276,11 @@ class _ForumThreadsPageState extends State<ForumThreadsPage> {
   bool _hasMore = true;
   String? _error;
 
+  bool get _canCreateThread {
+    final name = widget.board.name.trim();
+    return name != '版本发布' && name != '官方公告';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -383,7 +372,7 @@ class _ForumThreadsPageState extends State<ForumThreadsPage> {
     if (tid != null && tid.isNotEmpty) {
       await Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => ThreadDetailPage(tid: tid)),
+        buildThreadRoute(tid),
       );
     }
   }
@@ -436,40 +425,42 @@ class _ForumThreadsPageState extends State<ForumThreadsPage> {
         child: CustomScrollView(
           controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
+          cacheExtent: 800,
           slivers: [
             SliverAppBar(
               title: Text(widget.board.name),
               pinned: true,
               actions: [
-                IconButton(
-                  tooltip: '发布新帖',
-                  onPressed: _createThread,
-                  icon: const Icon(Icons.add_comment_outlined),
-                ),
+                if (_canCreateThread)
+                  IconButton(
+                    tooltip: '发布新帖',
+                    onPressed: _createThread,
+                    icon: const Icon(Icons.add_comment_outlined),
+                  ),
               ],
             ),
             if (_loading && _threads.isEmpty)
               const SliverFillRemaining(
-                child: Center(child: CircularProgressIndicator()),
+                child: AppStateView.loading(),
               )
             else if (_error != null && _threads.isEmpty)
               SliverFillRemaining(
-                child: Center(child: Text(_error!)),
+                child: AppStateView.error(
+                  message: _error!,
+                  onRetry: _loadFirst,
+                ),
               )
             else if (_threads.isEmpty)
-              SliverFillRemaining(
-                child: Center(
-                  child: Text(
-                    '暂无帖子',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.outline,
-                    ),
-                  ),
+              const SliverFillRemaining(
+                child: AppStateView.empty(
+                  icon: Icons.article_outlined,
+                  title: '暂无帖子',
+                  message: '这个板块目前还没有帖子。',
                 ),
               )
             else
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 18),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
                 sliver: SliverList.builder(
                   itemCount: _threads.length + 1,
                   itemBuilder: (context, index) {
@@ -485,47 +476,11 @@ class _ForumThreadsPageState extends State<ForumThreadsPage> {
                     }
 
                     final thread = _threads[index];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.fromLTRB(
-                          12,
-                          7,
-                          8,
-                          7,
-                        ),
-                        title: Text(
-                          thread.title ?? '未知标题',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 5),
-                          child: Text(
-                            [
-                              if (thread.authorName?.isNotEmpty == true)
-                                thread.authorName!,
-                              if (thread.lastReplyTime?.isNotEmpty == true)
-                                thread.lastReplyTime!,
-                              if (thread.replyCount?.isNotEmpty == true)
-                                '${thread.replyCount} 回复',
-                            ].join(' · '),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ThreadDetailPage(
-                              tid: thread.tid,
-                            ),
-                          ),
-                        ),
+                    return ThreadCard(
+                      thread: thread,
+                      onTap: () => Navigator.push(
+                        context,
+                        buildThreadRoute(thread.tid),
                       ),
                     );
                   },
@@ -537,3 +492,5 @@ class _ForumThreadsPageState extends State<ForumThreadsPage> {
     );
   }
 }
+
+/// 帖子卡片：标题 + 摘要 + 前三张缩略图 + 隐藏标记。

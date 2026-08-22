@@ -3,9 +3,13 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../my_threads_page.dart';
 import '../../widgets/user_level_badge.dart';
 import 'private_messages_page.dart';
+import 'social_center_page.dart';
 import 'poke_page.dart';
+import 'wall_page.dart';
+import '../../widgets/app_state_view.dart';
 
 class UserProfilePage extends StatefulWidget {
   final String uid;
@@ -25,6 +29,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
   SpaceUserProfile? _profile;
   bool _loading = true;
   bool _followBusy = false;
+  bool _blockBusy = false;
   String? _error;
 
   @override
@@ -42,7 +47,15 @@ class _UserProfilePageState extends State<UserProfilePage> {
     }
 
     try {
-      final profile = await _api.getSpaceUserProfile(widget.uid);
+      var profile = await _api.getSpaceUserProfile(widget.uid);
+      if (_api.isLoggedIn && widget.uid != _api.currentUid) {
+        try {
+          final blocked = await _api.isUserBlocked(widget.uid);
+          profile = profile.copyWith(isBlocked: blocked);
+        } catch (_) {
+          // 黑名单状态失败不应阻塞整个用户主页。
+        }
+      }
       if (mounted) setState(() => _profile = profile);
     } catch (e) {
       if (mounted) setState(() => _error = '主页加载失败：$e');
@@ -91,9 +104,105 @@ class _UserProfilePageState extends State<UserProfilePage> {
     );
   }
 
-  void _notAdapted(String action) {
+  Future<void> _addFriend() async {
+    final profile = _profile;
+    if (profile == null) return;
+
+    if (!_api.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先登录')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('加好友'),
+        content: Text('向 ${profile.username} 发送好友请求？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('发送'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final result = await _api.addFriend(
+      uid: widget.uid,
+      note: '',
+    );
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$action 的完整写操作还没有抓包，暂不伪造请求')),
+      SnackBar(content: Text(result.message)),
+    );
+  }
+
+  Future<void> _toggleBlock() async {
+    final profile = _profile;
+    if (profile == null || _blockBusy) return;
+
+    if (!_api.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先登录')),
+      );
+      return;
+    }
+
+    final removing = profile.isBlocked;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(removing ? '取消拉黑' : '加入黑名单'),
+        content: Text(
+          removing
+              ? '确定将 ${profile.username} 移出黑名单？'
+              : '确定将 ${profile.username} 加入黑名单？\n\n'
+                  '对方将无法对您进行打招呼、加好友、评论、私信等互动。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: removing
+                ? null
+                : FilledButton.styleFrom(
+                    backgroundColor: Theme.of(ctx).colorScheme.error,
+                  ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(removing ? '移出黑名单' : '拉黑'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _blockBusy = true);
+    final result = removing
+        ? await _api.unblockUser(uid: widget.uid)
+        : await _api.blockUser(
+            uid: widget.uid,
+            username: profile.username,
+          );
+
+    if (!mounted) return;
+    setState(() {
+      _blockBusy = false;
+      if (result.success) {
+        _profile = profile.copyWith(isBlocked: !removing);
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.message)),
     );
   }
 
@@ -111,18 +220,71 @@ class _UserProfilePageState extends State<UserProfilePage> {
         ],
       ),
       body: _loading && _profile == null
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : _error != null && _profile == null
-              ? _LoadError(message: _error!, onRetry: _load)
+              ? AppStateView.error(message: _error!, onRetry: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 28),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                     children: [
                       _ProfileHeader(profile: _profile!),
                       const SizedBox(height: 10),
-                      _ProfileStats(profile: _profile!),
+                      _ProfileStats(
+                        profile: _profile!,
+                        onPosts: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MyThreadsPage(
+                              uid: widget.uid,
+                              username: _profile!.username,
+                              initialType: 'thread',
+                            ),
+                          ),
+                        ),
+                        onReplies: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MyThreadsPage(
+                              uid: widget.uid,
+                              username: _profile!.username,
+                              initialType: 'reply',
+                            ),
+                          ),
+                        ),
+                        onFriends: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => SocialUsersPage(
+                              type: 'friend',
+                              uid: widget.uid,
+                              title: '${_profile!.username}的好友',
+                            ),
+                          ),
+                        ),
+                        onFollowing: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => SocialUsersPage(
+                              type: 'following',
+                              uid: widget.uid,
+                              title: '${_profile!.username}的关注',
+                            ),
+                          ),
+                        ),
+                        onFollowers: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => SocialUsersPage(
+                              type: 'follower',
+                              uid: widget.uid,
+                              title: '${_profile!.username}的粉丝',
+                              canFollow: true,
+                            ),
+                          ),
+                        ),
+                      ),
                       if (_profile!.medalUrls.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         _Medals(urls: _profile!.medalUrls),
@@ -131,10 +293,11 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       _Actions(
                         profile: _profile!,
                         followBusy: _followBusy,
+                        blockBusy: _blockBusy,
                         onFollow: _toggleFollow,
                         onFriend: _profile!.friendUrl == null
                             ? null
-                            : () => _notAdapted('加好友'),
+                            : _addFriend,
                         onPoke: _profile!.pokeUrl == null
                             ? null
                             : () => showPokeDialog(
@@ -153,7 +316,18 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                     ),
                                   ),
                                 ),
-                        onBlock: () => _notAdapted('拉黑'),
+                        onWall: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => WallPage(
+                              uid: widget.uid,
+                              username: _profile!.username,
+                            ),
+                          ),
+                        ),
+                        onBlock: widget.uid == _api.currentUid
+                            ? null
+                            : _toggleBlock,
                       ),
                       const SizedBox(height: 12),
                       if (_profile!.signature != null ||
@@ -374,18 +548,30 @@ class _SmallTag extends StatelessWidget {
 
 class _ProfileStats extends StatelessWidget {
   final SpaceUserProfile profile;
+  final VoidCallback? onPosts;
+  final VoidCallback? onReplies;
+  final VoidCallback? onFriends;
+  final VoidCallback? onFollowing;
+  final VoidCallback? onFollowers;
 
-  const _ProfileStats({required this.profile});
+  const _ProfileStats({
+    required this.profile,
+    this.onPosts,
+    this.onReplies,
+    this.onFriends,
+    this.onFollowing,
+    this.onFollowers,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final values = <(String, int?)>[
-      ('帖子', profile.posts),
-      ('回复', profile.replies),
-      ('好友', profile.friends),
-      ('关注', profile.following),
-      ('粉丝', profile.followers),
-      ('人气', profile.popularity),
+    final values = <(String, int?, VoidCallback?)>[
+      ('帖子', profile.posts, onPosts),
+      ('回复', profile.replies, onReplies),
+      ('好友', profile.friends, onFriends),
+      ('关注', profile.following, onFollowing),
+      ('粉丝', profile.followers, onFollowers),
+      ('人气', profile.popularity, null),
     ];
 
     Widget row(int start) => Row(
@@ -393,7 +579,11 @@ class _ProfileStats extends StatelessWidget {
             for (var i = start; i < start + 3; i++) ...[
               if (i != start) const SizedBox(width: 5),
               Expanded(
-                child: _StatItem(label: values[i].$1, value: values[i].$2),
+                child: _StatItem(
+                  label: values[i].$1,
+                  value: values[i].$2,
+                  onTap: values[i].$3,
+                ),
               ),
             ],
           ],
@@ -412,8 +602,13 @@ class _ProfileStats extends StatelessWidget {
 class _StatItem extends StatelessWidget {
   final String label;
   final int? value;
+  final VoidCallback? onTap;
 
-  const _StatItem({required this.label, this.value});
+  const _StatItem({
+    required this.label,
+    this.value,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -422,25 +617,42 @@ class _StatItem extends StatelessWidget {
     return Material(
       color: colors.surfaceContainerLow,
       borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 2),
-        child: Column(
-          children: [
-            Text(
-              value?.toString() ?? '-',
-              maxLines: 1,
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w800,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 2),
+          child: Column(
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    value?.toString() ?? '-',
+                    maxLines: 1,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (onTap != null) ...[
+                    const SizedBox(width: 2),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 14,
+                      color: colors.outline,
+                    ),
+                  ],
+                ],
               ),
-            ),
-            const SizedBox(height: 1),
-            Text(
-              label,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colors.onSurfaceVariant,
+              const SizedBox(height: 1),
+              Text(
+                label,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -482,19 +694,23 @@ class _Medals extends StatelessWidget {
 class _Actions extends StatelessWidget {
   final SpaceUserProfile profile;
   final bool followBusy;
+  final bool blockBusy;
   final VoidCallback onFollow;
   final VoidCallback? onFriend;
   final VoidCallback? onPoke;
   final VoidCallback? onMessage;
+  final VoidCallback? onWall;
   final VoidCallback? onBlock;
 
   const _Actions({
     required this.profile,
     required this.followBusy,
+    required this.blockBusy,
     required this.onFollow,
     this.onFriend,
     this.onPoke,
     this.onMessage,
+    this.onWall,
     this.onBlock,
   });
 
@@ -547,8 +763,16 @@ class _Actions extends StatelessWidget {
               onPressed: onMessage,
             ),
             _ActionIcon(
-              icon: Icons.block_rounded,
-              label: '拉黑',
+              icon: Icons.forum_outlined,
+              label: '留言',
+              onPressed: onWall,
+            ),
+            _ActionIcon(
+              icon: profile.isBlocked
+                  ? Icons.person_remove_alt_1_rounded
+                  : Icons.block_rounded,
+              label: profile.isBlocked ? '已拉黑' : '拉黑',
+              busy: blockBusy,
               onPressed: onBlock,
             ),
           ],
@@ -562,11 +786,13 @@ class _ActionIcon extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback? onPressed;
+  final bool busy;
 
   const _ActionIcon({
     required this.icon,
     required this.label,
     this.onPressed,
+    this.busy = false,
   });
 
   @override
@@ -580,7 +806,14 @@ class _ActionIcon extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 21),
+            if (busy)
+              const SizedBox(
+                width: 21,
+                height: 21,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Icon(icon, size: 21),
             const SizedBox(height: 2),
             Text(label, style: Theme.of(context).textTheme.labelSmall),
           ],

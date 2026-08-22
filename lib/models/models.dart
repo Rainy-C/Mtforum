@@ -13,6 +13,7 @@ class Thread {
   final String? lastReplyTime;
   final String? excerpt;
   final List<String> thumbnails;
+  final bool hasHiddenContent;
 
   const Thread({
     required this.tid,
@@ -28,7 +29,42 @@ class Thread {
     this.lastReplyTime,
     this.excerpt,
     this.thumbnails = const [],
+    this.hasHiddenContent = false,
   });
+
+  Thread copyWith({
+    String? tid,
+    String? title,
+    String? authorUid,
+    String? authorName,
+    String? avatarUrl,
+    String? forumName,
+    String? forumId,
+    String? replyCount,
+    String? viewCount,
+    String? likeCount,
+    String? lastReplyTime,
+    String? excerpt,
+    List<String>? thumbnails,
+    bool? hasHiddenContent,
+  }) {
+    return Thread(
+      tid: tid ?? this.tid,
+      title: title ?? this.title,
+      authorUid: authorUid ?? this.authorUid,
+      authorName: authorName ?? this.authorName,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      forumName: forumName ?? this.forumName,
+      forumId: forumId ?? this.forumId,
+      replyCount: replyCount ?? this.replyCount,
+      viewCount: viewCount ?? this.viewCount,
+      likeCount: likeCount ?? this.likeCount,
+      lastReplyTime: lastReplyTime ?? this.lastReplyTime,
+      excerpt: excerpt ?? this.excerpt,
+      thumbnails: thumbnails ?? this.thumbnails,
+      hasHiddenContent: hasHiddenContent ?? this.hasHiddenContent,
+    );
+  }
 
   String get detailUrl => 'https://bbs.binmt.cc/thread-$tid-1-1.html';
 }
@@ -104,6 +140,9 @@ class PostEditorForm {
   final String deleteValue;
   final String allowNoticeAuthor;
   final String useSig;
+  final String uploadUid;
+  final String uploadHash;
+  final int maxUploadSizeKb;
 
   const PostEditorForm({
     required this.formhash,
@@ -117,6 +156,31 @@ class PostEditorForm {
     this.deleteValue = '0',
     this.allowNoticeAuthor = '1',
     this.useSig = '1',
+    this.uploadUid = '',
+    this.uploadHash = '',
+    this.maxUploadSizeKb = 1024,
+  });
+
+  bool get canUploadImages => uploadUid.isNotEmpty && uploadHash.isNotEmpty;
+}
+
+class PostAttachmentUploadResult {
+  final bool success;
+  final String message;
+  final String aid;
+  final String relativePath;
+  final String fileName;
+  final String url;
+  final String limitInfo;
+
+  const PostAttachmentUploadResult({
+    required this.success,
+    required this.message,
+    this.aid = '',
+    this.relativePath = '',
+    this.fileName = '',
+    this.url = '',
+    this.limitInfo = '',
   });
 }
 
@@ -136,17 +200,23 @@ class ThreadSubmitResult {
   });
 }
 
-/// 保留富文本模型，后续逐步恢复富文本渲染。
-/// 当前重构版正文首先保证“可见、可复制、稳定”，图片单独渲染。
+/// 帖子正文富文本块。
+/// 由 ForumParser 将 Discuz/Comiis HTML 归一化为 App 可稳定渲染的结构。
 class PostContent {
   final PostContentType type;
   final String text;
   final String? url;
+  final List<List<String>> tableRows;
+  final int tableHeaderRows;
+  final List<PostContent> children;
 
   const PostContent._({
     required this.type,
     required this.text,
     this.url,
+    this.tableRows = const [],
+    this.tableHeaderRows = 0,
+    this.children = const [],
   });
 
   factory PostContent.text(String t) =>
@@ -167,6 +237,12 @@ class PostContent {
   factory PostContent.quote(String t) =>
       PostContent._(type: PostContentType.quote, text: t);
 
+  factory PostContent.richQuote(List<PostContent> children) => PostContent._(
+        type: PostContentType.richQuote,
+        text: '',
+        children: List<PostContent>.unmodifiable(children),
+      );
+
   factory PostContent.code(String t) =>
       PostContent._(type: PostContentType.code, text: t);
 
@@ -181,6 +257,23 @@ class PostContent {
 
   factory PostContent.free(String t) =>
       PostContent._(type: PostContentType.free, text: t);
+
+  factory PostContent.attachment(String name, {String? url}) => PostContent._(
+        type: PostContentType.attachment,
+        text: name,
+        url: url,
+      );
+
+  factory PostContent.table(
+    List<List<String>> rows, {
+    int headerRows = 0,
+  }) =>
+      PostContent._(
+        type: PostContentType.table,
+        text: '',
+        tableRows: rows,
+        tableHeaderRows: headerRows,
+      );
 }
 
 enum PostContentType {
@@ -190,11 +283,14 @@ enum PostContentType {
   image,
   emoji,
   quote,
+  richQuote,
   code,
   audio,
   video,
   flash,
   free,
+  attachment,
+  table,
 }
 
 class UserProfile {
@@ -232,18 +328,28 @@ class SearchResult {
   final String? title;
   final String? authorUid;
   final String? authorName;
+  final String? avatarUrl;
   final String? forumName;
   final String? postTime;
   final String? excerpt;
+  final String? replyCount;
+  final String? viewCount;
+  final List<String> thumbnails;
+  final bool hasHiddenContent;
 
   const SearchResult({
     required this.tid,
     this.title,
     this.authorUid,
     this.authorName,
+    this.avatarUrl,
     this.forumName,
     this.postTime,
     this.excerpt,
+    this.replyCount,
+    this.viewCount,
+    this.thumbnails = const [],
+    this.hasHiddenContent = false,
   });
 }
 
@@ -252,6 +358,25 @@ class LoginResult {
   final String message;
 
   const LoginResult({required this.success, required this.message});
+}
+
+/// 论坛排行榜用户项。
+class RankItem {
+  final String uid;
+  final String username;
+  final String? avatarUrl;
+  final int rank;
+  final String? gender;
+  final String value;
+
+  const RankItem({
+    required this.uid,
+    required this.username,
+    this.avatarUrl,
+    required this.rank,
+    this.gender,
+    required this.value,
+  });
 }
 
 class ReplyResult {
@@ -461,6 +586,68 @@ class RemoteTextPageData {
   });
 }
 
+class NoticeItem {
+  final String id;
+  final String type;
+  final String authorUid;
+  final String username;
+  final String? avatarUrl;
+  final String content;
+  final String actionText;
+  final String time;
+  final String? targetTitle;
+  final String? targetUrl;
+  final String? tid;
+  final String? pid;
+  final String? ignoreUrl;
+  final bool isSystem;
+  final bool isUnread;
+
+  const NoticeItem({
+    this.id = '',
+    this.type = '',
+    this.authorUid = '',
+    this.username = '',
+    this.avatarUrl,
+    required this.content,
+    this.actionText = '',
+    this.time = '',
+    this.targetTitle,
+    this.targetUrl,
+    this.tid,
+    this.pid,
+    this.ignoreUrl,
+    this.isSystem = false,
+    this.isUnread = false,
+  });
+
+  bool get hasThreadTarget => tid != null && tid!.isNotEmpty;
+}
+
+class NoticePageData {
+  final List<NoticeItem> items;
+  final bool hasMore;
+
+  const NoticePageData({
+    required this.items,
+    this.hasMore = false,
+  });
+}
+
+class RenameStatusData {
+  final int? costGold;
+  final bool insufficientGold;
+  final bool hasRenameForm;
+  final String message;
+
+  const RenameStatusData({
+    this.costGold,
+    this.insufficientGold = false,
+    this.hasRenameForm = false,
+    this.message = '',
+  });
+}
+
 class SocialUser {
   final String uid;
   final String username;
@@ -490,6 +677,24 @@ class FriendRequestItem {
     this.avatarUrl,
     this.acceptUrl,
     this.ignoreUrl,
+  });
+}
+
+class WallComment {
+  final String cid;
+  final String uid;
+  final String username;
+  final String? avatarUrl;
+  final String time;
+  final String content;
+
+  const WallComment({
+    required this.cid,
+    required this.uid,
+    required this.username,
+    this.avatarUrl,
+    required this.time,
+    required this.content,
   });
 }
 
@@ -531,6 +736,7 @@ class SpaceUserProfile {
   final String? lastVisit;
   final List<String> medalUrls;
   final bool isFollowing;
+  final bool isBlocked;
   final String? followUrl;
   final String? friendUrl;
   final String? pokeUrl;
@@ -565,6 +771,7 @@ class SpaceUserProfile {
     this.lastVisit,
     this.medalUrls = const [],
     this.isFollowing = false,
+    this.isBlocked = false,
     this.followUrl,
     this.friendUrl,
     this.pokeUrl,
@@ -576,6 +783,7 @@ class SpaceUserProfile {
     int? following,
     int? followers,
     bool? isFollowing,
+    bool? isBlocked,
     String? followUrl,
   }) {
     return SpaceUserProfile(
@@ -606,6 +814,7 @@ class SpaceUserProfile {
       lastVisit: lastVisit,
       medalUrls: medalUrls,
       isFollowing: isFollowing ?? this.isFollowing,
+      isBlocked: isBlocked ?? this.isBlocked,
       followUrl: followUrl ?? this.followUrl,
       friendUrl: friendUrl,
       pokeUrl: pokeUrl,
@@ -613,6 +822,38 @@ class SpaceUserProfile {
       reportUrl: reportUrl,
     );
   }
+}
+
+class UserGroupPermission {
+  final String name;
+  final String value;
+  final bool? allowed;
+
+  const UserGroupPermission({
+    required this.name,
+    required this.value,
+    this.allowed,
+  });
+}
+
+class UserGroupData {
+  final String groupName;
+  final String currentLevel;
+  final String nextLevel;
+  final double progress;
+  final String pointsNeeded;
+  final String nextGroupName;
+  final List<UserGroupPermission> permissions;
+
+  const UserGroupData({
+    this.groupName = '',
+    this.currentLevel = '',
+    this.nextLevel = '',
+    this.progress = 0,
+    this.pointsNeeded = '',
+    this.nextGroupName = '',
+    this.permissions = const [],
+  });
 }
 
 class SignatureProfileForm {
@@ -832,3 +1073,76 @@ class PmConversationSummary {
   });
 }
 
+
+/// 单个消息入口的未读状态。
+///
+/// Discuz 某些模板只给出“有新消息”标记而不输出精确数字，
+/// 因此 [count] 允许为空；此时 UI 使用“新”Badge，而不是伪造数量。
+class UnreadBadgeInfo {
+  final int? count;
+  final bool hasUnread;
+
+  const UnreadBadgeInfo({
+    this.count,
+    this.hasUnread = false,
+  });
+
+  const UnreadBadgeInfo.none()
+      : count = 0,
+        hasUnread = false;
+
+  bool get isVisible => hasUnread || (count ?? 0) > 0;
+
+  String? get label {
+    if (!isVisible) return null;
+    final value = count;
+    if (value == null) return '新';
+    if (value > 99) return '99+';
+    return '$value';
+  }
+}
+
+/// 消息中心三类入口的未读汇总。
+class MessageUnreadSummary {
+  final UnreadBadgeInfo privateMessages;
+  final UnreadBadgeInfo notices;
+  final UnreadBadgeInfo friendRequests;
+
+  const MessageUnreadSummary({
+    this.privateMessages = const UnreadBadgeInfo.none(),
+    this.notices = const UnreadBadgeInfo.none(),
+    this.friendRequests = const UnreadBadgeInfo.none(),
+  });
+
+  const MessageUnreadSummary.empty()
+      : privateMessages = const UnreadBadgeInfo.none(),
+        notices = const UnreadBadgeInfo.none(),
+        friendRequests = const UnreadBadgeInfo.none();
+
+  bool get hasUnread =>
+      privateMessages.isVisible || notices.isVisible || friendRequests.isVisible;
+
+  /// 底部导航的汇总 Badge。若存在只能确认“有新消息”但无法确认数量的
+  /// 来源，则用 `N+` / `新` 表示，避免把不完整数字当成精确总数。
+  String? get totalLabel {
+    final entries = [privateMessages, notices, friendRequests];
+    var exactTotal = 0;
+    var hasUnknown = false;
+
+    for (final entry in entries) {
+      if (!entry.isVisible) continue;
+      if (entry.count == null) {
+        hasUnknown = true;
+      } else {
+        exactTotal += entry.count!;
+      }
+    }
+
+    if (exactTotal <= 0 && !hasUnknown) return null;
+    if (hasUnknown) {
+      if (exactTotal <= 0) return '新';
+      return exactTotal > 99 ? '99+' : '$exactTotal+';
+    }
+    return exactTotal > 99 ? '99+' : '$exactTotal';
+  }
+}

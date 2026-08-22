@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'pages/home_page.dart';
 import 'pages/community_page.dart';
+import 'pages/messages_page.dart';
 import 'pages/profile_page.dart';
-import 'pages/search_page.dart';
 import 'services/api_service.dart';
+import 'services/message_badge_service.dart';
 import 'services/theme_service.dart';
 import 'services/sign_service.dart';
 import 'services/update_service.dart';
@@ -33,6 +34,17 @@ class MTForumApp extends StatelessWidget {
           theme: AppTheme.light,
           darkTheme: AppTheme.dark,
           themeMode: ThemeService.instance.mode,
+          builder: (context, child) {
+            final media = MediaQuery.of(context);
+            return MediaQuery(
+              data: media.copyWith(
+                textScaler: TextScaler.linear(
+                  media.textScaler.scale(1.0) * ThemeService.instance.textScale,
+                ),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
           home: const MainPage(),
         );
       },
@@ -47,26 +59,28 @@ class MainPage extends StatefulWidget {
   State<MainPage> createState() => _MainPageState();
 }
 
-class _MainPageState extends State<MainPage> {
+class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _autoSignRunning = false;
 
   final _pages = const [
     HomePage(),
     CommunityPage(),
-    SearchPage(),
+    MessagesPage(),
     ProfilePage(),
   ];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     ApiService.instance.addLoginListener(_onLoginChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) => _runStartupTasks());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     ApiService.instance.removeLoginListener(_onLoginChanged);
     super.dispose();
   }
@@ -74,11 +88,22 @@ class _MainPageState extends State<MainPage> {
   void _onLoginChanged() {
     if (ApiService.instance.isLoggedIn) {
       _runAutoSign();
+      MessageBadgeService.instance.refresh(force: true);
+    } else {
+      MessageBadgeService.instance.clear();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      MessageBadgeService.instance.refresh(force: true);
     }
   }
 
   Future<void> _runStartupTasks() async {
     await _runAutoSign();
+    await MessageBadgeService.instance.refresh(force: true);
     await _checkUpdate();
   }
 
@@ -123,35 +148,225 @@ class _MainPageState extends State<MainPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: _pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() => _currentIndex = index);
+      body: _AnimatedTabStack(
+        index: _currentIndex,
+        children: _pages,
+      ),
+      bottomNavigationBar: AnimatedBuilder(
+        animation: MessageBadgeService.instance,
+        builder: (context, _) {
+          final messageBadge = MessageBadgeService.instance.summary.totalLabel;
+          return NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: (index) {
+              if (index == _currentIndex) return;
+              FocusManager.instance.primaryFocus?.unfocus();
+              setState(() => _currentIndex = index);
+              if (index == 2) {
+                MessageBadgeService.instance.refresh(force: true);
+              }
+            },
+            destinations: [
+              const NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home_rounded),
+                label: '首页',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.grid_view_outlined),
+                selectedIcon: Icon(Icons.grid_view_rounded),
+                label: '社区',
+              ),
+              NavigationDestination(
+                icon: _NavigationIconWithBadge(
+                  icon: Icons.chat_bubble_outline_rounded,
+                  badge: messageBadge,
+                ),
+                selectedIcon: _NavigationIconWithBadge(
+                  icon: Icons.chat_bubble_rounded,
+                  badge: messageBadge,
+                ),
+                label: '消息',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.person_outline_rounded),
+                selectedIcon: Icon(Icons.person_rounded),
+                label: '我的',
+              ),
+            ],
+          );
         },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: '首页',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.grid_view_outlined),
-            selectedIcon: Icon(Icons.grid_view_rounded),
-            label: '社区',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.search_outlined),
-            selectedIcon: Icon(Icons.search_rounded),
-            label: '搜索',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded),
-            label: '我的',
-          ),
+      ),
+    );
+  }
+}
+
+
+class _AnimatedTabStack extends StatefulWidget {
+  final int index;
+  final List<Widget> children;
+
+  const _AnimatedTabStack({
+    required this.index,
+    required this.children,
+  });
+
+  @override
+  State<_AnimatedTabStack> createState() => _AnimatedTabStackState();
+}
+
+class _AnimatedTabStackState extends State<_AnimatedTabStack>
+    with SingleTickerProviderStateMixin {
+  static const _duration = Duration(milliseconds: 320);
+  static const _curve = Cubic(0.16, 1.0, 0.30, 1.0);
+
+  late final AnimationController _controller;
+  late int _currentIndex;
+  int? _previousIndex;
+  int _direction = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.index;
+    _controller = AnimationController(
+      vsync: this,
+      duration: _duration,
+      value: 1,
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed && mounted) {
+          setState(() => _previousIndex = null);
+        }
+      });
+  }
+
+  @override
+  void didUpdateWidget(covariant _AnimatedTabStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.index == _currentIndex) return;
+
+    _previousIndex = _currentIndex;
+    _direction = widget.index > _currentIndex ? 1 : -1;
+    _currentIndex = widget.index;
+    _controller.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Z 轴顺序必须与切换方向无关：隐藏页在底层，旧页居中，
+    // 新页永远放在最上层。旧实现直接按 tab 索引堆 Stack，导致
+    // 0 -> 3 正常，但 3 -> 0 时旧的“我的”页仍压在“首页”上面，
+    // 于是反向动画看起来像卡住/穿模。
+    final hidden = <Widget>[];
+    for (var i = 0; i < widget.children.length; i++) {
+      if (i == _currentIndex || i == _previousIndex) continue;
+      hidden.add(_buildPage(i, widget.children[i]));
+    }
+
+    return ClipRect(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ...hidden,
+          if (_previousIndex != null)
+            _buildPage(_previousIndex!, widget.children[_previousIndex!]),
+          _buildPage(_currentIndex, widget.children[_currentIndex]),
         ],
       ),
+    );
+  }
+
+  Widget _buildPage(int index, Widget child) {
+    final isCurrent = index == _currentIndex;
+    final isPrevious = index == _previousIndex;
+    final isVisible = isCurrent || isPrevious;
+
+    Widget page = TickerMode(
+      enabled: isVisible,
+      child: ExcludeSemantics(
+        excluding: !isCurrent,
+        child: IgnorePointer(
+          ignoring: !isCurrent || _controller.isAnimating,
+          child: RepaintBoundary(child: child),
+        ),
+      ),
+    );
+
+    if (!isVisible) {
+      return Offstage(offstage: true, child: page);
+    }
+
+    // 只让正在离开的页面和正在进入的页面参与合成动画。
+    // 旧实现会让所有隐藏 Tab 同时横穿屏幕，重页面时会明显掉帧。
+    return AnimatedBuilder(
+      animation: _controller,
+      child: page,
+      builder: (context, page) {
+        final t = _curve.transform(_controller.value);
+        final double x;
+        if (isCurrent) {
+          x = _direction * (1 - t);
+        } else {
+          // 底层页只做极轻的反向视差，减少大面积像素移动。
+          x = -_direction * 0.06 * t;
+        }
+
+        return FractionalTranslation(
+          translation: Offset(x, 0),
+          child: page,
+        );
+      },
+    );
+  }
+}
+
+
+class _NavigationIconWithBadge extends StatelessWidget {
+  final IconData icon;
+  final String? badge;
+
+  const _NavigationIconWithBadge({required this.icon, this.badge});
+
+  @override
+  Widget build(BuildContext context) {
+    final value = badge;
+    if (value == null) return Icon(icon);
+
+    final colors = Theme.of(context).colorScheme;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(icon),
+        Positioned(
+          right: -11,
+          top: -8,
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: colors.error,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: colors.surfaceContainerLow, width: 1.5),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              value,
+              style: TextStyle(
+                color: colors.onError,
+                fontSize: 10,
+                height: 1.2,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../widgets/app_state_view.dart';
 
 class PrivateMessagesPage extends StatefulWidget {
   const PrivateMessagesPage({super.key});
@@ -58,29 +59,33 @@ class _PrivateMessagesPageState extends State<PrivateMessagesPage> {
         ],
       ),
       body: _loading && _items.isEmpty
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView.builder(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 24),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 itemCount: _items.isEmpty ? 1 : _items.length,
                 itemBuilder: (context, index) {
                   if (_items.isEmpty) {
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 180),
-                      child: Center(
-                        child: Text(
-                          _error ?? '暂无私信会话',
-                          style: TextStyle(color: colors.outline),
-                        ),
-                      ),
+                    return SizedBox(
+                      height: 360,
+                      child: _error != null
+                          ? AppStateView.error(
+                              message: _error!,
+                              onRetry: _load,
+                            )
+                          : const AppStateView.empty(
+                              icon: Icons.chat_bubble_outline_rounded,
+                              title: '暂无私信',
+                              message: '还没有私信会话。',
+                            ),
                     );
                   }
 
                   final item = _items[index];
                   return Card(
-                    margin: const EdgeInsets.only(bottom: 5),
+                    margin: const EdgeInsets.only(bottom: 10),
                     child: ListTile(
                       dense: true,
                       visualDensity: const VisualDensity(vertical: -2),
@@ -427,7 +432,7 @@ class _PmConversationPageState extends State<PmConversationPage> {
                     child: TextField(
                       controller: _controller,
                       minLines: 1,
-                      maxLines: 5,
+                      maxLines: 7,
                       textInputAction: TextInputAction.newline,
                       decoration: const InputDecoration(
                         hintText: '发送私信…',

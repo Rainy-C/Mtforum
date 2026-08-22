@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../widgets/app_state_view.dart';
 
 class CreditsPage extends StatefulWidget {
   const CreditsPage({super.key});
@@ -110,7 +111,7 @@ class _CreditsPageState extends State<CreditsPage>
                     physics: const AlwaysScrollableScrollPhysics(),
                     children: const [
                       SizedBox(height: 260),
-                      Center(child: CircularProgressIndicator()),
+                      AppStateView.loading(),
                     ],
                   )
                 : _error != null && _summary == null
@@ -118,7 +119,10 @@ class _CreditsPageState extends State<CreditsPage>
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: [
                           const SizedBox(height: 200),
-                          Center(child: Text(_error!)),
+                          AppStateView.error(
+                            message: _error!,
+                            onRetry: _loadSummary,
+                          ),
                         ],
                       )
                     : _SummaryView(summary: _summary!),
@@ -267,7 +271,7 @@ class _CreditRecordList extends StatelessWidget {
     final colors = theme.colorScheme;
 
     if (loading && records == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppStateView.loading();
     }
 
     final data = records ?? const <CreditRecord>[];
@@ -276,17 +280,16 @@ class _CreditRecordList extends StatelessWidget {
       onRefresh: onRefresh,
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
         itemCount: data.isEmpty ? 1 : data.length,
         itemBuilder: (context, index) {
           if (data.isEmpty) {
-            return Padding(
-              padding: const EdgeInsets.only(top: 180),
-              child: Center(
-                child: Text(
-                  emptyText,
-                  style: TextStyle(color: colors.outline),
-                ),
+            return SizedBox(
+              height: 360,
+              child: AppStateView.empty(
+                icon: Icons.receipt_long_outlined,
+                title: emptyText,
+                message: '这里暂时没有记录。',
               ),
             );
           }

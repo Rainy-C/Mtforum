@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../widgets/app_state_view.dart';
 
 class ProfileEditPage extends StatefulWidget {
   const ProfileEditPage({super.key});
@@ -144,26 +145,11 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppStateView.loading()
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_error!, textAlign: TextAlign.center),
-                        const SizedBox(height: 12),
-                        FilledButton.tonal(
-                          onPressed: _load,
-                          child: const Text('重试'),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
+              ? AppStateView.error(message: _error!, onRetry: _load)
               : ListView(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 28),
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
                   children: [
                     _Section(
                       title: '基本信息',
