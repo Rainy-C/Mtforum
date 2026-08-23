@@ -334,6 +334,7 @@ class SearchResult {
   final String? excerpt;
   final String? replyCount;
   final String? viewCount;
+  final String? likeCount;
   final List<String> thumbnails;
   final bool hasHiddenContent;
 
@@ -348,6 +349,7 @@ class SearchResult {
     this.excerpt,
     this.replyCount,
     this.viewCount,
+    this.likeCount,
     this.thumbnails = const [],
     this.hasHiddenContent = false,
   });
@@ -426,6 +428,7 @@ class FavoriteItem {
   final String type;
   final String href;
   final String? tid;
+  final Thread? thread;
 
   const FavoriteItem({
     required this.favid,
@@ -433,6 +436,7 @@ class FavoriteItem {
     required this.type,
     required this.href,
     this.tid,
+    this.thread,
   });
 
   bool get isThread => tid != null && tid!.isNotEmpty;
@@ -504,6 +508,65 @@ class MallExchangeResult {
     required this.message,
     this.url,
   });
+}
+
+class MallCardRecord {
+  final String card;
+  final String exchangedAt;
+  final String? status;
+
+  const MallCardRecord({
+    required this.card,
+    this.exchangedAt = '',
+    this.status,
+  });
+}
+
+class MallCardPurchase {
+  final String tid;
+  final String title;
+  final String orderedAt;
+  final String? status;
+  final List<MallCardRecord> records;
+  final bool loadFailed;
+
+  const MallCardPurchase({
+    required this.tid,
+    required this.title,
+    this.orderedAt = '',
+    this.status,
+    this.records = const [],
+    this.loadFailed = false,
+  });
+
+  MallCardPurchase copyWith({
+    List<MallCardRecord>? records,
+    bool? loadFailed,
+  }) {
+    return MallCardPurchase(
+      tid: tid,
+      title: title,
+      orderedAt: orderedAt,
+      status: status,
+      records: records ?? this.records,
+      loadFailed: loadFailed ?? this.loadFailed,
+    );
+  }
+}
+
+class MallCardStatus {
+  final List<MallCardPurchase> purchases;
+
+  const MallCardStatus({
+    this.purchases = const [],
+  });
+
+  int get recordCount => purchases.fold<int>(
+        0,
+        (total, purchase) => total + purchase.records.length,
+      );
+
+  bool get isEmpty => recordCount == 0 && purchases.isEmpty;
 }
 
 class ForumBoard {
@@ -1063,6 +1126,7 @@ class PmConversationSummary {
   final String? avatarUrl;
   final String? lastMessage;
   final String? lastTime;
+  final bool hasUnread;
 
   const PmConversationSummary({
     required this.touid,
@@ -1070,6 +1134,7 @@ class PmConversationSummary {
     this.avatarUrl,
     this.lastMessage,
     this.lastTime,
+    this.hasUnread = false,
   });
 }
 

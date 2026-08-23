@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/api_service.dart';
+import '../../services/message_badge_service.dart';
 import '../../widgets/app_state_view.dart';
 
 class PrivateMessagesPage extends StatefulWidget {
@@ -198,6 +199,10 @@ class _PmConversationPageState extends State<PmConversationPage> {
       setState(() {});
       _startPolling();
       _scrollToBottom();
+
+      // 打开具体会话后论坛会清除该会话的 kmnums 未读标记。
+      // 立即同步一次，从系统通知栏撤销已经读过的这条私信。
+      unawaited(MessageBadgeService.instance.refresh(force: true));
     } catch (e) {
       if (mounted) setState(() => _error = '对话加载失败：$e');
     } finally {

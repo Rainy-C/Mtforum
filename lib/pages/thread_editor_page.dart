@@ -51,6 +51,7 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
   final _imagePicker = ImagePicker();
 
   PostEditorForm? _form;
+  String _editReplyQuotePrefix = '';
   bool _loading = true;
   bool _submitting = false;
   bool _allowNoticeAuthor = true;
@@ -82,6 +83,44 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
     super.dispose();
   }
 
+  (String, String) _splitGeneratedReplyQuote(String raw) {
+    final leading = RegExp(r'^\s*').firstMatch(raw)?.end ?? 0;
+    if (!raw.toLowerCase().startsWith('[quote]', leading)) {
+      return ('', raw);
+    }
+
+    final remaining = raw.substring(leading);
+    final generatedHeader = RegExp(
+      r'^\[quote\]\s*\[color=#999999\][^\r\n]*发表于[^\r\n]*\[/color\]\s*(?:\r?\n)?\s*\[color=#999999\]',
+      caseSensitive: false,
+    );
+    if (!generatedHeader.hasMatch(remaining)) {
+      return ('', raw);
+    }
+
+    var depth = 0;
+    int? quoteEnd;
+    final tokenPattern = RegExp(r'\[/?quote\]', caseSensitive: false);
+    for (final match in tokenPattern.allMatches(remaining)) {
+      final token = match.group(0)!.toLowerCase();
+      if (token == '[quote]') {
+        depth++;
+      } else {
+        depth--;
+        if (depth == 0) {
+          quoteEnd = leading + match.end;
+          break;
+        }
+      }
+    }
+    if (quoteEnd == null) return ('', raw);
+
+    final separator = RegExp(r'^[ \t]*(?:\r?\n)+')
+        .firstMatch(raw.substring(quoteEnd));
+    final prefixEnd = quoteEnd + (separator?.end ?? 0);
+    return (raw.substring(0, prefixEnd), raw.substring(prefixEnd));
+  }
+
   Future<void> _loadForm() async {
     setState(() {
       _loading = true;
@@ -102,7 +141,15 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
 
       _form = form;
       _subjectController.text = form.subject;
-      _messageController.text = SmileyCatalog.fromForumBbCode(form.message);
+
+      var editableMessage = form.message;
+      _editReplyQuotePrefix = '';
+      if (widget.editing) {
+        final parts = _splitGeneratedReplyQuote(form.message);
+        _editReplyQuotePrefix = parts.$1;
+        editableMessage = parts.$2;
+      }
+      _messageController.text = SmileyCatalog.fromForumBbCode(editableMessage);
       _messageController.selection = TextSelection.collapsed(
         offset: _messageController.text.length,
       );
@@ -450,13 +497,17 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
     }
 
     final subject = _subjectController.text.trim();
-    final message = SmileyCatalog.toForumBbCode(_messageController.text).trim();
+    final editableMessage =
+        SmileyCatalog.toForumBbCode(_messageController.text).trim();
+    final message = widget.editing && _editReplyQuotePrefix.isNotEmpty
+        ? '$_editReplyQuotePrefix$editableMessage'
+        : editableMessage;
 
     if (!widget.editing && subject.isEmpty) {
       _showMessage('请输入帖子标题');
       return;
     }
-    if (message.isEmpty) {
+    if (editableMessage.isEmpty) {
       _showMessage('请输入帖子正文');
       return;
     }

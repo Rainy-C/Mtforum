@@ -5,8 +5,8 @@ import '../models/models.dart';
 
 /// 全局统一帖子列表卡片。
 ///
-/// 首页、板块、搜索等入口统一使用这一套信息层级，避免后续再次出现
-/// “同一个帖子在不同页面长得完全不一样”的情况。
+/// 首页、板块、搜索、我的内容、用户主页内容、收藏帖子统一使用这一套
+/// 信息层级，避免后续再次出现“同一个帖子在不同页面长得完全不一样”。
 class ThreadCard extends StatelessWidget {
   final Thread thread;
   final VoidCallback onTap;
@@ -135,18 +135,6 @@ class ThreadCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (thread.replyCount?.trim().isNotEmpty == true)
-                    _Stat(
-                      icon: Icons.chat_bubble_outline_rounded,
-                      value: thread.replyCount!.trim(),
-                    ),
-                  if (thread.viewCount?.trim().isNotEmpty == true) ...[
-                    const SizedBox(width: 9),
-                    _Stat(
-                      icon: Icons.visibility_outlined,
-                      value: thread.viewCount!.trim(),
-                    ),
-                  ],
                 ],
               ),
               if (thread.lastReplyTime?.trim().isNotEmpty == true) ...[
@@ -168,11 +156,49 @@ class ThreadCard extends StatelessWidget {
                   ],
                 ),
               ],
+              const SizedBox(height: 10),
+              Divider(
+                height: 1,
+                color: colors.outlineVariant.withValues(alpha: 0.55),
+              ),
+              const SizedBox(height: 9),
+              Row(
+                children: [
+                  Expanded(
+                    child: _Stat(
+                      icon: Icons.thumb_up_alt_outlined,
+                      label: '点赞',
+                      value: _statValue(thread.likeCount),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _Stat(
+                      icon: Icons.chat_bubble_outline_rounded,
+                      label: '评论',
+                      value: _statValue(thread.replyCount),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _Stat(
+                      icon: Icons.visibility_outlined,
+                      label: '阅读',
+                      value: _statValue(thread.viewCount),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  static String _statValue(String? value) {
+    final clean = value?.trim() ?? '';
+    return clean.isEmpty ? '—' : clean;
   }
 
   static String _initial(String? name) {
@@ -262,23 +288,44 @@ class _HiddenBadge extends StatelessWidget {
 
 class _Stat extends StatelessWidget {
   final IconData icon;
+  final String label;
   final String value;
 
-  const _Stat({required this.icon, required this.value});
+  const _Stat({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.onSurfaceVariant;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 13, color: color),
-        const SizedBox(width: 3),
-        Text(
-          value,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
-        ),
-      ],
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.48),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: colors.onSurfaceVariant),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              '$label $value',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colors.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

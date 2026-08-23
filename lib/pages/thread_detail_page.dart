@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/smiley_catalog.dart';
@@ -49,7 +50,11 @@ Future<void> _openPostLink(BuildContext context, String rawUrl) async {
 
 class ThreadDetailPage extends StatefulWidget {
   final String tid;
-  const ThreadDetailPage({super.key, required this.tid});
+
+  const ThreadDetailPage({
+    super.key,
+    required this.tid,
+  });
 
   @override
   State<ThreadDetailPage> createState() => _ThreadDetailPageState();
@@ -79,6 +84,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     _scrollController.dispose();
     super.dispose();
   }
+
 
   Future<void> _loadData() async {
     if (_loading) return;
@@ -351,7 +357,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           ? null
           : FloatingActionButton.extended(
               heroTag: 'thread-comments-${widget.tid}',
-              onPressed: _showComments,
+              onPressed: () => _showComments(),
               icon: const Icon(Icons.forum_rounded),
               label: const Text('评论区'),
             ),
@@ -401,30 +407,34 @@ class _CommentsSheet extends StatefulWidget {
 }
 
 class _CommentsSheetState extends State<_CommentsSheet> {
+  static const _commentReverseOrderKey = 'thread_comment_reverse_order';
+
   final _scrollController = ScrollController();
   final _composerController = _SmileyEditingController();
   final _composerFocusNode = FocusNode();
 
-  bool _requesting = false;
+  bool _loadingAll = false;
+  bool _loadAllFailed = false;
   bool _sending = false;
   bool _showSmileys = false;
+  bool _reverseOrder = false;
   Post? _replyTarget;
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
     _composerController.addListener(_onComposerChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_comments.isEmpty && widget.hasMore()) {
-        _loadNext();
-      }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await _restoreCommentOrder();
+      if (!mounted) return;
+      await _loadAllComments();
     });
   }
 
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
     _composerController.removeListener(_onComposerChanged);
     _scrollController.dispose();
     _composerController.dispose();
@@ -432,26 +442,132 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     super.dispose();
   }
 
-  List<Post> get _comments => _threadComments(widget.detail);
+  List<Post> _orderedComments(List<Post> source) {
+    if (!_reverseOrder) return source;
+    return source.reversed.toList(growable: false);
+  }
+
+  List<Post> get _comments => _orderedComments(_threadComments(widget.detail));
+
+  Future<void> _restoreCommentOrder() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final reverse = prefs.getBool(_commentReverseOrderKey) ?? false;
+      if (reverse != _reverseOrder) {
+        setState(() => _reverseOrder = reverse);
+      }
+    } catch (_) {
+      // 排序偏好读取失败不影响评论区使用，默认保持正序。
+    }
+  }
+
+  Future<void> _setCommentOrder(bool reverse) async {
+    if (_reverseOrder == reverse) return;
+
+    setState(() => _reverseOrder = reverse);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_commentReverseOrderKey, reverse);
+    } catch (_) {
+      // 偏好保存失败只影响下次默认排序，不影响当前排序。
+    }
+
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || !_scrollController.hasClients) return;
+    _scrollController.jumpTo(_scrollController.position.minScrollExtent);
+  }
 
   void _onComposerChanged() {
     if (mounted) setState(() {});
   }
 
-  void _onScroll() {
-    if (!_scrollController.hasClients ||
-        _scrollController.position.extentAfter > 260) {
-      return;
+  Future<void> _loadAllComments() async {
+    if (_loadingAll) return;
+    setState(() {
+      _loadingAll = true;
+      _loadAllFailed = false;
+    });
+
+    try {
+      while (mounted && widget.hasMore()) {
+        if (widget.isLoadingMore()) {
+          await Future<void>.delayed(const Duration(milliseconds: 40));
+          continue;
+        }
+
+        final beforeCount = _threadComments(widget.detail).length;
+        await widget.onLoadMore();
+        if (!mounted) return;
+        final afterCount = _threadComments(widget.detail).length;
+
+        if (afterCount <= beforeCount) {
+          if (widget.hasMore()) _loadAllFailed = true;
+          break;
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingAll = false);
+      }
     }
-    _loadNext();
   }
 
-  Future<void> _loadNext() async {
-    if (_requesting || widget.isLoadingMore() || !widget.hasMore()) return;
-    setState(() => _requesting = true);
-    await widget.onLoadMore();
-    if (!mounted) return;
-    setState(() => _requesting = false);
+  Widget _buildCommentCard(Post post) {
+    return RepaintBoundary(
+      child: _PostCard(
+        post: post,
+        highlighted: false,
+        onReply: () => _startReply(post),
+        onEdit: widget.canEdit(post)
+            ? () {
+                Navigator.pop(context);
+                Future.microtask(() => widget.onEdit(post));
+              }
+            : null,
+        onImageTap: (imageIndex) => widget.onImageTap(post, imageIndex),
+      ),
+    );
+  }
+
+  Widget _buildCommentsTail({
+    required ThemeData theme,
+    required ColorScheme colors,
+    required bool loading,
+    required bool hasMore,
+  }) {
+    if (loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (_loadAllFailed && hasMore) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Center(
+          child: FilledButton.tonalIcon(
+            onPressed: _loadAllComments,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('重新加载全部评论'),
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Center(
+        child: Text(
+          '已加载全部评论',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.outline,
+          ),
+        ),
+      ),
+    );
   }
 
   void _ensureLogin() {
@@ -560,6 +676,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
 
       try {
         await widget.onRefresh();
+        if (!mounted) return;
+        await _loadAllComments();
       } catch (_) {
         // 回复已成功时，刷新失败不应把发送结果判成失败。
       }
@@ -585,7 +703,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     final colors = theme.colorScheme;
     final media = MediaQuery.of(context);
     final comments = _comments;
-    final loading = _requesting || widget.isLoadingMore();
+    final loading = _loadingAll || widget.isLoadingMore();
     final hasMore = widget.hasMore();
     final loggedIn = ApiService.instance.isLoggedIn;
     final canSend = loggedIn &&
@@ -629,14 +747,27 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                             ),
                           ),
                           Text(
-                            comments.isEmpty
-                                ? '暂无已加载评论'
-                                : '已加载 ${comments.length} 条',
+                            _loadingAll
+                                ? '正在加载全部评论…'
+                                : comments.isEmpty
+                                    ? '暂无评论'
+                                    : '共 ${comments.length} 条评论 · ${_reverseOrder ? '倒序' : '正序'}',
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: colors.outline,
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: _reverseOrder ? '当前倒序，点击切换正序' : '当前正序，点击切换倒序',
+                      onPressed: _loadingAll
+                          ? null
+                          : () => _setCommentOrder(!_reverseOrder),
+                      icon: Icon(
+                        _reverseOrder
+                            ? Icons.arrow_downward_rounded
+                            : Icons.arrow_upward_rounded,
                       ),
                     ),
                     IconButton(
@@ -684,56 +815,14 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         itemCount: comments.length + 1,
                         itemBuilder: (context, index) {
                           if (index == comments.length) {
-                            if (loading) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 18),
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                              );
-                            }
-                            if (hasMore) {
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                child: Center(
-                                  child: FilledButton.tonalIcon(
-                                    onPressed: _loadNext,
-                                    icon: const Icon(Icons.expand_more_rounded),
-                                    label: const Text('加载更多评论'),
-                                  ),
-                                ),
-                              );
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              child: Center(
-                                child: Text(
-                                  '没有更多评论了',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: colors.outline,
-                                  ),
-                                ),
-                              ),
+                            return _buildCommentsTail(
+                              theme: theme,
+                              colors: colors,
+                              loading: loading,
+                              hasMore: hasMore,
                             );
                           }
-
-                          final post = comments[index];
-                          return RepaintBoundary(
-                            child: _PostCard(
-                              post: post,
-                              onReply: () => _startReply(post),
-                              onEdit: widget.canEdit(post)
-                                  ? () {
-                                      Navigator.pop(context);
-                                      Future.microtask(() => widget.onEdit(post));
-                                    }
-                                  : null,
-                              onImageTap: (imageIndex) =>
-                                  widget.onImageTap(post, imageIndex),
-                            ),
-                          );
+                          return _buildCommentCard(comments[index]);
                         },
                       ),
               ),
@@ -916,12 +1005,14 @@ class _CommentComposer extends StatelessWidget {
 
 class _PostCard extends StatelessWidget {
   final Post post;
+  final bool highlighted;
   final VoidCallback onReply;
   final VoidCallback? onEdit;
   final ValueChanged<int> onImageTap;
 
   const _PostCard({
     required this.post,
+    this.highlighted = false,
     required this.onReply,
     this.onEdit,
     required this.onImageTap,
@@ -932,6 +1023,7 @@ class _PostCard extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final content = post.content.trim();
+    final postTime = post.postTime?.trim() ?? '';
     final richImageUrls = post.richContent
         .where((item) => item.type == PostContentType.image)
         .map((item) => item.url)
@@ -943,11 +1035,17 @@ class _PostCard extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      color: colors.surfaceContainerLow,
+      color: highlighted
+          ? Color.alphaBlend(
+              colors.primary.withValues(alpha: 0.10),
+              colors.surfaceContainerLow,
+            )
+          : colors.surfaceContainerLow,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
-          color: colors.outlineVariant,
+          color: highlighted ? colors.primary : colors.outlineVariant,
+          width: highlighted ? 1.5 : 1,
         ),
       ),
       child: Padding(
@@ -1014,13 +1112,13 @@ class _PostCard extends StatelessWidget {
                           ],
                         ],
                       ),
-                      if (post.authorLevel != null ||
-                          post.postTime != null)
+                      if ((post.authorLevel?.trim().isNotEmpty ?? false) ||
+                          postTime.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(top: 3),
+                          padding: const EdgeInsets.only(top: 4),
                           child: Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
+                            spacing: 8,
+                            runSpacing: 5,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               if (post.authorLevel != null &&
@@ -1028,13 +1126,8 @@ class _PostCard extends StatelessWidget {
                                 UserLevelBadge(
                                   text: post.authorLevel!,
                                 ),
-                              if (post.postTime != null)
-                                Text(
-                                  post.postTime!,
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: colors.outline,
-                                  ),
-                                ),
+                              if (postTime.isNotEmpty)
+                                _PostTimeLabel(time: postTime),
                             ],
                           ),
                         ),
@@ -1162,6 +1255,43 @@ class _PostCard extends StatelessWidget {
     if (floor == null || floor.isEmpty) return '';
     if (floor == '1') return '楼主';
     return '$floor楼';
+  }
+}
+
+class _PostTimeLabel extends StatelessWidget {
+  final String time;
+
+  const _PostTimeLabel({required this.time});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Semantics(
+      label: '评论时间 $time',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.schedule_rounded,
+            size: 13,
+            color: colors.outline,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            time,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+              height: 1.15,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
