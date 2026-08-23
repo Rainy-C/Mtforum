@@ -162,6 +162,7 @@ class _MessageEntryCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Container(
                 width: 48,
@@ -176,20 +177,14 @@ class _MessageEntryCard extends StatelessWidget {
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        if (badge != null) _CountBadge(label: badge!),
-                      ],
+                    Text(
+                      title,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -202,8 +197,25 @@ class _MessageEntryCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 6),
-              Icon(Icons.chevron_right_rounded, color: colors.outline),
+              const SizedBox(width: 10),
+              if (badge != null) ...[
+                SizedBox(
+                  width: 30,
+                  height: 48,
+                  child: Center(child: _CountBadge(label: badge!)),
+                ),
+                const SizedBox(width: 6),
+              ],
+              SizedBox(
+                width: 24,
+                height: 48,
+                child: Center(
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    color: colors.outline,
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -220,8 +232,9 @@ class _CountBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Container(
-      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      height: 20,
+      constraints: const BoxConstraints(minWidth: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
         color: colors.error,
         borderRadius: BorderRadius.circular(999),
@@ -229,11 +242,17 @@ class _CountBadge extends StatelessWidget {
       alignment: Alignment.center,
       child: Text(
         label,
+        textAlign: TextAlign.center,
+        textHeightBehavior: const TextHeightBehavior(
+          applyHeightToFirstAscent: false,
+          applyHeightToLastDescent: false,
+        ),
         style: TextStyle(
           color: colors.onError,
           fontSize: 11,
-          height: 1.2,
+          height: 1,
           fontWeight: FontWeight.w800,
+          leadingDistribution: TextLeadingDistribution.even,
         ),
       ),
     );

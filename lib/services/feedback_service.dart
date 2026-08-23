@@ -25,8 +25,29 @@ class FeedbackService {
   /// 旧版地址仅作兼容默认值，服务端新接口路径统一为 /api/v1/feedback。
   static const endpoint = String.fromEnvironment(
     'MTFORUM_FEEDBACK_URL',
-    defaultValue: 'http://114.66.62.198:8080/api/v1/feedback',
+    defaultValue: 'https://feedback.example.com/api/v1/feedback',
   );
+
+
+  /// 旧反馈服务异常时的内置候选地址。通过 dart-define 指定的 endpoint 仍然优先。
+  static const fallbackEndpoint =
+      'https://feedback-fallback.example.com/api/v1/feedback';
+
+  /// 候选服务健康检查地址，仅用于诊断；正常提交不会额外预请求一次。
+  static const fallbackHealthEndpoint =
+      'https://feedback-fallback.example.com/healthz';
+
+  static List<String> get endpointCandidates {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final value in <String>[endpoint, fallbackEndpoint]) {
+      final normalized = value.trim();
+      if (normalized.isNotEmpty && seen.add(normalized)) {
+        out.add(normalized);
+      }
+    }
+    return out;
+  }
 
   /// 可选的轻量客户端令牌。服务端未配置 FEEDBACK_APP_TOKEN 时无需设置。
   static const appToken = String.fromEnvironment(
@@ -44,7 +65,7 @@ class FeedbackService {
         'Accept': 'application/json',
         'Content-Type': 'application/json; charset=utf-8',
       },
-      validateStatus: (status) => status != null && status >= 200 && status < 500,
+      validateStatus: (status) => status != null && status >= 200 && status < 600,
     ),
   );
 
@@ -89,92 +110,104 @@ class FeedbackService {
       headers['X-MTForum-Token'] = appToken;
     }
 
-    try {
-      final response = await _dio.post<String>(
-        endpoint,
-        data: jsonEncode({
-          'content': normalizedContent,
-          'contact': normalizedContact,
-          'appVersion': versionName,
-          'versionCode': versionCode,
-          'platform': Platform.operatingSystem,
-        }),
-        options: Options(headers: headers),
-      );
+    FeedbackSubmitResult? lastFailure;
+    for (final target in endpointCandidates) {
+      try {
+        final response = await _dio.post<String>(
+          target,
+          data: jsonEncode({
+            'content': normalizedContent,
+            'contact': normalizedContact,
+            'appVersion': versionName,
+            'versionCode': versionCode,
+            'platform': Platform.operatingSystem,
+          }),
+          options: Options(headers: headers),
+        );
 
-      Map<String, dynamic> body = const {};
-      final raw = response.data?.trim() ?? '';
-      if (raw.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(raw);
-          if (decoded is Map) {
-            body = decoded.map((key, value) => MapEntry('$key', value));
+        Map<String, dynamic> body = const {};
+        final raw = response.data?.trim() ?? '';
+        if (raw.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(raw);
+            if (decoded is Map) {
+              body = decoded.map((key, value) => MapEntry('$key', value));
+            }
+          } catch (_) {
+            // 非 JSON 响应继续按 HTTP 状态处理。
           }
-        } catch (_) {
-          // 非 JSON 响应继续按 HTTP 状态处理。
         }
-      }
 
-      final status = response.statusCode ?? 0;
-      final serverMessage = '${body['message'] ?? ''}'.trim();
-      final feedbackId = '${body['id'] ?? ''}'.trim();
+        final status = response.statusCode ?? 0;
+        final serverMessage = '${body['message'] ?? ''}'.trim();
+        final feedbackId = '${body['id'] ?? ''}'.trim();
 
-      if (status >= 200 && status < 300 && body['ok'] != false) {
-        return FeedbackSubmitResult(
-          success: true,
-          message: serverMessage.isEmpty ? '反馈已提交，感谢您的支持' : serverMessage,
-          id: feedbackId.isEmpty ? null : feedbackId,
-        );
-      }
+        if (status >= 200 && status < 300 && body['ok'] != false) {
+          return FeedbackSubmitResult(
+            success: true,
+            message: serverMessage.isEmpty ? '反馈已提交，感谢您的支持' : serverMessage,
+            id: feedbackId.isEmpty ? null : feedbackId,
+          );
+        }
 
-      if (status == 429) {
-        return const FeedbackSubmitResult(
-          success: false,
-          message: '提交过于频繁，请稍后再试',
-        );
-      }
-      if (status == 413) {
-        return const FeedbackSubmitResult(
-          success: false,
-          message: '反馈内容过长',
-        );
-      }
-      if (status == 400) {
-        return FeedbackSubmitResult(
-          success: false,
-          message: serverMessage.isEmpty ? '反馈内容格式不正确' : serverMessage,
-        );
-      }
-      if (status == 401 || status == 403) {
-        return const FeedbackSubmitResult(
-          success: false,
-          message: '反馈服务验证失败，请更新客户端后重试',
-        );
-      }
+        if (status == 429) {
+          return const FeedbackSubmitResult(
+            success: false,
+            message: '提交过于频繁，请稍后再试',
+          );
+        }
+        if (status == 413) {
+          return const FeedbackSubmitResult(
+            success: false,
+            message: '反馈内容过长',
+          );
+        }
+        if (status == 400) {
+          return FeedbackSubmitResult(
+            success: false,
+            message: serverMessage.isEmpty ? '反馈内容格式不正确' : serverMessage,
+          );
+        }
+        if (status == 401 || status == 403) {
+          return const FeedbackSubmitResult(
+            success: false,
+            message: '反馈服务验证失败，请更新客户端后重试',
+          );
+        }
 
-      return FeedbackSubmitResult(
-        success: false,
-        message: serverMessage.isEmpty ? '反馈服务暂时不可用（HTTP $status）' : serverMessage,
-      );
-    } on DioException catch (e) {
-      final type = e.type;
-      if (type == DioExceptionType.connectionTimeout ||
-          type == DioExceptionType.sendTimeout ||
-          type == DioExceptionType.receiveTimeout) {
-        return const FeedbackSubmitResult(
+        lastFailure = FeedbackSubmitResult(
           success: false,
-          message: '连接反馈服务器超时，请稍后重试',
+          message: serverMessage.isEmpty
+              ? '反馈服务暂时不可用（HTTP $status）'
+              : serverMessage,
+        );
+      } on DioException catch (e) {
+        final type = e.type;
+        if (type == DioExceptionType.connectionTimeout ||
+            type == DioExceptionType.sendTimeout ||
+            type == DioExceptionType.receiveTimeout) {
+          lastFailure = const FeedbackSubmitResult(
+            success: false,
+            message: '连接反馈服务器超时，请稍后重试',
+          );
+        } else {
+          lastFailure = const FeedbackSubmitResult(
+            success: false,
+            message: '无法连接反馈服务器，请检查网络后重试',
+          );
+        }
+      } catch (_) {
+        lastFailure = const FeedbackSubmitResult(
+          success: false,
+          message: '提交失败，请稍后重试',
         );
       }
-      return const FeedbackSubmitResult(
-        success: false,
-        message: '无法连接反馈服务器，请检查网络后重试',
-      );
-    } catch (_) {
-      return const FeedbackSubmitResult(
-        success: false,
-        message: '提交失败，请稍后重试',
-      );
     }
+
+    return lastFailure ??
+        const FeedbackSubmitResult(
+          success: false,
+          message: '反馈服务暂时不可用，请稍后重试',
+        );
   }
 }

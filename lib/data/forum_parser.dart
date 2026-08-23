@@ -43,11 +43,22 @@ class ForumParser {
       final forumHref = forumEl?.attributes['href'] ?? '';
       final forumId = RegExp(r'forum-(\d+)').firstMatch(forumHref)?.group(1);
 
-      // 首页门户和板块页使用的 Comiis 模板并不完全一致。首页统计通常
-      // 在 .comiis_znalist_bottom，板块页则可能换成普通列表信息区域，
-      // 甚至只把“回复/浏览”直接写进当前 li。统一从多个候选区域和整条
-      // 帖子文本中取值，避免同一个 ThreadCard 在板块页缺少统计数据。
+      // Comiis 的完整统计区真实结构是
+      // .comiis_xznalist_bottom .comiis_tm，通常顺序为：点赞 / 回复 / 浏览。
+      // 部分页面会把点赞拆成 .num-all_{tid}，或只留下带中文标签的文本。
+      // 这里先读结构化节点，再回退标签文本，保证首页、板块、搜索使用
+      // 同一个 ThreadCard 时都能拿到同一组三项统计。
+      final statNodes = el.querySelectorAll(
+        '.comiis_xznalist_bottom .comiis_tm, '
+        '.comiis_znalist_bottom .comiis_tm',
+      );
+      final statValues = statNodes
+          .map((node) => _extractStatValue(node.text))
+          .whereType<String>()
+          .toList();
+
       final statText = <String>[
+        el.querySelector('.comiis_xznalist_bottom')?.text ?? '',
         el.querySelector('.comiis_znalist_bottom')?.text ?? '',
         el.querySelector('.forumlist_li_info')?.text ?? '',
         el.querySelector('.comiis_list_bottom')?.text ?? '',
@@ -55,17 +66,32 @@ class ForumParser {
         el.querySelector('.list_info')?.text ?? '',
         el.text,
       ].join(' ');
-      final viewCount = _extractThreadCount(
-        statText,
-        labels: const ['阅读', '浏览', '查看'],
+
+      String? likeCount = _extractStatValue(
+        el.querySelector('.num-all_$tid')?.text,
       );
-      final replyCount = _extractThreadCount(
+      likeCount ??= _extractThreadCount(
+        statText,
+        labels: const ['点赞', '推荐'],
+      );
+      String? replyCount = _extractThreadCount(
         statText,
         labels: const ['评论', '回复'],
       );
-      final likeCount = RegExp(r'num-all_\d+[^>]*>\s*(\d+)')
-          .firstMatch(el.innerHtml)
-          ?.group(1);
+      String? viewCount = _extractThreadCount(
+        statText,
+        labels: const ['阅读', '浏览', '查看'],
+      );
+
+      if (statValues.length >= 3) {
+        likeCount ??= statValues[0];
+        replyCount ??= statValues[1];
+        viewCount ??= statValues[2];
+      } else if (statValues.length >= 2 && likeCount != null) {
+        // 有些模板把点赞独立放在 .num-all_{tid}，底部只保留回复/浏览。
+        replyCount ??= statValues[0];
+        viewCount ??= statValues[1];
+      }
 
       String? avatarUrl;
       final avatarEl = el.querySelector('img.top_tximg, .top_tximg img');
@@ -372,6 +398,15 @@ class ForumParser {
       final rawMessage = _extractMessageRegion(block);
       final parsedMessage = _parseMessageRegion(rawMessage, baseUrl: baseUrl);
 
+      // 真实 Comiis 页面会把部分帖子图片放在正文容器之外，例如：
+      // <ul class="comiis_img_list"><img ...></ul>。
+      // _extractMessageRegion() 只保留正文区，因此必须再从完整 pid 楼层块
+      // 补抓一次，而不是拿列表页缩略图冒充正文图片。
+      final postImages = <String>[...parsedMessage.images];
+      for (final image in _extractContentImagesFromFloor(block, baseUrl)) {
+        if (!postImages.contains(image)) postImages.add(image);
+      }
+
       final isOp = page == 1 && posts.isEmpty;
       final floorText = _cleanInline(
         fragment.querySelector('.f_d.y')?.text ?? '',
@@ -401,9 +436,9 @@ class ForumParser {
         avatarUrl: avatarUrl,
         content: parsedMessage.text,
         floor: floor,
-        postTime: _nullableText(fragment.querySelector('.kmtime')?.text),
+        postTime: _extractPostTime(block),
         isOp: isOp,
-        images: parsedMessage.images,
+        images: postImages,
         richContent: parsedMessage.contents,
         repquotePid: replyRelation.pid,
         replyToName: replyToName,
@@ -513,7 +548,8 @@ class ForumParser {
     // Comiis/Discuz 部分模板会把附件图片节点放到正文容器之外，或者只把
     // 真正的大图地址写在 zoomfile / data-original 上。列表页仍能拿到预览图，
     // 但详情页只扫描 comiis_message_table 就会出现“外显有图，点进去没图”。
-    // 因此再从当前楼层原始片段补抓附件图片，并严格过滤头像/表情/站点图标。
+    // 因此先从正文截取片段补抓一次；完整 pid 楼层中的正文外图片会在
+    // _parsePosts() 中再补抓，避免这里误把非正文区域全部纳入富文本解析。
     for (final image in _extractContentImagesFromFloor(raw, baseUrl)) {
       if (!images.contains(image)) {
         images.add(image);
@@ -1595,6 +1631,7 @@ class ForumParser {
             value.contains('attachment') ||
             value.contains('attachlist') ||
             value.contains('comiis_attach') ||
+            value == 'comiis_img_list' ||
             value == 't_att' ||
             value == 'pattl',
       )) {
@@ -1773,20 +1810,35 @@ class ForumParser {
     required List<String> labels,
   }) {
     final normalized = _cleanInline(text);
+    const valuePattern = r'([\d,.]+(?:\.\d+)?\s*[万wWkK]?)';
     for (final label in labels) {
       final valueFirst = RegExp(
-        '(\\d+)\\s*${RegExp.escape(label)}',
+        '$valuePattern\\s*${RegExp.escape(label)}',
         caseSensitive: false,
       ).firstMatch(normalized)?.group(1);
-      if (valueFirst != null && valueFirst.isNotEmpty) return valueFirst;
+      final cleanValueFirst = _extractStatValue(valueFirst);
+      if (cleanValueFirst != null) return cleanValueFirst;
 
       final labelFirst = RegExp(
-        '${RegExp.escape(label)}\\s*[:：]?\\s*(\\d+)',
+        '${RegExp.escape(label)}\\s*[:：]?\\s*$valuePattern',
         caseSensitive: false,
       ).firstMatch(normalized)?.group(1);
-      if (labelFirst != null && labelFirst.isNotEmpty) return labelFirst;
+      final cleanLabelFirst = _extractStatValue(labelFirst);
+      if (cleanLabelFirst != null) return cleanLabelFirst;
     }
     return null;
+  }
+
+  String? _extractStatValue(String? text) {
+    if (text == null) return null;
+    final normalized = _cleanInline(text);
+    if (normalized.isEmpty) return null;
+    final match = RegExp(
+      r'[\d,.]+(?:\.\d+)?\s*[万wWkK]?',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    final value = match?.group(0)?.replaceAll(RegExp(r'\s+'), '') ?? '';
+    return value.isEmpty ? null : value;
   }
 
   _ReplyRelation _extractReplyRelation(String rawMessage) {
@@ -1891,6 +1943,77 @@ class ForumParser {
         );
     cleaned = _cleanInline(cleaned);
     return cleaned.isEmpty ? null : cleaned;
+  }
+
+  String? _extractPostTime(String block) {
+    // Comiis 同一个帖子页面里存在两套真实时间结构：
+    // 1. 楼主/普通楼层头部：.comiis_postli_time .kmtime
+    // 2. 部分回复楼层底部：.comiis_postli_times .comiis_tm
+    //
+    // 先在完整 pid 楼层块里按 DOM 精确查找；如果移动模板的残缺标签
+    // 被 HTML parser 修复后导致节点位置变化，再从原始楼层 HTML 直接
+    // 提取 span 内容兜底。这样时间解析不再依赖正文区域的 DOM 完整性。
+    final fragment = html_parser.parseFragment(block);
+    final candidates = <html_dom.Element?>[
+      fragment.querySelector('.comiis_postli_time .kmtime'),
+      fragment.querySelector('.kmtime'),
+      fragment.querySelector('.comiis_postli_times span.comiis_tm'),
+      fragment.querySelector('.comiis_postli_times .comiis_tm'),
+    ];
+
+    for (final element in candidates) {
+      if (element == null) continue;
+      final timeText = _cleanPostTimeText(
+        element.text,
+        localityText: element.querySelector('.comiis_iplocality')?.text,
+      );
+      if (timeText != null) return timeText;
+    }
+
+    // 原始 HTML 兜底。真实抓包中楼主是 span.kmtime，评论是
+    // span.f_d.comiis_tm；只匹配 span，避免命中用户资料区的
+    // p.comiis_tm 等无关节点。
+    final rawPatterns = <RegExp>[
+      RegExp(
+        r'''<span\b[^>]*class\s*=\s*['"][^'"]*\bkmtime\b[^'"]*['"][^>]*>([\s\S]*?)</span>''',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'''<span\b[^>]*class\s*=\s*['"][^'"]*\bcomiis_tm\b[^'"]*['"][^>]*>([\s\S]*?)</span>''',
+        caseSensitive: false,
+      ),
+    ];
+
+    for (final pattern in rawPatterns) {
+      final inner = pattern.firstMatch(block)?.group(1);
+      if (inner == null || inner.isEmpty) continue;
+      final innerFragment = html_parser.parseFragment(inner);
+      final timeText = _cleanPostTimeText(
+        innerFragment.text ?? '',
+        localityText:
+            innerFragment.querySelector('.comiis_iplocality')?.text,
+      );
+      if (timeText != null) return timeText;
+    }
+
+    return null;
+  }
+
+  String? _cleanPostTimeText(
+    String value, {
+    String? localityText,
+  }) {
+    var timeText = _cleanInline(value);
+    final locality = _cleanInline(localityText ?? '');
+    if (locality.isNotEmpty) {
+      timeText = _cleanInline(timeText.replaceFirst(locality, ''));
+    }
+
+    // 再兜底清理模板可能扁平化进来的 IP 归属地文本。
+    timeText = _cleanInline(
+      timeText.replaceFirst(RegExp(r'\s*来自\s+\S+\s*$'), ''),
+    );
+    return timeText.isEmpty ? null : timeText;
   }
 
   String? _nullableText(String? value) {

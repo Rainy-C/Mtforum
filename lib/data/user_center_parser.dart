@@ -1260,6 +1260,10 @@ class UserCenterParser {
       }
 
       final container = _nearestContainer(link);
+      // MT 论坛真实私信列表用空的 span.kmnums 作为未读标记。
+      // 不能读取其文本内容，因为未读时该 span 本身就是空字符串。
+      final hasUnread = link.querySelector('span.kmnums') != null ||
+          container?.querySelector('span.kmnums') != null;
 
       final lastMessage = _nullableClean(
         container?.querySelector(
@@ -1341,6 +1345,7 @@ class UserCenterParser {
           ),
           lastMessage: lastMessage,
           lastTime: lastTime,
+          hasUnread: hasUnread,
         ),
       );
     }
@@ -1569,39 +1574,82 @@ class UserCenterParser {
           : uidFrom(avatarSrc);
 
       html_dom.Element? targetLink;
+      html_dom.Element? titleTarget;
+      html_dom.Element? pidTarget;
       html_dom.Element? fallbackTarget;
+      final noticeTargets = <html_dom.Element>[];
+
       for (final link in bodyLinks) {
         final href = (link.attributes['href'] ?? '').replaceAll('&amp;', '&');
         if (!_looksLikeNoticeTarget(href)) continue;
+
+        noticeTargets.add(link);
         fallbackTarget ??= link;
+
+        if (pidTarget == null &&
+            RegExp(
+              r'(?:^|[?&])pid=\d+',
+              caseSensitive: false,
+            ).hasMatch(href)) {
+          pidTarget = link;
+        }
+
         final label = _sanitizeVisibleText(link.text);
-        if (label.isNotEmpty && label != '查看' && label != '详情') {
-          targetLink = link;
-          break;
+        if (titleTarget == null &&
+            label.isNotEmpty &&
+            label != '查看' &&
+            label != '详情') {
+          titleTarget = link;
         }
       }
-      targetLink ??= fallbackTarget;
+
+      // “回复了我”类通知经常同时包含帖子标题链接和 goto=findpost 链接。
+      // 优先保留带 pid 的链接用于精确定位，但标题仍从可读链接取，避免 UI 退化。
+      targetLink = pidTarget ?? titleTarget ?? fallbackTarget;
 
       final targetHref =
           (targetLink?.attributes['href'] ?? '').replaceAll('&amp;', '&');
       final targetUrl = _absoluteUrl(targetHref, baseUrl);
-      final targetTitleRaw = _sanitizeVisibleText(targetLink?.text ?? '');
+      final targetTitleSource = titleTarget ?? targetLink;
+      final targetTitleRaw =
+          _sanitizeVisibleText(targetTitleSource?.text ?? '');
       final targetTitle = targetTitleRaw.isEmpty ||
               targetTitleRaw == '查看' ||
               targetTitleRaw == '详情'
           ? null
           : targetTitleRaw;
 
-      String? tid;
-      final tidMatch = RegExp(r'(?:^|[?&])(?:ptid|tid)=(\d+)')
-          .firstMatch(targetHref);
-      tid = tidMatch?.group(1);
-      tid ??= RegExp(r'thread-(\d+)-', caseSensitive: false)
-          .firstMatch(targetHref)
-          ?.group(1);
-      final pid = RegExp(r'(?:^|[?&])pid=(\d+)')
-          .firstMatch(targetHref)
-          ?.group(1);
+      String? tidFrom(String href) {
+        final normalized = href.replaceAll('&amp;', '&');
+        return RegExp(r'(?:^|[?&])(?:ptid|tid)=(\d+)')
+                .firstMatch(normalized)
+                ?.group(1) ??
+            RegExp(r'thread-(\d+)-', caseSensitive: false)
+                .firstMatch(normalized)
+                ?.group(1);
+      }
+
+      String? pidFrom(String href) {
+        final normalized = href.replaceAll('&amp;', '&');
+        return RegExp(r'(?:^|[?&])pid=(\d+)')
+            .firstMatch(normalized)
+            ?.group(1);
+      }
+
+      var tid = tidFrom(targetHref);
+      var pid = pidFrom(targetHref);
+
+      // 某些模板把 tid 放在标题链接、pid 放在“查看”链接里。
+      // 两者分别从全部候选链接补齐，避免选中其中一个后丢失另一个参数。
+      if (tid == null || pid == null) {
+        for (final link in noticeTargets) {
+          final href =
+              (link.attributes['href'] ?? '').replaceAll('&amp;', '&');
+          tid ??= tidFrom(href);
+          pid ??= pidFrom(href);
+          if (tid != null && pid != null) break;
+        }
+      }
 
       final content = _sanitizeVisibleText(body.text);
       var actionText = content;

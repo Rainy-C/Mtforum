@@ -103,6 +103,7 @@ class _SearchPageState extends State<SearchPage> {
       forumName: result.forumName,
       replyCount: result.replyCount,
       viewCount: result.viewCount,
+      likeCount: result.likeCount,
       lastReplyTime: result.postTime,
       excerpt: result.excerpt,
       thumbnails: result.thumbnails,

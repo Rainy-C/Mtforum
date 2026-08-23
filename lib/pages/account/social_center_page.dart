@@ -57,7 +57,18 @@ class _SocialCenterPageState extends State<SocialCenterPage> {
         appBar: AppBar(
           title: const Text('关系中心'),
           bottom: const TabBar(
-            isScrollable: true,
+            isScrollable: false,
+            indicatorSize: TabBarIndicatorSize.label,
+            indicatorWeight: 3,
+            labelPadding: EdgeInsets.zero,
+            labelStyle: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+            ),
+            unselectedLabelStyle: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w500,
+            ),
             tabs: [
               Tab(text: '好友'),
               Tab(text: '关注'),
