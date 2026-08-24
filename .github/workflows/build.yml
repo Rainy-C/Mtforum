@@ -52,6 +52,8 @@ jobs:
 
       - name: Build release APK (arm64)
         run: flutter build apk --release --target-platform android-arm64 --dart-define=MTFORUM_UPDATE_URL=https://loveqin.fun/Mt/update.json
+        env:
+          CI_KEYSTORE_PRESENT: 'false'
 
       - name: Retry build on failure
         if: failure()
