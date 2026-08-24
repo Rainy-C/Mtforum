@@ -2,6 +2,7 @@ import 'package:html/dom.dart' as html_dom;
 import 'package:html/parser.dart' as html_parser;
 
 import '../models/models.dart';
+import 'smiley_catalog.dart';
 
 class UserCenterParser {
   const UserCenterParser();
@@ -1162,6 +1163,7 @@ class UserCenterParser {
       document,
       myUid: myUid,
       peerUid: touid,
+      baseUrl: baseUrl,
     );
 
     final peerName = _sanitizeUsername(
@@ -1175,6 +1177,19 @@ class UserCenterParser {
       '.comiis_friend_msg img.msg_avt, '
       '.comiis_friend_msg img',
     );
+
+    bool? peerOnline;
+    for (final status in document.querySelectorAll('h2.flex font.f14')) {
+      final text = _clean(status.text);
+      if (text.contains('(在线)') || text.contains('（在线）')) {
+        peerOnline = true;
+        break;
+      }
+      if (text.contains('(离线)') || text.contains('（离线）')) {
+        peerOnline = false;
+        break;
+      }
+    }
 
     final endTimestamp = int.tryParse(
           RegExp(
@@ -1194,6 +1209,7 @@ class UserCenterParser {
         peerAvatar?.attributes['src'],
         baseUrl,
       ),
+      peerOnline: peerOnline,
       endTimestamp: endTimestamp,
       messages: messages,
     );
@@ -1203,12 +1219,14 @@ class UserCenterParser {
     String raw, {
     String? myUid,
     String? peerUid,
+    String baseUrl = 'https://bbs.binmt.cc',
   }) {
     final document = html_parser.parse(_unwrapCdata(raw));
     return _parsePmMessages(
       document,
       myUid: myUid,
       peerUid: peerUid,
+      baseUrl: baseUrl,
     );
   }
 
@@ -1260,11 +1278,23 @@ class UserCenterParser {
       }
 
       final container = _nearestContainer(link);
+      // MT 论坛真实私信列表用空的 span.kmnums 作为未读标记。
+      // 不能读取其文本内容，因为未读时该 span 本身就是空字符串。
+      final hasUnread = link.querySelector('span.kmnums') != null ||
+          container?.querySelector('span.kmnums') != null;
 
+      final rawLastMessage = container?.querySelector(
+            '.msg_mes, .summary, .comiis_pm_txt, p',
+          )?.text ??
+          '';
       final lastMessage = _nullableClean(
-        container?.querySelector(
-          '.msg_mes, .summary, .comiis_pm_txt, p',
-        )?.text,
+        rawLastMessage.replaceAll(
+          RegExp(
+            r'\[img(?:=[^\]]+)?\][\s\S]*?\[/img\]',
+            caseSensitive: false,
+          ),
+          '[图片]',
+        ),
       );
       final lastTime = _nullableClean(
         container?.querySelector(
@@ -1341,6 +1371,7 @@ class UserCenterParser {
           ),
           lastMessage: lastMessage,
           lastTime: lastTime,
+          hasUnread: hasUnread,
         ),
       );
     }
@@ -1351,6 +1382,7 @@ class UserCenterParser {
     html_dom.Document document, {
     String? myUid,
     String? peerUid,
+    required String baseUrl,
   }) {
     final result = <PmMessage>[];
     final source = document.documentElement?.outerHtml ?? '';
@@ -1369,8 +1401,84 @@ class UserCenterParser {
           : scope.querySelector('.msg_mes');
       if (messageNode == null) return;
 
-      final content = _sanitizeVisibleText(messageNode.text);
-      if (content.isEmpty) return;
+      final bbImagePattern = RegExp(
+        r'\[img(?:=[^\]]+)?\]\s*([^\[\]\r\n]+?)\s*\[/img\]',
+        caseSensitive: false,
+      );
+      final imageUrls = <String>[];
+
+      void addImage(String? rawUrl) {
+        final value = rawUrl?.trim() ?? '';
+        if (value.isEmpty ||
+            value.startsWith('/storage/') ||
+            value.startsWith('file:') ||
+            value.startsWith('content:')) {
+          return;
+        }
+        final url = _absoluteUrl(value, baseUrl);
+        if (url != null && !imageUrls.contains(url)) imageUrls.add(url);
+      }
+
+      void appendText(String value, StringBuffer output) {
+        var cursor = 0;
+        for (final match in bbImagePattern.allMatches(value)) {
+          if (match.start > cursor) {
+            output.write(value.substring(cursor, match.start));
+          }
+          final rawUrl = match.group(1)?.trim() ?? '';
+          final url = _absoluteUrl(rawUrl, baseUrl);
+          final marker = url == null ? null : SmileyCatalog.markerForUrl(url);
+          if (marker != null) {
+            output.write(marker);
+          } else if (url != null && SmileyCatalog.isForumSmileyUrl(url)) {
+            output.write('[img]$url[/img]');
+          } else {
+            addImage(rawUrl);
+          }
+          cursor = match.end;
+        }
+        if (cursor < value.length) output.write(value.substring(cursor));
+      }
+
+      final orderedText = StringBuffer();
+      void walkMessage(html_dom.Node node) {
+        if (node is html_dom.Text) {
+          appendText(node.text, orderedText);
+          return;
+        }
+        if (node is! html_dom.Element) return;
+        final tag = (node.localName ?? '').toLowerCase();
+        if (tag == 'br') {
+          orderedText.write('\n');
+          return;
+        }
+        if (tag == 'img') {
+          final rawUrl = node.attributes['zoomfile'] ??
+              node.attributes['file'] ??
+              node.attributes['data-original'] ??
+              node.attributes['data-src'] ??
+              node.attributes['src'];
+          final url = _absoluteUrl(rawUrl, baseUrl);
+          final marker = url == null ? null : SmileyCatalog.markerForUrl(url);
+          if (marker != null) {
+            orderedText.write(marker);
+          } else if (url != null && SmileyCatalog.isForumSmileyUrl(url)) {
+            orderedText.write('[img]$url[/img]');
+          } else {
+            addImage(rawUrl);
+          }
+          return;
+        }
+        for (final child in node.nodes) {
+          walkMessage(child);
+        }
+      }
+      for (final child in messageNode.nodes) {
+        walkMessage(child);
+      }
+
+      final content = _sanitizePmMessageText(orderedText.toString());
+      if (content.isEmpty && imageUrls.isEmpty) return;
 
       String? senderUid;
       for (final anchor in scope.querySelectorAll('a[href*="uid="]')) {
@@ -1433,9 +1541,11 @@ class UserCenterParser {
             '',
       );
 
-      final key = '$senderUid|$time|$content';
+      final key = '$senderUid|$time|$content|${imageUrls.join(',')}';
       if (result.any(
-        (item) => '${item.senderUid}|${item.time}|${item.content}' == key,
+        (item) =>
+            '${item.senderUid}|${item.time}|${item.content}|${item.imageUrls.join(',')}' ==
+            key,
       )) {
         return;
       }
@@ -1450,6 +1560,7 @@ class UserCenterParser {
           time: time,
           date: date,
           isMine: isMine,
+          imageUrls: imageUrls,
         ),
       );
     }
@@ -1470,7 +1581,17 @@ class UserCenterParser {
         }
       }
     } else {
-      for (final messageNode in document.querySelectorAll('.msg_mes')) {
+      var currentDate = '';
+      for (final node in document.querySelectorAll(
+        '.comiis_msg_date, .msg_mes',
+      )) {
+        if (node.classes.contains('comiis_msg_date')) {
+          currentDate = _sanitizeVisibleText(
+            node.querySelector('span')?.text ?? node.text,
+          );
+          continue;
+        }
+        final messageNode = node;
         html_dom.Element scope = messageNode;
         html_dom.Element? fallbackWithTime;
         html_dom.Node? parentNode = messageNode.parentNode;
@@ -1497,7 +1618,7 @@ class UserCenterParser {
           }
           parentNode = parent.parentNode;
         }
-        addMessage(scope);
+        addMessage(scope, date: currentDate);
       }
     }
 
@@ -1569,39 +1690,96 @@ class UserCenterParser {
           : uidFrom(avatarSrc);
 
       html_dom.Element? targetLink;
+      html_dom.Element? titleTarget;
+      html_dom.Element? pidTarget;
       html_dom.Element? fallbackTarget;
+      final noticeTargets = <html_dom.Element>[];
+
       for (final link in bodyLinks) {
         final href = (link.attributes['href'] ?? '').replaceAll('&amp;', '&');
         if (!_looksLikeNoticeTarget(href)) continue;
+
+        noticeTargets.add(link);
         fallbackTarget ??= link;
+
+        if (pidTarget == null &&
+            RegExp(
+              r'(?:^|[?&])pid=\d+',
+              caseSensitive: false,
+            ).hasMatch(href)) {
+          pidTarget = link;
+        }
+
         final label = _sanitizeVisibleText(link.text);
-        if (label.isNotEmpty && label != '查看' && label != '详情') {
-          targetLink = link;
-          break;
+        if (titleTarget == null &&
+            label.isNotEmpty &&
+            label != '查看' &&
+            label != '详情') {
+          titleTarget = link;
         }
       }
-      targetLink ??= fallbackTarget;
+
+      // “回复了我”类通知经常同时包含帖子标题链接和 goto=findpost 链接。
+      // 优先保留带 pid 的链接用于精确定位，但标题仍从可读链接取，避免 UI 退化。
+      targetLink = pidTarget ?? titleTarget ?? fallbackTarget;
 
       final targetHref =
           (targetLink?.attributes['href'] ?? '').replaceAll('&amp;', '&');
-      final targetUrl = _absoluteUrl(targetHref, baseUrl);
-      final targetTitleRaw = _sanitizeVisibleText(targetLink?.text ?? '');
+      var targetUrl = _absoluteUrl(targetHref, baseUrl);
+      final targetTitleSource = titleTarget ?? targetLink;
+      final targetTitleRaw =
+          _sanitizeVisibleText(targetTitleSource?.text ?? '');
       final targetTitle = targetTitleRaw.isEmpty ||
               targetTitleRaw == '查看' ||
               targetTitleRaw == '详情'
           ? null
           : targetTitleRaw;
 
-      String? tid;
-      final tidMatch = RegExp(r'(?:^|[?&])(?:ptid|tid)=(\d+)')
-          .firstMatch(targetHref);
-      tid = tidMatch?.group(1);
-      tid ??= RegExp(r'thread-(\d+)-', caseSensitive: false)
-          .firstMatch(targetHref)
-          ?.group(1);
-      final pid = RegExp(r'(?:^|[?&])pid=(\d+)')
-          .firstMatch(targetHref)
-          ?.group(1);
+      String? tidFrom(String href) {
+        final normalized = href.replaceAll('&amp;', '&');
+        return RegExp(r'(?:^|[?&])(?:ptid|tid)=(\d+)')
+                .firstMatch(normalized)
+                ?.group(1) ??
+            RegExp(r'thread-(\d+)-', caseSensitive: false)
+                .firstMatch(normalized)
+                ?.group(1);
+      }
+
+      String? pidFrom(String href) {
+        final normalized = href.replaceAll('&amp;', '&');
+        return RegExp(r'(?:^|[?&])pid=(\d+)')
+            .firstMatch(normalized)
+            ?.group(1);
+      }
+
+      var tid = tidFrom(targetHref);
+      var pid = pidFrom(targetHref);
+
+      // 某些模板把 tid 放在标题链接、pid 放在“查看”链接里。
+      // 两者分别从全部候选链接补齐，避免选中其中一个后丢失另一个参数。
+      if (tid == null || pid == null) {
+        for (final link in noticeTargets) {
+          final href =
+              (link.attributes['href'] ?? '').replaceAll('&amp;', '&');
+          tid ??= tidFrom(href);
+          pid ??= pidFrom(href);
+          if (tid != null && pid != null) break;
+        }
+      }
+
+      // 少数通知模板把 findpost 参数藏在 onclick/data-* 或未被 DOM
+      // 识别为链接的片段中，再从整条通知源码兜底提取。
+      final itemSource = item.innerHtml.replaceAll('&amp;', '&');
+      tid ??= tidFrom(itemSource);
+      pid ??= pidFrom(itemSource);
+      if (tid != null && pid != null) {
+        // 标题链接往往只有 tid。统一构造 findpost 地址，确保预览请求和点击
+        // 跳转都由论坛定位到 pid 所在页。
+        targetUrl = _absoluteUrl(
+          'forum.php?mod=redirect&goto=findpost&ptid=$tid&pid=$pid&mobile=2',
+          baseUrl,
+        );
+      }
 
       final content = _sanitizeVisibleText(body.text);
       var actionText = content;
@@ -1638,15 +1816,6 @@ class UserCenterParser {
       final isSystem = systemIcon != null ||
           type == 'system' ||
           (authorUid.isEmpty && avatarLink == null);
-      final itemClasses = item.classes.map((value) => value.toLowerCase());
-      final isUnread = itemClasses.any(
-            (value) =>
-                value == 'new' ||
-                value.contains('unread') ||
-                value.contains('notice_new'),
-          ) ||
-          item.querySelector('.new, .unread, .notice_new') != null;
-
       if (username.isEmpty && authorUid.isNotEmpty && !isSystem) {
         username = 'UID $authorUid';
       }
@@ -1667,7 +1836,8 @@ class UserCenterParser {
           pid: pid,
           ignoreUrl: ignoreUrl,
           isSystem: isSystem,
-          isUnread: isUnread,
+          // 通知 HTML 没有可靠的单项已读标记，新提醒由客户端对比通知 ID。
+          isUnread: false,
         ),
       );
     }
@@ -1921,6 +2091,13 @@ class UserCenterParser {
     return value
         .replaceAll(RegExp(r'[\uE000-\uF8FF\uFFFD\u25A1]'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  String _sanitizePmMessageText(String value) {
+    return value
+        .replaceAll(RegExp(r'[\uFFFD\u25A1]'), '')
+        .replaceAll(RegExp(r'[ \t\r\n]+'), ' ')
         .trim();
   }
 

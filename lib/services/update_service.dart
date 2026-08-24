@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 List<String> normalizeUpdateChangelog(String raw) {
   var text = raw.trim();
@@ -175,13 +176,31 @@ class UpdateService {
       throw const FormatException('update.json 格式错误');
     }
 
-    final info = UpdateInfo.fromJson(
+    var info = UpdateInfo.fromJson(
       decoded.map((key, value) => MapEntry(key.toString(), value)),
     );
+    final rawDownloadUri = Uri.tryParse(info.downloadUrl);
+    if (rawDownloadUri != null && !rawDownloadUri.hasScheme) {
+      info = UpdateInfo(
+        version: info.version,
+        versionCode: info.versionCode,
+        changelog: info.changelog,
+        downloadUrl: Uri.parse(manifestUrl).resolveUri(rawDownloadUri).toString(),
+        size: info.size,
+      );
+    }
     if (info.version.isEmpty ||
         info.versionCode <= 0 ||
         info.downloadUrl.isEmpty) {
       throw const FormatException('update.json 缺少必要字段');
+    }
+    final downloadUri = Uri.tryParse(info.downloadUrl);
+    if (downloadUri == null ||
+        !const {'http', 'https'}.contains(downloadUri.scheme.toLowerCase()) ||
+        downloadUri.host.isEmpty) {
+      throw const FormatException(
+        'update.json 的 downloadUrl 必须是 http/https 安装包地址',
+      );
     }
 
     return UpdateCheckResult(
@@ -192,12 +211,29 @@ class UpdateService {
   }
 
   Future<int> startDownload(UpdateInfo info) async {
+    final uri = Uri.tryParse(info.downloadUrl);
+    if (uri == null ||
+        !const {'http', 'https'}.contains(uri.scheme.toLowerCase()) ||
+        uri.host.isEmpty) {
+      throw StateError('软件更新下载地址无效，只支持 http/https');
+    }
     final id = await _channel.invokeMethod<int>('startDownload', {
       'url': info.downloadUrl,
       'fileName': 'MTForum-${info.version}-Release.apk',
     });
     if (id == null) throw StateError('启动下载失败');
     return id;
+  }
+
+  Future<void> openDownloadInBrowser(UpdateInfo info) async {
+    final uri = Uri.tryParse(info.downloadUrl);
+    if (uri == null ||
+        !const {'http', 'https'}.contains(uri.scheme.toLowerCase()) ||
+        uri.host.isEmpty) {
+      throw StateError('软件更新下载地址无效，只支持 http/https');
+    }
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened) throw StateError('无法打开浏览器');
   }
 
   Future<DownloadProgress> queryDownload(int id) async {
@@ -355,13 +391,29 @@ Future<void> showUpdateDialog(
           onPressed: () => Navigator.pop(dialogContext),
           child: const Text('稍后'),
         ),
+        OutlinedButton.icon(
+          onPressed: () async {
+            Navigator.pop(dialogContext);
+            try {
+              await UpdateService.instance.openDownloadInBrowser(info);
+            } catch (e) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('打开浏览器失败：$e')),
+                );
+              }
+            }
+          },
+          icon: const Icon(Icons.open_in_browser_rounded, size: 18),
+          label: const Text('浏览器更新'),
+        ),
         FilledButton.icon(
           onPressed: () {
             Navigator.pop(dialogContext);
             showUpdateDownloadDialog(context, info);
           },
           icon: const Icon(Icons.download_rounded, size: 18),
-          label: const Text('下载更新'),
+          label: const Text('内置更新'),
         ),
       ],
     ),

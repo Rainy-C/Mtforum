@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
+import '../services/comment_filter_service.dart';
 import '../services/theme_service.dart';
 import '../services/update_service.dart';
 import 'login_page.dart';
@@ -16,6 +17,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final _api = ApiService.instance;
   final _theme = ThemeService.instance;
   final _updates = UpdateService.instance;
+  final _commentFilter = CommentFilterService.instance;
 
   bool _autoCheck = true;
   bool _checking = false;
@@ -26,6 +28,7 @@ class _SettingsPageState extends State<SettingsPage> {
     super.initState();
     _api.addLoginListener(_refresh);
     _theme.addListener(_refresh);
+    _commentFilter.addListener(_refresh);
     _load();
   }
 
@@ -33,6 +36,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _api.removeLoginListener(_refresh);
     _theme.removeListener(_refresh);
+    _commentFilter.removeListener(_refresh);
     super.dispose();
   }
 
@@ -41,6 +45,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _load() async {
+    await _commentFilter.load();
     final auto = await _updates.getStartupCheckEnabled();
     String version = '';
     try {
@@ -53,6 +58,46 @@ class _SettingsPageState extends State<SettingsPage> {
       _autoCheck = auto;
       _version = version;
     });
+  }
+
+  Future<void> _editFilterKeywords() async {
+    final controller = TextEditingController(
+      text: _commentFilter.keywords.join('\n'),
+    );
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('评论过滤关键词'),
+        content: SizedBox(
+          width: 420,
+          child: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 5,
+            maxLines: 10,
+            decoration: const InputDecoration(
+              hintText: '每行一个关键词\n也支持逗号或分号分隔',
+              helperText: '包含任一关键词的评论或回复提醒将被隐藏',
+              alignLabelWithHint: true,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (saved == true) {
+      await _commentFilter.setKeywordsFromText(controller.text);
+    }
+    controller.dispose();
   }
 
   Future<void> _login() async {
@@ -232,6 +277,40 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                         ],
                       ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                const _SectionTitle('内容过滤'),
+                const SizedBox(height: 6),
+                _Group(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.filter_alt_outlined),
+                      title: const Text('过滤关键词'),
+                      subtitle: Text(
+                        _commentFilter.hasKeywords
+                            ? '已设置 ${_commentFilter.keywords.length} 个关键词'
+                            : '尚未设置关键词',
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: _editFilterKeywords,
+                    ),
+                    const Divider(height: 1),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.forum_outlined),
+                      title: const Text('评论区过滤'),
+                      subtitle: const Text('隐藏正文中命中关键词的评论'),
+                      value: _commentFilter.commentsEnabled,
+                      onChanged: _commentFilter.setCommentsEnabled,
+                    ),
+                    const Divider(height: 1),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.notifications_off_outlined),
+                      title: const Text('回复通知过滤'),
+                      subtitle: const Text('隐藏“论坛通知 → 我的帖子”中的命中回复'),
+                      value: _commentFilter.noticesEnabled,
+                      onChanged: _commentFilter.setNoticesEnabled,
                     ),
                   ],
                 ),

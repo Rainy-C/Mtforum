@@ -4,11 +4,14 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/smiley_catalog.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../services/comment_thread_service.dart';
+import '../services/comment_filter_service.dart';
 import '../widgets/app_state_view.dart';
 import '../widgets/user_level_badge.dart';
 import '../routes/forum_link_router.dart';
@@ -24,7 +27,11 @@ Future<void> _openPostLink(BuildContext context, String rawUrl) async {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           settings: RouteSettings(name: '/thread/${target.id}'),
-          builder: (_) => ThreadDetailPage(tid: target.id!),
+          builder: (_) => ThreadDetailPage(
+            tid: target.id!,
+            targetPid: target.pid,
+            targetUrl: target.url,
+          ),
         ),
       );
       return;
@@ -49,7 +56,15 @@ Future<void> _openPostLink(BuildContext context, String rawUrl) async {
 
 class ThreadDetailPage extends StatefulWidget {
   final String tid;
-  const ThreadDetailPage({super.key, required this.tid});
+  final String? targetPid;
+  final String? targetUrl;
+
+  const ThreadDetailPage({
+    super.key,
+    required this.tid,
+    this.targetPid,
+    this.targetUrl,
+  });
 
   @override
   State<ThreadDetailPage> createState() => _ThreadDetailPageState();
@@ -67,6 +82,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   int _page = 1;
   bool _liked = false;
   bool _favorited = false;
+  bool _targetCommentsOpened = false;
 
   @override
   void initState() {
@@ -80,6 +96,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     super.dispose();
   }
 
+
   Future<void> _loadData() async {
     if (_loading) return;
     setState(() {
@@ -87,13 +104,41 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
       _error = null;
     });
     try {
-      final detail = await _api.getThreadDetail(widget.tid, page: 1);
+      final targetPid = widget.targetPid?.trim() ?? '';
+      final targetUrl = widget.targetUrl?.trim() ?? '';
+      late final ThreadDetail detail;
+      ThreadDetail? targetDetail;
+      if (targetPid.isNotEmpty && targetUrl.isNotEmpty) {
+        final results = await Future.wait<ThreadDetail>([
+          _api.getThreadDetail(widget.tid, page: 1),
+          _api.getThreadDetailAtPost(
+            tid: widget.tid,
+            pid: targetPid,
+            targetUrl: targetUrl,
+          ),
+        ]);
+        detail = results.first;
+        targetDetail = results.last;
+      } else {
+        detail = await _api.getThreadDetail(widget.tid, page: 1);
+      }
       if (!mounted) return;
       setState(() {
         _detail = detail;
         _page = 1;
         _hasMore = detail.posts.isNotEmpty;
       });
+      if (targetDetail != null && !_targetCommentsOpened) {
+        _targetCommentsOpened = true;
+        final locatedDetail = targetDetail;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _showComments(
+            detailOverride: locatedDetail,
+            targetPid: targetPid,
+          );
+        });
+      }
     } catch (e) {
       if (mounted) {
         final message = e is StateError ? e.message : '加载失败：$e';
@@ -128,9 +173,13 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     }
   }
 
-  Future<void> _showComments() async {
-    final detail = _detail;
+  Future<void> _showComments({
+    ThreadDetail? detailOverride,
+    String? targetPid,
+  }) async {
+    final detail = detailOverride ?? _detail;
     if (detail == null || detail.posts.isEmpty) return;
+    final locatingTarget = targetPid?.trim().isNotEmpty == true;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -139,15 +188,33 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
       showDragHandle: true,
       builder: (_) => _CommentsSheet(
         detail: detail,
-        hasMore: () => _hasMore,
+        initialTargetPid: targetPid,
+        hasMore: () => locatingTarget ? false : _hasMore,
         isLoadingMore: () => _loadingMore,
-        onLoadMore: _loadMore,
-        onRefresh: _refreshCommentsInPlace,
+        onLoadMore: locatingTarget ? () async {} : _loadMore,
+        onRefresh: locatingTarget
+            ? () => _refreshLocatedComments(detail)
+            : _refreshCommentsInPlace,
         canEdit: _canEdit,
         onEdit: _editPost,
         onImageTap: (post, index) => _openImages(post.images, index),
       ),
     );
+  }
+
+  Future<void> _refreshLocatedComments(ThreadDetail detail) async {
+    final pid = widget.targetPid?.trim() ?? '';
+    final url = widget.targetUrl?.trim() ?? '';
+    if (pid.isEmpty || url.isEmpty) return;
+    final refreshed = await _api.getThreadDetailAtPost(
+      tid: widget.tid,
+      pid: pid,
+      targetUrl: url,
+    );
+    final refreshedPosts = List<Post>.from(refreshed.posts);
+    detail.posts
+      ..clear()
+      ..addAll(refreshedPosts);
   }
 
   Future<void> _refreshCommentsInPlace() async {
@@ -334,6 +401,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                       return RepaintBoundary(
                         child: _PostCard(
                           post: op,
+                          highlighted: false,
                           onReply: () => _showReply(post: op),
                           onEdit: _canEdit(op) ? () => _editPost(op) : null,
                           onImageTap: (imageIndex) =>
@@ -351,7 +419,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           ? null
           : FloatingActionButton.extended(
               heroTag: 'thread-comments-${widget.tid}',
-              onPressed: _showComments,
+              onPressed: () => _showComments(),
               icon: const Icon(Icons.forum_rounded),
               label: const Text('评论区'),
             ),
@@ -367,16 +435,24 @@ Post _threadOp(ThreadDetail detail) {
   return detail.posts.first;
 }
 
+Post? _findPost(List<Post> posts, String pid) {
+  if (pid.isEmpty) return null;
+  for (final post in posts) {
+    if (post.pid == pid) return post;
+  }
+  return null;
+}
+
 List<Post> _threadComments(ThreadDetail detail) {
   if (detail.posts.isEmpty) return const <Post>[];
-  final opPid = _threadOp(detail).pid;
-  return detail.posts
-      .where((post) => post.pid != opPid)
-      .toList(growable: false);
+  final hasOp = detail.posts.any((post) => post.isOp);
+  if (!hasOp) return List<Post>.from(detail.posts, growable: false);
+  return detail.posts.where((post) => !post.isOp).toList(growable: false);
 }
 
 class _CommentsSheet extends StatefulWidget {
   final ThreadDetail detail;
+  final String? initialTargetPid;
   final bool Function() hasMore;
   final bool Function() isLoadingMore;
   final Future<void> Function() onLoadMore;
@@ -387,6 +463,7 @@ class _CommentsSheet extends StatefulWidget {
 
   const _CommentsSheet({
     required this.detail,
+    this.initialTargetPid,
     required this.hasMore,
     required this.isLoadingMore,
     required this.onLoadMore,
@@ -401,30 +478,60 @@ class _CommentsSheet extends StatefulWidget {
 }
 
 class _CommentsSheetState extends State<_CommentsSheet> {
+  static const _commentReverseOrderKey = 'thread_comment_reverse_order';
+
   final _scrollController = ScrollController();
   final _composerController = _SmileyEditingController();
   final _composerFocusNode = FocusNode();
+  final _commentFilter = CommentFilterService.instance;
+  final _commentThreadService = const CommentThreadService();
+  final _targetCommentKey = GlobalKey();
+  final Map<String, GlobalKey> _commentKeys = {};
 
-  bool _requesting = false;
+  bool _loadingAll = false;
+  bool _loadAllFailed = false;
   bool _sending = false;
   bool _showSmileys = false;
+  bool _reverseOrder = false;
+  late int _minLoadedPage;
+  late int _maxLoadedPage;
+  bool _hasPreviousTargetPage = false;
+  bool _hasNextTargetPage = true;
+  bool _loadingPreviousTargetPage = false;
+  bool _loadingNextTargetPage = false;
+  bool _previousTargetPageFailed = false;
+  bool _nextTargetPageFailed = false;
+  bool _targetWindowPrimed = false;
+  String? _contextHighlightPid;
   Post? _replyTarget;
+
+  bool get _targetMode =>
+      widget.initialTargetPid?.trim().isNotEmpty == true;
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
+    _commentFilter.addListener(_onFilterChanged);
+    _commentFilter.load();
     _composerController.addListener(_onComposerChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_comments.isEmpty && widget.hasMore()) {
-        _loadNext();
+    _scrollController.addListener(_onTargetWindowScroll);
+    _resetTargetWindowState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (_targetMode) {
+        await _primeTargetWindow();
+      } else {
+        await _restoreCommentOrder();
+        if (!mounted) return;
+        await _loadAllComments();
       }
     });
   }
 
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
+    _commentFilter.removeListener(_onFilterChanged);
     _composerController.removeListener(_onComposerChanged);
     _scrollController.dispose();
     _composerController.dispose();
@@ -432,26 +539,531 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     super.dispose();
   }
 
-  List<Post> get _comments => _threadComments(widget.detail);
+  void _onFilterChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _resetTargetWindowState() {
+    final page = widget.detail.page < 1 ? 1 : widget.detail.page;
+    _minLoadedPage = page;
+    _maxLoadedPage = page;
+    _hasPreviousTargetPage = page > 1;
+    _hasNextTargetPage = true;
+    _loadingPreviousTargetPage = false;
+    _loadingNextTargetPage = false;
+    _previousTargetPageFailed = false;
+    _nextTargetPageFailed = false;
+    _targetWindowPrimed = false;
+  }
+
+  ({String pid, double top})? _captureViewportAnchor() {
+    if (!_scrollController.hasClients) return null;
+    final viewportContext =
+        _scrollController.position.context.notificationContext;
+    final viewport = viewportContext?.findRenderObject();
+    if (viewport is! RenderBox || !viewport.hasSize) return null;
+    final viewportTop = viewport.localToGlobal(Offset.zero).dy;
+
+    ({String pid, double top})? best;
+    var bestDistance = double.infinity;
+    for (final post in _comments) {
+      final key = post.pid == widget.initialTargetPid
+          ? _targetCommentKey
+          : _commentKeys[post.pid];
+      final renderObject = key?.currentContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) continue;
+      final top = renderObject.localToGlobal(Offset.zero).dy - viewportTop;
+      final bottom = top + renderObject.size.height;
+      if (bottom <= 0 || top >= viewport.size.height) continue;
+      final distance = top.abs();
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = (pid: post.pid, top: top);
+      }
+    }
+    return best;
+  }
+
+  Future<void> _restoreViewportAnchor(
+    ({String pid, double top})? anchor,
+  ) async {
+    if (anchor == null) return;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || !_scrollController.hasClients) return;
+
+    final viewportContext =
+        _scrollController.position.context.notificationContext;
+    final viewport = viewportContext?.findRenderObject();
+    final key = anchor.pid == widget.initialTargetPid
+        ? _targetCommentKey
+        : _commentKeys[anchor.pid];
+    final renderObject = key?.currentContext?.findRenderObject();
+    if (viewport is! RenderBox ||
+        renderObject is! RenderBox ||
+        !viewport.hasSize ||
+        !renderObject.hasSize) {
+      return;
+    }
+
+    final viewportTop = viewport.localToGlobal(Offset.zero).dy;
+    final currentTop = renderObject.localToGlobal(Offset.zero).dy - viewportTop;
+    final delta = currentTop - anchor.top;
+    if (delta.abs() < 0.5) return;
+    _scrollController.jumpTo(
+      (_scrollController.position.pixels + delta)
+          .clamp(
+            _scrollController.position.minScrollExtent,
+            _scrollController.position.maxScrollExtent,
+          )
+          .toDouble(),
+    );
+  }
+
+  void _onTargetWindowScroll() {
+    if (!_targetMode || !_targetWindowPrimed ||
+        !_scrollController.hasClients) {
+      return;
+    }
+
+    final position = _scrollController.position;
+    if (position.pixels <= 220 && _hasPreviousTargetPage) {
+      _loadTargetPage(previous: true);
+    }
+    if (position.extentAfter <= 320 && _hasNextTargetPage) {
+      _loadTargetPage(previous: false);
+    }
+  }
+
+  Future<void> _primeTargetWindow() async {
+    if (!_targetMode) return;
+
+    // 目标页前后各预取一页，让目标楼层一开始就有上下文；后续滚动时再
+    // 分别向前、向后增量加载，不再被 findpost 返回的单页限制住。
+    if (_hasPreviousTargetPage) {
+      await _loadTargetPage(previous: true, preservePosition: false);
+    }
+    if (!mounted) return;
+    await _loadTargetPage(previous: false, preservePosition: false);
+    if (!mounted) return;
+
+    _targetWindowPrimed = true;
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) await _scrollToTargetComment();
+  }
+
+  Future<void> _loadTargetPage({
+    required bool previous,
+    bool preservePosition = true,
+  }) async {
+    if (!_targetMode) return;
+    if (previous) {
+      if (_loadingPreviousTargetPage || !_hasPreviousTargetPage) return;
+    } else if (_loadingNextTargetPage || !_hasNextTargetPage) {
+      return;
+    }
+
+    final page = previous ? _minLoadedPage - 1 : _maxLoadedPage + 1;
+    if (page < 1) {
+      if (mounted) setState(() => _hasPreviousTargetPage = false);
+      return;
+    }
+
+    final anchor = preservePosition ? _captureViewportAnchor() : null;
+    var contentChanged = false;
+
+    setState(() {
+      if (previous) {
+        _loadingPreviousTargetPage = true;
+        _previousTargetPageFailed = false;
+      } else {
+        _loadingNextTargetPage = true;
+        _nextTargetPageFailed = false;
+      }
+    });
+
+    try {
+      final next = await ApiService.instance.getThreadDetail(
+        widget.detail.tid,
+        page: page,
+      );
+      if (!mounted) return;
+
+      final existing = widget.detail.posts.map((post) => post.pid).toSet();
+      final additions = next.posts
+          .where((post) => existing.add(post.pid))
+          .toList(growable: false);
+      contentChanged = additions.isNotEmpty;
+
+      setState(() {
+        if (additions.isEmpty) {
+          if (previous) {
+            _hasPreviousTargetPage = false;
+          } else {
+            _hasNextTargetPage = false;
+          }
+          return;
+        }
+
+        if (previous) {
+          widget.detail.posts.insertAll(0, additions);
+          _minLoadedPage = page;
+          _hasPreviousTargetPage = page > 1;
+        } else {
+          widget.detail.posts.addAll(additions);
+          _maxLoadedPage = page;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        if (previous) {
+          _previousTargetPageFailed = true;
+        } else {
+          _nextTargetPageFailed = true;
+        }
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (previous) {
+            _loadingPreviousTargetPage = false;
+          } else {
+            _loadingNextTargetPage = false;
+          }
+        });
+      }
+    }
+    if (contentChanged) await _restoreViewportAnchor(anchor);
+  }
+
+  Future<void> _refreshLoadedTargetWindow() async {
+    final anchor = _captureViewportAnchor();
+    final refreshedPosts = <Post>[];
+    final seen = <String>{};
+
+    // 只刷新用户当前已经浏览到的页窗，不重新退回通知最初定位页。
+    // 分批请求避免一次性并发过多，同时保留第 100 楼一类阅读进度。
+    final pages = <int>[
+      for (var page = _minLoadedPage; page <= _maxLoadedPage; page++) page,
+    ];
+    for (var start = 0; start < pages.length; start += 3) {
+      final end = (start + 3).clamp(0, pages.length).toInt();
+      final details = await Future.wait(
+        pages.sublist(start, end).map(
+              (page) => ApiService.instance.getThreadDetail(
+                widget.detail.tid,
+                page: page,
+              ),
+            ),
+      );
+      for (final detail in details) {
+        for (final post in detail.posts) {
+          if (seen.add(post.pid)) refreshedPosts.add(post);
+        }
+      }
+    }
+    if (!mounted || refreshedPosts.isEmpty) return;
+
+    setState(() {
+      widget.detail.posts
+        ..clear()
+        ..addAll(refreshedPosts);
+      _targetWindowPrimed = true;
+    });
+    await _restoreViewportAnchor(anchor);
+  }
+
+  List<Post> get _filteredComments {
+    var comments = _threadComments(widget.detail);
+    if (_commentFilter.commentsEnabled && _commentFilter.hasKeywords) {
+      comments = comments
+          .where(
+            (post) =>
+                post.pid == widget.initialTargetPid ||
+                !_commentFilter.matches(post.content),
+          )
+          .toList(growable: false);
+    }
+    return comments;
+  }
+
+  List<Post> get _comments {
+    final comments = List<Post>.from(_filteredComments);
+    if (_targetMode || !_reverseOrder) return comments;
+    return comments.reversed.toList(growable: false);
+  }
+
+  Future<void> _scrollToTargetComment() async {
+    var targetContext = _targetCommentKey.currentContext;
+    if (targetContext == null && _scrollController.hasClients) {
+      final comments = _comments;
+      final index = comments.indexWhere(
+        (post) => post.pid == widget.initialTargetPid,
+      );
+      if (index >= 0) {
+        // 评论卡片高度不固定，不能用“楼层数 × 固定高度”定位。按目标在
+        // 当前窗口中的比例多次校准，让 Sliver 在每次布局后修正总高度估算。
+        for (var attempt = 0; attempt < 3 && targetContext == null; attempt++) {
+          final itemIndex = index + (_targetMode ? 1 : 0);
+          final itemCount = comments.length + (_targetMode ? 2 : 1);
+          final fraction = itemCount <= 1 ? 0.0 : itemIndex / (itemCount - 1);
+          final estimated =
+              _scrollController.position.maxScrollExtent * fraction;
+          _scrollController.jumpTo(
+            estimated
+                .clamp(
+                  _scrollController.position.minScrollExtent,
+                  _scrollController.position.maxScrollExtent,
+                )
+                .toDouble(),
+          );
+          await WidgetsBinding.instance.endOfFrame;
+          targetContext = _targetCommentKey.currentContext;
+        }
+      }
+    }
+    if (targetContext == null) return;
+    await Scrollable.ensureVisible(
+      targetContext,
+      alignment: 0.14,
+      duration: const Duration(milliseconds: 460),
+      curve: Curves.easeInOutCubic,
+    );
+  }
+
+  Future<void> _restoreCommentOrder() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final reverse = prefs.getBool(_commentReverseOrderKey) ?? false;
+      if (reverse != _reverseOrder) {
+        setState(() => _reverseOrder = reverse);
+      }
+    } catch (_) {
+      // 排序偏好读取失败不影响评论区使用，默认保持正序。
+    }
+  }
+
+  Future<void> _setCommentOrder(bool reverse) async {
+    if (_targetMode) return;
+    if (_reverseOrder == reverse) return;
+
+    setState(() => _reverseOrder = reverse);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_commentReverseOrderKey, reverse);
+    } catch (_) {
+      // 偏好保存失败只影响下次默认排序，不影响当前排序。
+    }
+
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || !_scrollController.hasClients) return;
+    _scrollController.jumpTo(_scrollController.position.minScrollExtent);
+  }
 
   void _onComposerChanged() {
     if (mounted) setState(() {});
   }
 
-  void _onScroll() {
-    if (!_scrollController.hasClients ||
-        _scrollController.position.extentAfter > 260) {
-      return;
+  Future<void> _loadAllComments() async {
+    if (_loadingAll) return;
+    setState(() {
+      _loadingAll = true;
+      _loadAllFailed = false;
+    });
+
+    try {
+      while (mounted && widget.hasMore()) {
+        if (widget.isLoadingMore()) {
+          await Future<void>.delayed(const Duration(milliseconds: 40));
+          continue;
+        }
+
+        final beforeCount = _threadComments(widget.detail).length;
+        await widget.onLoadMore();
+        if (!mounted) return;
+        final afterCount = _threadComments(widget.detail).length;
+
+        if (afterCount <= beforeCount) {
+          if (widget.hasMore()) _loadAllFailed = true;
+          break;
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingAll = false);
+      }
     }
-    _loadNext();
   }
 
-  Future<void> _loadNext() async {
-    if (_requesting || widget.isLoadingMore() || !widget.hasMore()) return;
-    setState(() => _requesting = true);
-    await widget.onLoadMore();
-    if (!mounted) return;
-    setState(() => _requesting = false);
+  Widget _buildCommentCard(Post post) {
+    final targetPid = widget.initialTargetPid?.trim() ?? '';
+    final targeted = post.pid == targetPid;
+    final contextHighlighted = post.pid == _contextHighlightPid;
+    final chronological = _filteredComments;
+    final parentPid = _commentThreadService.resolveParentPid(
+      post,
+      chronological,
+    );
+    final parent = parentPid == null
+        ? null
+        : _findPost(chronological, parentPid);
+    final itemKey = targeted
+        ? _targetCommentKey
+        : _commentKeys.putIfAbsent(post.pid, () => GlobalKey());
+
+    return Container(
+      key: itemKey,
+      child: RepaintBoundary(
+        child: _PostCard(
+          post: post,
+          replyParent: parent,
+          hideQuotedContext: parent != null,
+          highlighted: targeted || contextHighlighted,
+          onReplyContextTap:
+              parent == null ? null : () => _scrollToLoadedComment(parent.pid),
+          onReply: () => _startReply(post),
+          onEdit: widget.canEdit(post)
+              ? () {
+                  Navigator.pop(context);
+                  Future.microtask(() => widget.onEdit(post));
+                }
+              : null,
+          onImageTap: (imageIndex) => widget.onImageTap(post, imageIndex),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _scrollToLoadedComment(String pid) async {
+    final comments = _comments;
+    final index = comments.indexWhere((post) => post.pid == pid);
+    if (index < 0 || !_scrollController.hasClients) return;
+    if (mounted) setState(() => _contextHighlightPid = pid);
+
+    BuildContext? targetContext = pid == widget.initialTargetPid
+        ? _targetCommentKey.currentContext
+        : _commentKeys[pid]?.currentContext;
+    for (var attempt = 0; attempt < 3 && targetContext == null; attempt++) {
+      final itemIndex = index + (_targetMode ? 1 : 0);
+      final itemCount = comments.length + (_targetMode ? 2 : 1);
+      final fraction = itemCount <= 1 ? 0.0 : itemIndex / (itemCount - 1);
+      _scrollController.jumpTo(
+        (_scrollController.position.maxScrollExtent * fraction)
+            .clamp(
+              _scrollController.position.minScrollExtent,
+              _scrollController.position.maxScrollExtent,
+            )
+            .toDouble(),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      targetContext = pid == widget.initialTargetPid
+          ? _targetCommentKey.currentContext
+          : _commentKeys[pid]?.currentContext;
+    }
+    if (targetContext == null) {
+      if (mounted && _contextHighlightPid == pid) {
+        setState(() => _contextHighlightPid = null);
+      }
+      return;
+    }
+    await Scrollable.ensureVisible(
+      targetContext,
+      alignment: 0.18,
+      duration: const Duration(milliseconds: 380),
+      curve: Curves.easeInOutCubic,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    if (mounted && _contextHighlightPid == pid) {
+      setState(() => _contextHighlightPid = null);
+    }
+  }
+
+  Widget _buildCommentsTail({
+    required ThemeData theme,
+    required ColorScheme colors,
+    required bool loading,
+    required bool hasMore,
+  }) {
+    if (loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (_loadAllFailed && hasMore) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Center(
+          child: FilledButton.tonalIcon(
+            onPressed: _loadAllComments,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('重新加载全部评论'),
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Center(
+        child: Text(
+          '已加载全部评论',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.outline,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTargetWindowEdge({
+    required ThemeData theme,
+    required ColorScheme colors,
+    required bool previous,
+  }) {
+    final loading = previous
+        ? _loadingPreviousTargetPage
+        : _loadingNextTargetPage;
+    final failed = previous
+        ? _previousTargetPageFailed
+        : _nextTargetPageFailed;
+    final hasPage = previous
+        ? _hasPreviousTargetPage
+        : _hasNextTargetPage;
+
+    if (loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 14),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    if (failed) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(
+          child: TextButton.icon(
+            onPressed: () => _loadTargetPage(previous: previous),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: Text(previous ? '重试加载更早楼层' : '重试加载后续楼层'),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Center(
+        child: Text(
+          hasPage
+              ? (previous ? '继续上滑加载更早楼层' : '继续下滑加载后续楼层')
+              : (previous ? '已到最早楼层' : '已到最后楼层'),
+          style: theme.textTheme.bodySmall?.copyWith(color: colors.outline),
+        ),
+      ),
+    );
   }
 
   void _ensureLogin() {
@@ -559,7 +1171,13 @@ class _CommentsSheetState extends State<_CommentsSheet> {
       _composerFocusNode.unfocus();
 
       try {
-        await widget.onRefresh();
+        if (_targetMode) {
+          await _refreshLoadedTargetWindow();
+        } else {
+          await widget.onRefresh();
+          if (!mounted) return;
+          await _loadAllComments();
+        }
       } catch (_) {
         // 回复已成功时，刷新失败不应把发送结果判成失败。
       }
@@ -585,8 +1203,15 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     final colors = theme.colorScheme;
     final media = MediaQuery.of(context);
     final comments = _comments;
-    final loading = _requesting || widget.isLoadingMore();
-    final hasMore = widget.hasMore();
+    final rawCommentCount = _threadComments(widget.detail).length;
+    final allCommentsFiltered = rawCommentCount > 0 && comments.isEmpty;
+    final loading = _loadingAll ||
+        widget.isLoadingMore() ||
+        (_targetMode &&
+            (_loadingPreviousTargetPage || _loadingNextTargetPage));
+    final hasMore = _targetMode
+        ? _hasPreviousTargetPage || _hasNextTargetPage
+        : widget.hasMore();
     final loggedIn = ApiService.instance.isLoggedIn;
     final canSend = loggedIn &&
         !_sending &&
@@ -623,20 +1248,45 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '评论区',
+                            widget.initialTargetPid?.trim().isNotEmpty == true
+                                ? '已定位到回复'
+                                : '评论区',
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w800,
                             ),
                           ),
                           Text(
-                            comments.isEmpty
-                                ? '暂无已加载评论'
-                                : '已加载 ${comments.length} 条',
+                            _loadingAll
+                                ? '正在加载全部评论…'
+                                : comments.isEmpty
+                                    ? (allCommentsFiltered
+                                        ? '已过滤 $rawCommentCount 条评论'
+                                        : '暂无评论')
+                                    : _targetMode
+                                        ? '已加载 ${comments.length} 条 · '
+                                            '第 $_minLoadedPage-$_maxLoadedPage 页'
+                                        : '${comments.length} 条评论 · '
+                                            '${_reverseOrder ? '倒序' : '正序'}',
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: colors.outline,
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: _targetMode
+                          ? '定位模式按楼层正序显示'
+                          : (_reverseOrder
+                              ? '当前倒序，点击切换正序'
+                              : '当前正序，点击切换倒序'),
+                      onPressed: _loadingAll || _targetMode
+                          ? null
+                          : () => _setCommentOrder(!_reverseOrder),
+                      icon: Icon(
+                        _reverseOrder
+                            ? Icons.arrow_downward_rounded
+                            : Icons.arrow_upward_rounded,
                       ),
                     ),
                     IconButton(
@@ -661,14 +1311,16 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                             ),
                             const SizedBox(height: 10),
                             Text(
-                              '还没有评论',
+                              allCommentsFiltered ? '评论已被过滤' : '还没有评论',
                               style: theme.textTheme.titleSmall?.copyWith(
                                 color: colors.onSurfaceVariant,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '来发表第一条评论吧',
+                              allCommentsFiltered
+                                  ? '当前评论均命中过滤关键词'
+                                  : '来发表第一条评论吧',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: colors.outline,
                               ),
@@ -681,59 +1333,34 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
                         padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
-                        itemCount: comments.length + 1,
+                        itemCount: comments.length + (_targetMode ? 2 : 1),
                         itemBuilder: (context, index) {
-                          if (index == comments.length) {
-                            if (loading) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 18),
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                              );
-                            }
-                            if (hasMore) {
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                child: Center(
-                                  child: FilledButton.tonalIcon(
-                                    onPressed: _loadNext,
-                                    icon: const Icon(Icons.expand_more_rounded),
-                                    label: const Text('加载更多评论'),
-                                  ),
-                                ),
-                              );
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              child: Center(
-                                child: Text(
-                                  '没有更多评论了',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: colors.outline,
-                                  ),
-                                ),
-                              ),
+                          if (_targetMode && index == 0) {
+                            return _buildTargetWindowEdge(
+                              theme: theme,
+                              colors: colors,
+                              previous: true,
                             );
                           }
 
-                          final post = comments[index];
-                          return RepaintBoundary(
-                            child: _PostCard(
-                              post: post,
-                              onReply: () => _startReply(post),
-                              onEdit: widget.canEdit(post)
-                                  ? () {
-                                      Navigator.pop(context);
-                                      Future.microtask(() => widget.onEdit(post));
-                                    }
-                                  : null,
-                              onImageTap: (imageIndex) =>
-                                  widget.onImageTap(post, imageIndex),
-                            ),
-                          );
+                          final commentIndex =
+                              _targetMode ? index - 1 : index;
+                          if (commentIndex == comments.length) {
+                            if (_targetMode) {
+                              return _buildTargetWindowEdge(
+                                theme: theme,
+                                colors: colors,
+                                previous: false,
+                              );
+                            }
+                            return _buildCommentsTail(
+                              theme: theme,
+                              colors: colors,
+                              loading: loading,
+                              hasMore: hasMore,
+                            );
+                          }
+                          return _buildCommentCard(comments[commentIndex]);
                         },
                       ),
               ),
@@ -916,12 +1543,20 @@ class _CommentComposer extends StatelessWidget {
 
 class _PostCard extends StatelessWidget {
   final Post post;
+  final Post? replyParent;
+  final bool highlighted;
+  final bool hideQuotedContext;
+  final VoidCallback? onReplyContextTap;
   final VoidCallback onReply;
   final VoidCallback? onEdit;
   final ValueChanged<int> onImageTap;
 
   const _PostCard({
     required this.post,
+    this.replyParent,
+    this.highlighted = false,
+    this.hideQuotedContext = false,
+    this.onReplyContextTap,
     required this.onReply,
     this.onEdit,
     required this.onImageTap,
@@ -931,23 +1566,50 @@ class _PostCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final content = post.content.trim();
-    final richImageUrls = post.richContent
+    final visibleRichContent = hideQuotedContext
+        ? post.richContent
+            .where(
+              (item) =>
+                  item.type != PostContentType.quote &&
+                  item.type != PostContentType.richQuote,
+            )
+            .toList(growable: false)
+        : post.richContent;
+    final content = hideQuotedContext
+        ? _contentWithoutQuotedContext(post)
+        : post.content.trim();
+    final postTime = post.postTime?.trim() ?? '';
+    final replyParentFloor = replyParent == null
+        ? ''
+        : (_floorText(replyParent!.floor).isEmpty
+            ? '原评论'
+            : _floorText(replyParent!.floor));
+    final richImageUrls = visibleRichContent
         .where((item) => item.type == PostContentType.image)
         .map((item) => item.url)
         .whereType<String>()
         .toSet();
     final detachedImages = post.images
-        .where((url) => !richImageUrls.contains(url))
+        .where(
+          (url) =>
+              !richImageUrls.contains(url) &&
+              !SmileyCatalog.isForumSmileyUrl(url),
+        )
         .toList(growable: false);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      color: colors.surfaceContainerLow,
+      color: highlighted
+          ? Color.alphaBlend(
+              colors.primary.withValues(alpha: 0.10),
+              colors.surfaceContainerLow,
+            )
+          : colors.surfaceContainerLow,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
-          color: colors.outlineVariant,
+          color: highlighted ? colors.primary : colors.outlineVariant,
+          width: highlighted ? 1.5 : 1,
         ),
       ),
       child: Padding(
@@ -1014,13 +1676,13 @@ class _PostCard extends StatelessWidget {
                           ],
                         ],
                       ),
-                      if (post.authorLevel != null ||
-                          post.postTime != null)
+                      if ((post.authorLevel?.trim().isNotEmpty ?? false) ||
+                          postTime.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(top: 3),
+                          padding: const EdgeInsets.only(top: 4),
                           child: Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
+                            spacing: 8,
+                            runSpacing: 5,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               if (post.authorLevel != null &&
@@ -1028,13 +1690,8 @@ class _PostCard extends StatelessWidget {
                                 UserLevelBadge(
                                   text: post.authorLevel!,
                                 ),
-                              if (post.postTime != null)
-                                Text(
-                                  post.postTime!,
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: colors.outline,
-                                  ),
-                                ),
+                              if (postTime.isNotEmpty)
+                                _PostTimeLabel(time: postTime),
                             ],
                           ),
                         ),
@@ -1045,7 +1702,50 @@ class _PostCard extends StatelessWidget {
                 _Pill(text: _floorText(post.floor)),
               ],
             ),
-            if (post.replyToName != null) ...[
+            if (replyParent != null) ...[
+              const SizedBox(height: 9),
+              InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: onReplyContextTap,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.primaryContainer.withValues(alpha: 0.42),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.subdirectory_arrow_left_rounded,
+                        size: 16,
+                        color: colors.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '回复 $replyParentFloor '
+                          '@${replyParent!.authorName ?? post.replyToName ?? '用户'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: colors.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.my_location_rounded,
+                        size: 15,
+                        color: colors.primary,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ] else if (post.replyToName != null) ...[
               const SizedBox(height: 9),
               Text(
                 '回复 @${post.replyToName}',
@@ -1054,10 +1754,10 @@ class _PostCard extends StatelessWidget {
                 ),
               ),
             ],
-            if (post.richContent.isNotEmpty) ...[
+            if (visibleRichContent.isNotEmpty) ...[
               const SizedBox(height: 10),
               _RichContentView(
-                contents: post.richContent,
+                contents: visibleRichContent,
                 onImageTap: (url) {
                   final index = post.images.indexOf(url);
                   if (index >= 0) {
@@ -1153,6 +1853,18 @@ class _PostCard extends StatelessWidget {
     );
   }
 
+  String _contentWithoutQuotedContext(Post post) {
+    var value = post.content.trim();
+    final quoted = post.replyQuoteText?.trim() ?? '';
+    if (quoted.isNotEmpty) {
+      final index = value.indexOf(quoted);
+      if (index >= 0) {
+        value = value.substring(index + quoted.length).trim();
+      }
+    }
+    return value;
+  }
+
   String _initial(String? name) {
     final value = name?.trim() ?? '';
     return value.isEmpty ? '?' : value.substring(0, 1);
@@ -1162,6 +1874,43 @@ class _PostCard extends StatelessWidget {
     if (floor == null || floor.isEmpty) return '';
     if (floor == '1') return '楼主';
     return '$floor楼';
+  }
+}
+
+class _PostTimeLabel extends StatelessWidget {
+  final String time;
+
+  const _PostTimeLabel({required this.time});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Semantics(
+      label: '评论时间 $time',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.schedule_rounded,
+            size: 13,
+            color: colors.outline,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            time,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+              height: 1.15,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -1190,6 +1939,56 @@ class _Pill extends StatelessWidget {
       ),
     );
   }
+}
+
+Color? _parseBbColor(String? raw) {
+  if (raw == null) return null;
+  var value = raw.trim().toLowerCase();
+  if (value.isEmpty) return null;
+  const named = <String, Color>{
+    'black': Colors.black,
+    'white': Colors.white,
+    'red': Colors.red,
+    'green': Colors.green,
+    'blue': Colors.blue,
+    'yellow': Colors.yellow,
+    'orange': Colors.orange,
+    'purple': Colors.purple,
+    'pink': Colors.pink,
+    'grey': Colors.grey,
+    'gray': Colors.grey,
+    'cyan': Colors.cyan,
+    'teal': Colors.teal,
+  };
+  if (named.containsKey(value)) return named[value];
+
+  final rgb = RegExp(
+    r'^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})',
+  ).firstMatch(value);
+  if (rgb != null) {
+    return Color.fromARGB(
+      255,
+      (int.tryParse(rgb.group(1)!) ?? 0).clamp(0, 255).toInt(),
+      (int.tryParse(rgb.group(2)!) ?? 0).clamp(0, 255).toInt(),
+      (int.tryParse(rgb.group(3)!) ?? 0).clamp(0, 255).toInt(),
+    );
+  }
+
+  value = value.replaceFirst('#', '');
+  if (value.length == 3) {
+    value = value.split('').map((part) => '$part$part').join();
+  }
+  if (!RegExp(r'^[0-9a-f]{6}([0-9a-f]{2})?$').hasMatch(value)) return null;
+  final parsed = int.tryParse(value, radix: 16);
+  if (parsed == null) return null;
+  return value.length == 8
+      ? Color.fromARGB(
+          parsed & 0xff,
+          (parsed >> 24) & 0xff,
+          (parsed >> 16) & 0xff,
+          (parsed >> 8) & 0xff,
+        )
+      : Color(0xff000000 | parsed);
 }
 
 class _RichContentView extends StatelessWidget {
@@ -1385,6 +2184,49 @@ class _RichContentView extends StatelessWidget {
             );
           }
 
+        case PostContentType.divider:
+          flushInline();
+          widgets.add(
+            Divider(
+              height: 24,
+              thickness: 1,
+              color: colors.outlineVariant,
+            ),
+          );
+
+        case PostContentType.aligned:
+          flushInline();
+          if (content.children.isNotEmpty) {
+            final alignment = switch (content.alignment) {
+              'center' => Alignment.center,
+              'right' => Alignment.centerRight,
+              _ => Alignment.centerLeft,
+            };
+            widgets.add(
+              Align(
+                alignment: alignment,
+                child: _RichContentView(
+                  contents: content.children,
+                  onImageTap: onImageTap,
+                ),
+              ),
+            );
+          }
+
+        case PostContentType.list:
+          flushInline();
+          if (content.children.isNotEmpty) {
+            widgets.add(
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                child: _RichContentView(
+                  contents: content.children,
+                  onImageTap: onImageTap,
+                ),
+              ),
+            );
+          }
+
         case PostContentType.audio:
           flushInline();
           if (content.url != null) {
@@ -1485,7 +2327,17 @@ class _InlineRichTextState extends State<_InlineRichText> {
   bool _sameContents(List<PostContent> a, List<PostContent> b) {
     if (a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
-      if (a[i].type != b[i].type || a[i].text != b[i].text || a[i].url != b[i].url) {
+      if (a[i].type != b[i].type ||
+          a[i].text != b[i].text ||
+          a[i].url != b[i].url ||
+          a[i].isBold != b[i].isBold ||
+          a[i].isItalic != b[i].isItalic ||
+          a[i].isUnderline != b[i].isUnderline ||
+          a[i].isStrikethrough != b[i].isStrikethrough ||
+          a[i].color != b[i].color ||
+          a[i].backgroundColor != b[i].backgroundColor ||
+          a[i].fontFamily != b[i].fontFamily ||
+          a[i].fontSizeScale != b[i].fontSizeScale) {
         return false;
       }
     }
@@ -1500,13 +2352,38 @@ class _InlineRichTextState extends State<_InlineRichText> {
     final baseStyle = theme.textTheme.bodyMedium?.copyWith(height: 1.55);
     final spans = <InlineSpan>[];
 
+    TextStyle? contentStyle(PostContent content, {bool link = false}) {
+      final decorations = <TextDecoration>[];
+      if (content.isUnderline || link) decorations.add(TextDecoration.underline);
+      if (content.isStrikethrough) decorations.add(TextDecoration.lineThrough);
+      final parsedColor = _parseBbColor(content.color);
+      final parsedBackground = _parseBbColor(content.backgroundColor);
+      return baseStyle?.copyWith(
+        color: parsedColor ?? (link ? colors.primary : null),
+        backgroundColor: parsedBackground,
+        fontWeight: content.isBold || content.type == PostContentType.bold
+            ? FontWeight.w700
+            : null,
+        fontStyle: content.isItalic ? FontStyle.italic : null,
+        decoration: decorations.isEmpty
+            ? null
+            : TextDecoration.combine(decorations),
+        decorationColor: parsedColor ?? (link ? colors.primary : null),
+        decorationThickness: decorations.isEmpty ? null : 1,
+        fontFamily: content.fontFamily,
+        fontSize: content.fontSizeScale == null || baseStyle?.fontSize == null
+            ? null
+            : baseStyle!.fontSize! * content.fontSizeScale!,
+      );
+    }
+
     for (final content in widget.contents) {
       switch (content.type) {
         case PostContentType.text:
           spans.add(
             TextSpan(
               text: content.text,
-              style: baseStyle,
+              style: contentStyle(content),
             ),
           );
 
@@ -1514,16 +2391,14 @@ class _InlineRichTextState extends State<_InlineRichText> {
           spans.add(
             TextSpan(
               text: content.text,
-              style: baseStyle?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: contentStyle(content),
             ),
           );
 
         case PostContentType.link:
           final url = content.url;
           if (url == null || url.isEmpty) {
-            spans.add(TextSpan(text: content.text, style: baseStyle));
+            spans.add(TextSpan(text: content.text, style: contentStyle(content)));
             continue;
           }
 
@@ -1536,13 +2411,7 @@ class _InlineRichTextState extends State<_InlineRichText> {
               text: content.text,
               recognizer: recognizer,
               mouseCursor: SystemMouseCursors.click,
-              style: baseStyle?.copyWith(
-                color: colors.primary,
-                fontWeight: FontWeight.w500,
-                decoration: TextDecoration.underline,
-                decorationColor: colors.primary.withValues(alpha: 0.72),
-                decorationThickness: 1,
-              ),
+              style: contentStyle(content, link: true),
             ),
           );
 

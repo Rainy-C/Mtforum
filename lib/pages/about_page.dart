@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/analytics_service.dart';
 import '../services/feedback_service.dart';
+import '../services/update_service.dart';
 
 class AboutPage extends StatefulWidget {
   const AboutPage({super.key});
@@ -11,15 +13,38 @@ class AboutPage extends StatefulWidget {
 }
 
 class _AboutPageState extends State<AboutPage> {
-  static const _avatarUrl = 'https://loveqin.fun/Star.jpg';
+  static const _avatarUrl = 'https://avatars.githubusercontent.com/u/187751705';
   static const _authorName = '我什么也不想要了';
   static const _qq = '615192041';
   static const _email = '615162041@qq.com';
   static const _forumName = 'Cynnie';
 
+  late final Future<Map<String, dynamic>> _versionInfoFuture;
+
   final _contentController = TextEditingController();
   final _contactController = TextEditingController();
   bool _sending = false;
+  AppStats? _appStats;
+  bool _statsLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _versionInfoFuture = UpdateService.instance.getCurrentVersionInfo();
+    _appStats = AnalyticsService.instance.latestStats;
+    _loadStats();
+  }
+
+  Future<void> _loadStats() async {
+    if (_statsLoading) return;
+    setState(() => _statsLoading = true);
+    final stats = await AnalyticsService.instance.fetchStats();
+    if (!mounted) return;
+    setState(() {
+      _statsLoading = false;
+      if (stats != null) _appStats = stats;
+    });
+  }
 
   @override
   void dispose() {
@@ -140,11 +165,18 @@ class _AboutPageState extends State<AboutPage> {
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          'v2.17.24',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: colors.outline,
-          ),
+        FutureBuilder<Map<String, dynamic>>(
+          future: _versionInfoFuture,
+          builder: (context, snapshot) {
+            final versionName =
+                '${snapshot.data?['versionName'] ?? ''}'.trim();
+            return Text(
+              versionName.isEmpty ? 'v—' : 'v$versionName',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colors.outline,
+              ),
+            );
+          },
         ),
         const SizedBox(height: 3),
         Text(
@@ -154,8 +186,91 @@ class _AboutPageState extends State<AboutPage> {
             color: colors.outline,
           ),
         ),
+        const SizedBox(height: 12),
+        _buildGlobalStats(theme, colors),
       ],
     );
+  }
+
+  Widget _buildGlobalStats(ThemeData theme, ColorScheme colors) {
+    final stats = _appStats;
+    if (stats == null) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: _statsLoading ? null : _loadStats,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_statsLoading)
+                const SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(strokeWidth: 1.8),
+                )
+              else
+                Icon(Icons.public_rounded, size: 16, color: colors.outline),
+              const SizedBox(width: 6),
+              Text(
+                _statsLoading
+                    ? '正在获取全网数据'
+                    : AnalyticsService.instance.isConfigured
+                        ? '全网数据暂不可用 · 点击重试'
+                        : '匿名统计地址未配置',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: colors.outline,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _GlobalStatChip(
+              icon: Icons.rocket_launch_outlined,
+              label: '全网启动',
+              value: '${_formatCount(stats.totalLaunches)} 次',
+            ),
+            _GlobalStatChip(
+              icon: Icons.install_mobile_outlined,
+              label: '匿名安装',
+              value: _formatCount(stats.uniqueInstalls),
+            ),
+            _GlobalStatChip(
+              icon: Icons.calendar_today_outlined,
+              label: '近7日活跃',
+              value: _formatCount(stats.active7d),
+            ),
+          ],
+        ),
+        const SizedBox(height: 7),
+        Text(
+          '匿名统计 · 不使用论坛 Cookie',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: colors.outline,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatCount(int value) {
+    final text = value.toString();
+    final out = StringBuffer();
+    for (var i = 0; i < text.length; i++) {
+      if (i > 0 && (text.length - i) % 3 == 0) out.write(',');
+      out.write(text[i]);
+    }
+    return out.toString();
   }
 
   Widget _buildAuthorCard(ThemeData theme, ColorScheme colors) {
@@ -300,6 +415,47 @@ class _AboutPageState extends State<AboutPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _GlobalStatChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _GlobalStatChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colors.outlineVariant.withValues(alpha: 0.55),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: colors.primary),
+          const SizedBox(width: 5),
+          Text(
+            '$label $value',
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

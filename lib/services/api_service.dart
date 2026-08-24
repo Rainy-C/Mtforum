@@ -44,6 +44,11 @@ class ApiService {
   String? _currentUid;
   Future<String>? _formhashRefreshFuture;
   int _sessionGeneration = 0;
+  final Map<String, ThreadDetail> _findPostPageCache = {};
+  final Map<String, DateTime> _findPostPageCacheTimes = {};
+  final Map<String, Future<ThreadDetail>> _findPostPageRequests = {};
+  final Map<String, Future<Post?>> _favoriteAuthorRequests = {};
+  static const Duration _findPostPageCacheTtl = Duration(minutes: 2);
 
   bool get isLoggedIn =>
       (_auth?.isNotEmpty ?? false) && (_saltkey?.isNotEmpty ?? false);
@@ -237,6 +242,10 @@ class ApiService {
     _formhash = null;
     _formhashAuth = null;
     _formhashRefreshFuture = null;
+    _findPostPageCache.clear();
+    _findPostPageCacheTimes.clear();
+    _findPostPageRequests.clear();
+    _favoriteAuthorRequests.clear();
 
     await _prefs.remove('forum_formhash');
     await _prefs.remove('forum_formhash_auth');
@@ -422,6 +431,153 @@ class ApiService {
       _rememberFormhash(detail.formhash);
     }
     return detail;
+  }
+
+  /// 通过通知中的 goto=findpost 地址让论坛定位 pid 所在页，再解析该楼层。
+  Future<ThreadDetail> getThreadDetailAtPost({
+    required String tid,
+    required String pid,
+    required String targetUrl,
+  }) async {
+    final uri = Uri.tryParse(targetUrl);
+    if (uri == null || pid.trim().isEmpty) {
+      return getThreadDetail(tid);
+    }
+    final redirectResponse = await _dio.getUri<String>(
+      uri,
+      options: Options(
+        responseType: ResponseType.plain,
+        followRedirects: false,
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 400,
+      ),
+    );
+    final redirectStatus = redirectResponse.statusCode ?? 0;
+    final location = redirectResponse.headers.value('location');
+    final resolvedTarget = resolveFindPostLocation(uri, location);
+
+    if (redirectStatus >= 300 && redirectStatus < 400) {
+      if (resolvedTarget == null) {
+        throw StateError('楼层定位失败：重定向缺少 Location');
+      }
+      final pageUri = resolvedTarget.replace(fragment: '');
+      final cacheKey = pageUri.toString();
+      final cachedAt = _findPostPageCacheTimes[cacheKey];
+      final cached = _findPostPageCache[cacheKey];
+      if (cached != null &&
+          cachedAt != null &&
+          DateTime.now().difference(cachedAt) < _findPostPageCacheTtl) {
+        if (cached.posts.any((post) => post.pid == pid)) return cached;
+        _findPostPageCache.remove(cacheKey);
+        _findPostPageCacheTimes.remove(cacheKey);
+      }
+      var request = _findPostPageRequests[cacheKey];
+      if (request == null) {
+        request = _loadFindPostPage(pageUri, tid);
+        _findPostPageRequests[cacheKey] = request;
+      }
+      late final ThreadDetail detail;
+      try {
+        detail = await request;
+      } finally {
+        if (identical(_findPostPageRequests[cacheKey], request)) {
+          _findPostPageRequests.remove(cacheKey);
+        }
+      }
+      _findPostPageCache[cacheKey] = detail;
+      _findPostPageCacheTimes[cacheKey] = DateTime.now();
+      if (!detail.posts.any((post) => post.pid == pid)) {
+        throw StateError(
+          '目标楼层未出现在论坛返回的第 ${detail.page} 页（PID $pid）',
+        );
+      }
+      return detail;
+    }
+
+    final detail = _parser.parseThreadDetail(
+      redirectResponse.data ?? '',
+      tid: tid,
+      page: 1,
+      baseUrl: baseUrl,
+    );
+    if (!detail.posts.any((post) => post.pid == pid)) {
+      throw StateError('论坛未返回 findpost 重定向，且当前页面找不到 PID $pid');
+    }
+    return detail;
+  }
+
+  Future<ThreadDetail> _loadFindPostPage(Uri pageUri, String tid) async {
+    final response = await _dio.getUri<String>(
+      pageUri,
+      options: Options(
+        responseType: ResponseType.plain,
+        followRedirects: true,
+        validateStatus: (status) => status != null && status < 500,
+      ),
+    );
+    final status = response.statusCode ?? 0;
+    if (status >= 400 || status == 0) {
+      throw StateError('楼层页面加载失败（HTTP $status）');
+    }
+    final page = int.tryParse(pageUri.queryParameters['page'] ?? '') ?? 1;
+    return _parser.parseThreadDetail(
+      response.data ?? '',
+      tid: tid,
+      page: page,
+      baseUrl: baseUrl,
+    );
+  }
+
+  static Uri? resolveFindPostLocation(Uri requestUri, String? location) {
+    final value = location?.trim() ?? '';
+    if (value.isEmpty) return null;
+    return requestUri.resolve(value.replaceAll('&amp;', '&'));
+  }
+
+  Future<String?> getNoticeReplyPreview(NoticeItem item) async {
+    final tid = item.tid?.trim() ?? '';
+    final pid = item.pid?.trim() ?? '';
+    final targetUrl = item.targetUrl?.trim() ?? '';
+    if (tid.isEmpty || pid.isEmpty || targetUrl.isEmpty) return null;
+    final detail = await getThreadDetailAtPost(
+      tid: tid,
+      pid: pid,
+      targetUrl: targetUrl,
+    );
+    for (final post in detail.posts) {
+      if (post.pid == pid) {
+        final value = buildPostPreview(post);
+        return value.isEmpty ? null : value;
+      }
+    }
+    return null;
+  }
+
+  static String buildPostPreview(Post post) {
+    final plain = post.content.trim();
+    if (plain.isNotEmpty) return plain;
+    final parts = <String>[];
+    for (final content in post.richContent) {
+      final text = content.text.trim();
+      if (text.isNotEmpty) {
+        parts.add(text);
+        continue;
+      }
+      final label = switch (content.type) {
+        PostContentType.emoji => '[表情]',
+        PostContentType.image => '[图片]',
+        PostContentType.attachment => '[附件]',
+        PostContentType.audio => '[音频]',
+        PostContentType.video || PostContentType.flash => '[视频]',
+        PostContentType.code => '[代码]',
+        _ => '',
+      };
+      if (label.isNotEmpty && (parts.isEmpty || parts.last != label)) {
+        parts.add(label);
+      }
+    }
+    if (parts.isEmpty && post.images.isNotEmpty) return '[图片]';
+    return parts.join(' ').trim();
   }
 
   Future<PostEditorForm> getNewThreadForm(String fid) async {
@@ -1089,6 +1245,7 @@ class ApiService {
               excerpt: thread.excerpt,
               replyCount: thread.replyCount,
               viewCount: thread.viewCount,
+              likeCount: thread.likeCount,
               thumbnails: thread.thumbnails,
               hasHiddenContent: thread.hasHiddenContent,
             ))
@@ -1513,7 +1670,69 @@ class ApiService {
       ),
     );
 
-    return _accountParser.parseFavorites(response.data ?? '');
+    final items = _accountParser.parseFavorites(
+      response.data ?? '',
+      baseUrl: baseUrl,
+    );
+    return _enrichFavoriteAuthors(items);
+  }
+
+  Future<List<FavoriteItem>> _enrichFavoriteAuthors(
+    List<FavoriteItem> items,
+  ) async {
+    final result = List<FavoriteItem>.from(items);
+    final missingIndexes = <int>[
+      for (var index = 0; index < result.length; index++)
+        if (result[index].isThread &&
+            (result[index].thread?.authorName?.trim().isEmpty ?? true))
+          index,
+    ];
+
+    // 收藏页模板经常不输出作者。按每批 4 个请求帖子第一页补齐楼主，
+    // 避免一次性并发过多，也避免把“缺失字段”错误展示成“匿名发帖”。
+    for (var start = 0; start < missingIndexes.length; start += 4) {
+      final end = (start + 4).clamp(0, missingIndexes.length).toInt();
+      final batch = missingIndexes.sublist(start, end);
+      final authors = await Future.wait(
+        batch.map((index) => _getFavoriteAuthor(result[index].tid!)),
+      );
+
+      for (var offset = 0; offset < batch.length; offset++) {
+        final index = batch[offset];
+        final author = authors[offset];
+        if (author == null) continue;
+        final item = result[index];
+        final thread = item.thread ?? Thread(tid: item.tid!, title: item.title);
+        result[index] = FavoriteItem(
+          favid: item.favid,
+          title: item.title,
+          type: item.type,
+          href: item.href,
+          tid: item.tid,
+          thread: thread.copyWith(
+            authorUid: author.authorUid,
+            authorName: author.authorName,
+            avatarUrl: author.avatarUrl,
+          ),
+        );
+      }
+    }
+    return result;
+  }
+
+  Future<Post?> _getFavoriteAuthor(String tid) {
+    return _favoriteAuthorRequests.putIfAbsent(tid, () async {
+      try {
+        final detail = await getThreadDetail(tid, page: 1);
+        if (detail.posts.isEmpty) return null;
+        return detail.posts.firstWhere(
+          (post) => post.isOp,
+          orElse: () => detail.posts.first,
+        );
+      } catch (_) {
+        return null;
+      }
+    });
   }
 
   Future<List<FriendItem>> getMyFriends({
@@ -2698,6 +2917,7 @@ class ApiService {
       queryParameters: const {
         'mod': 'space',
         'do': 'pm',
+        'mobile': 2,
       },
       options: Options(
         responseType: ResponseType.plain,
@@ -2731,6 +2951,7 @@ class ApiService {
         'do': 'pm',
         'subop': 'view',
         'touid': touid,
+        'mobile': 2,
       },
       options: Options(
         responseType: ResponseType.plain,
@@ -2846,40 +3067,45 @@ class ApiService {
       response.data ?? '',
       myUid: _currentUid,
       peerUid: touid,
+      baseUrl: baseUrl,
     );
   }
 
 
   /// 获取消息中心未读汇总。
   ///
-  /// 私信/论坛通知优先从普通论坛页的全局 `newpm/newprompt` 状态读取，
-  /// 不主动打开通知中心，避免“为了查未读数反而把提醒标成已读”。
-  /// 好友申请使用真实待处理请求列表计数。
-  Future<MessageUnreadSummary> getMessageUnreadSummary() async {
+  /// 私信以真实私信列表中的 `span.kmnums` 为准。`checknewpm` 在用户打开
+  /// 过私信列表后会清零，因此只在列表页请求失败时作为降级信号。
+  /// 论坛通知仍读取普通论坛页的全局状态，好友申请读取真实待处理列表。
+  Future<MessageUnreadSummary> getMessageUnreadSummary({
+    List<PmConversationSummary>? pmConversations,
+  }) async {
     if (!isLoggedIn) return const MessageUnreadSummary.empty();
 
-    var global = const MessageUnreadSummary.empty();
-    try {
-      final response = await _dio.get<String>(
-        '/forum.php',
-        queryParameters: const {'mobile': 2},
-        options: Options(
-          responseType: ResponseType.plain,
-          followRedirects: true,
-        ),
-      );
-      global = _userCenterParser.parseGlobalMessageUnread(response.data ?? '');
-    } catch (_) {
-      // 全局未读探测失败不影响其它两项。
+    var conversations = pmConversations;
+    if (conversations == null) {
+      try {
+        conversations = await getPmConversations();
+      } catch (_) {
+        // 私信列表失败时才回退到旧信号，不把网络失败误判成“全部已读”。
+      }
     }
 
-    var pm = global.privateMessages;
-    if (!pm.isVisible) {
-      try {
-        if (await checkNewPrivateMessage()) {
-          pm = const UnreadBadgeInfo(count: null, hasUnread: true);
-        }
-      } catch (_) {}
+    UnreadBadgeInfo pm;
+    if (conversations != null) {
+      final unreadCount = conversations.where((item) => item.hasUnread).length;
+      pm = unreadCount == 0
+          ? const UnreadBadgeInfo.none()
+          : UnreadBadgeInfo(count: unreadCount, hasUnread: true);
+    } else {
+      pm = const UnreadBadgeInfo.none();
+      if (!pm.isVisible) {
+        try {
+          if (await checkNewPrivateMessage()) {
+            pm = const UnreadBadgeInfo(count: null, hasUnread: true);
+          }
+        } catch (_) {}
+      }
     }
 
     var friendRequests = const UnreadBadgeInfo.none();
@@ -2895,7 +3121,8 @@ class ApiService {
 
     return MessageUnreadSummary(
       privateMessages: pm,
-      notices: global.notices,
+      // 论坛没有服务端通知未读标记，由 MessageBadgeService 对比通知 ID。
+      notices: const UnreadBadgeInfo.none(),
       friendRequests: friendRequests,
     );
   }
@@ -3458,6 +3685,51 @@ class ApiService {
     );
   }
 
+  Future<String?> _getMallFormhash(String tid) async {
+    try {
+      final hash = await getFormhash();
+      if (hash.isNotEmpty) {
+        return hash;
+      }
+    } catch (_) {
+      // 通用 formhash 刷新失败时，继续从商城自己的真实页面取值。
+    }
+
+    final candidates = <({String path, Map<String, dynamic> query})>[
+      (
+        path: '/keke_integralmall-view.html',
+        query: <String, dynamic>{'tid': tid, 'mobile': 2},
+      ),
+      (
+        path: '/keke_integralmall-keke_integralmall.html',
+        query: <String, dynamic>{'mobile': 2},
+      ),
+    ];
+
+    for (final candidate in candidates) {
+      try {
+        final response = await _dio.get<String>(
+          candidate.path,
+          queryParameters: candidate.query,
+          options: Options(
+            responseType: ResponseType.plain,
+            followRedirects: true,
+            validateStatus: (status) => status != null && status < 400,
+          ),
+        );
+        final hash = _extractFormhash(response.data ?? '');
+        if (hash != null && hash.isNotEmpty) {
+          _rememberFormhash(hash);
+          return hash;
+        }
+      } catch (_) {
+        // 单个商城页面失败时继续尝试下一个来源。
+      }
+    }
+
+    return null;
+  }
+
   Future<MallExchangeResult> exchangeMallItem({
     required String tid,
     String address = '',
@@ -3470,7 +3742,13 @@ class ApiService {
     }
 
     try {
-      final hash = await getFormhash();
+      final hash = await _getMallFormhash(tid);
+      if (hash == null || hash.isEmpty) {
+        return const MallExchangeResult(
+          success: false,
+          message: '兑换信息获取失败，请刷新商品详情后重试',
+        );
+      }
 
       final popupPath =
           '/plugin.php?id=keke_integralmall:show_win'
@@ -3529,27 +3807,35 @@ class ApiService {
             : message,
         url: url.isEmpty ? null : url,
       );
-    } catch (e) {
-      return MallExchangeResult(
+    } on DioException {
+      return const MallExchangeResult(
         success: false,
-        message: '兑换失败：$e',
+        message: '兑换请求失败，请检查网络后重试',
+      );
+    } on FormatException {
+      return const MallExchangeResult(
+        success: false,
+        message: '兑换响应格式异常，请稍后重试',
+      );
+    } catch (_) {
+      return const MallExchangeResult(
+        success: false,
+        message: '兑换失败，请稍后重试',
       );
     }
   }
 
-  Future<String> getMallCardStatus(String tid) async {
-    if (!isLoggedIn) {
-      throw StateError('请先登录');
-    }
-
-    final hash = await getFormhash();
+  Future<List<MallCardRecord>> _getMallCardRecords({
+    required String tid,
+    required String formhash,
+  }) async {
     final response = await _dio.get<String>(
       '/plugin.php',
       queryParameters: {
         'id': 'keke_integralmall:show_win',
         'tid': tid,
         'ac': 'km',
-        'formhash': hash,
+        'formhash': formhash,
         'mobile': 2,
       },
       options: Options(
@@ -3558,10 +3844,95 @@ class ApiService {
         },
         responseType: ResponseType.plain,
         followRedirects: true,
+        validateStatus: (status) => status != null && status < 400,
       ),
     );
 
-    return _portalParser.parsePopupText(response.data ?? '');
+    return _portalParser.parseMallCardRecords(response.data ?? '');
+  }
+
+  Future<MallCardStatus> getMallCardStatus(String tid) async {
+    if (!isLoggedIn) {
+      throw StateError('请先登录');
+    }
+
+    final hash = await _getMallFormhash(tid);
+    if (hash == null || hash.isEmpty) {
+      throw StateError('卡密信息获取失败，请刷新后重试');
+    }
+
+    try {
+      // 论坛真实“我购买的订单”页会列出所有可查看卡密的订单。
+      // 先拿完整订单列表，再按每个订单自己的 tid 并发读取卡密内容，
+      // 避免商品详情页只能看到当前 tid 的一条历史记录。
+      final buyListResponse = await _dio.get<String>(
+        '/keke_integralmall-show_win.html',
+        queryParameters: {
+          'tid': 0,
+          'ac': 'buylist',
+          'formhash': hash,
+          'type': 1,
+        },
+        options: Options(
+          responseType: ResponseType.plain,
+          followRedirects: true,
+          validateStatus: (status) => status != null && status < 400,
+          headers: {
+            'Referer': '$baseUrl/keke_integralmall-keke_integralmall.html',
+          },
+        ),
+      );
+
+      final html = buyListResponse.data ?? '';
+      final purchases = _portalParser.parseMallCardPurchases(html);
+
+      if (purchases.isEmpty) {
+        // 确实拿到了 buylist 容器时，空列表就是用户没有卡密订单。
+        if (html.contains('id="buylist"') || html.contains("id='buylist'")) {
+          return const MallCardStatus();
+        }
+        throw const FormatException('未识别购买记录');
+      }
+
+      final loaded = await Future.wait(
+        purchases.map((purchase) async {
+          try {
+            final records = await _getMallCardRecords(
+              tid: purchase.tid,
+              formhash: hash,
+            );
+            return purchase.copyWith(records: records);
+          } catch (_) {
+            return purchase.copyWith(loadFailed: true);
+          }
+        }),
+      );
+
+      if (loaded.every((purchase) => purchase.loadFailed)) {
+        throw StateError('卡密记录加载失败');
+      }
+
+      return MallCardStatus(purchases: loaded);
+    } catch (_) {
+      // buylist 页面异常时保留当前商品的单条查询作为最后兜底，
+      // 避免论坛模板临时变化导致已有功能完全不可用。
+      final records = await _getMallCardRecords(
+        tid: tid,
+        formhash: hash,
+      );
+      if (records.isEmpty) {
+        return const MallCardStatus();
+      }
+      return MallCardStatus(
+        purchases: [
+          MallCardPurchase(
+            tid: tid,
+            title: '当前商品',
+            records: records,
+          ),
+        ],
+      );
+    }
   }
 
   Future<List<ForumGroup>> getForumGroups() async {
@@ -3627,6 +3998,50 @@ class ApiService {
     }).toList(growable: false);
   }
 
+  String? _sessionCookieValueFromResponse(
+    Response<dynamic> response,
+    String name,
+  ) {
+    final headers = response.headers.map['set-cookie'];
+    if (headers == null || headers.isEmpty) return null;
+
+    final pattern = RegExp(
+      '(?:^|,\\s*)${RegExp.escape(name)}=([^;,\\r\\n]*)',
+      caseSensitive: false,
+    );
+    String? resolved;
+    for (final header in headers) {
+      final match = pattern.firstMatch(header);
+      final value = match?.group(1)?.trim();
+      if (value != null && value.isNotEmpty) {
+        // 同名 Cookie 若在响应中出现多次，以最后一个非空值为准。
+        resolved = value;
+      }
+    }
+    return resolved;
+  }
+
+  Future<void> _backfillSessionCookieFromResponse(
+    Response<dynamic> response,
+    String name,
+  ) async {
+    final value = _sessionCookieValueFromResponse(response, name);
+    if (value == null || value.isEmpty) return;
+
+    final uri = Uri.parse(baseUrl);
+    final existing = await _cookieJar.loadForRequest(uri);
+    for (final cookie in existing) {
+      if (cookie.name == name && cookie.value.isNotEmpty) {
+        return;
+      }
+    }
+
+    // 真实登录响应里的两个会话 Cookie 都是当前论坛域、Path=/。
+    // 这里只在 CookieManager 漏收时兜底，不覆盖已经正常保存的 Cookie。
+    final cookie = Cookie(name, value)..path = '/';
+    await _cookieJar.saveFromResponse(uri, [cookie]);
+  }
+
   Future<LoginResult> login(
     String username,
     String password, {
@@ -3651,6 +4066,15 @@ class ApiService {
         followRedirects: true,
         validateStatus: (status) => status != null && status < 400,
       ),
+    );
+
+    // 真实论坛在 GET 登录页阶段下发 saltkey。正常情况下 CookieManager
+    // 会自动写入 CookieJar，但历史上存在极低概率的“页面已拿到 Set-Cookie，
+    // Jar 中却没有 saltkey”情况。直接从真实响应头兜底回填，避免后续把
+    // 已经成功的登录误判成会话 Cookie 缺失。
+    await _backfillSessionCookieFromResponse(
+      loginPage,
+      'cQWy_2132_saltkey',
     );
 
     final loginHtml = loginPage.data ?? '';
@@ -3709,7 +4133,22 @@ class ApiService {
       );
     }
 
-    // CookieManager 已经处理了所有 Set-Cookie/重定向 Cookie。
+    // 真实探测确认 auth 由登录 POST 下发，而 saltkey 通常只在前面的
+    // GET 登录页下发。两处都做响应头兜底回填，这样即使 CookieManager
+    // 极低概率漏收某个 Set-Cookie，也不会出现“服务器已登录成功、App 却
+    // 因 Jar 少一个 Cookie 判失败”的假失败。
+    await _backfillSessionCookieFromResponse(
+      response,
+      'cQWy_2132_auth',
+    );
+    await _backfillSessionCookieFromResponse(
+      response,
+      'cQWy_2132_saltkey',
+    );
+
+    // CookieManager 已经处理了所有 Set-Cookie/重定向 Cookie；上面的
+    // 回填只负责补足漏收的真实 Set-Cookie。最终仍统一从 CookieJar
+    // 读取并保持 auth + saltkey 的原登录态约束。
     // 必须从 CookieJar 读取最终值，而不是只看最终响应头。
     final cookies = await _cookieJar.loadForRequest(Uri.parse(baseUrl));
     String? auth;
@@ -3800,7 +4239,15 @@ class ApiService {
       r'''value\s*=\s*['"]([a-fA-F0-9]+)['"][^>]*name\s*=\s*['"]formhash['"]''',
       caseSensitive: false,
     ).firstMatch(body);
-    return byValueFirst?.group(1);
+    if (byValueFirst != null) return byValueFirst.group(1);
+
+    // Comiis 的很多已登录页面不提供 input/JS 变量，而只把 formhash
+    // 放在退出、私信删除等链接的 query 参数里。
+    final byQuery = RegExp(
+      r'''(?:[?&]|&amp;)formhash=([a-fA-F0-9]+)''',
+      caseSensitive: false,
+    ).firstMatch(body);
+    return byQuery?.group(1);
   }
 
   String? _extractMessage(String body) {
