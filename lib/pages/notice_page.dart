@@ -116,14 +116,16 @@ class _NoticePageState extends State<NoticePage>
     required String view,
     required String? type,
   }) {
-    if (!_commentFilter.noticesEnabled || !_commentFilter.hasKeywords) {
+    if (!_commentFilter.noticesEnabled || !_commentFilter.hasRules) {
       return false;
     }
     if (view != 'mypost' || type != 'post') return false;
-    return _commentFilter.matches(
+    final preview = _replyPreviews[item.pid]?.trim() ?? '';
+    return _commentFilter.matchesKeyword(
       '${item.content}\n${item.actionText}\n${item.targetTitle ?? ''}\n'
-      '${_replyPreviews[item.pid] ?? ''}',
-    );
+      '$preview',
+    ) ||
+        (preview.isNotEmpty && _commentFilter.matchesShortReply(preview));
   }
 
   List<NoticeItem> get _visibleItems => _items
@@ -509,7 +511,7 @@ class _NoticePageState extends State<NoticePage>
               icon: Icons.notifications_none_rounded,
               title: '暂无通知',
               message: _items.isNotEmpty
-                  ? '当前页提醒均命中过滤关键词。'
+                  ? '当前页提醒均已被过滤。'
                   : '这个分类目前没有提醒内容。',
             ),
             if (_hasMore)

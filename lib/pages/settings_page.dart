@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/api_service.dart';
 import '../services/comment_filter_service.dart';
@@ -98,6 +99,46 @@ class _SettingsPageState extends State<SettingsPage> {
       await _commentFilter.setKeywordsFromText(controller.text);
     }
     controller.dispose();
+  }
+
+  Future<void> _editShortReplyMaxLength() async {
+    final controller = TextEditingController(
+      text: '${_commentFilter.shortReplyMaxLength}',
+    );
+    final value = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('设置短回复字数'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: const InputDecoration(
+            labelText: '最大过滤字数',
+            helperText: '可设置 1–20，空格不计入字数',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final parsed = int.tryParse(controller.text);
+              if (parsed == null || parsed < 1 || parsed > 20) return;
+              Navigator.pop(context, parsed);
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value != null) {
+      await _commentFilter.setShortReplyMaxLength(value);
+    }
   }
 
   Future<void> _login() async {
@@ -298,9 +339,36 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     const Divider(height: 1),
                     SwitchListTile(
+                      secondary: const Icon(Icons.short_text_rounded),
+                      title: const Text('短回复过滤'),
+                      subtitle: Text(
+                        '隐藏去除空格后不超过 '
+                        '${_commentFilter.shortReplyMaxLength} 个字的回复',
+                      ),
+                      value: _commentFilter.shortReplyEnabled,
+                      onChanged: _commentFilter.setShortReplyEnabled,
+                    ),
+                    if (_commentFilter.shortReplyEnabled) ...[
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const SizedBox(width: 24),
+                        title: const Text('最大过滤字数'),
+                        subtitle: const Text('点击修改，可设置 1–20'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('≤ ${_commentFilter.shortReplyMaxLength}'),
+                            const Icon(Icons.chevron_right_rounded),
+                          ],
+                        ),
+                        onTap: _editShortReplyMaxLength,
+                      ),
+                    ],
+                    const Divider(height: 1),
+                    SwitchListTile(
                       secondary: const Icon(Icons.forum_outlined),
                       title: const Text('评论区过滤'),
-                      subtitle: const Text('隐藏正文中命中关键词的评论'),
+                      subtitle: const Text('应用关键词和短回复过滤规则'),
                       value: _commentFilter.commentsEnabled,
                       onChanged: _commentFilter.setCommentsEnabled,
                     ),
@@ -308,7 +376,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     SwitchListTile(
                       secondary: const Icon(Icons.notifications_off_outlined),
                       title: const Text('回复通知过滤'),
-                      subtitle: const Text('隐藏“论坛通知 → 我的帖子”中的命中回复'),
+                      subtitle: const Text('将过滤规则同步应用到回复提醒'),
                       value: _commentFilter.noticesEnabled,
                       onChanged: _commentFilter.setNoticesEnabled,
                     ),
