@@ -84,6 +84,8 @@ class Post {
   final List<PostContent> richContent;
   final String? repquotePid;
   final String? replyToName;
+  final String? replyToTime;
+  final String? replyQuoteText;
   final String? hiddenHint;
   final int page;
 
@@ -101,6 +103,8 @@ class Post {
     this.richContent = const [],
     this.repquotePid,
     this.replyToName,
+    this.replyToTime,
+    this.replyQuoteText,
     this.hiddenHint,
     this.page = 1,
   });
@@ -209,6 +213,16 @@ class PostContent {
   final List<List<String>> tableRows;
   final int tableHeaderRows;
   final List<PostContent> children;
+  final bool isBold;
+  final bool isItalic;
+  final bool isUnderline;
+  final bool isStrikethrough;
+  final String? color;
+  final String? backgroundColor;
+  final String? fontFamily;
+  final double? fontSizeScale;
+  final String? alignment;
+  final String? listType;
 
   const PostContent._({
     required this.type,
@@ -217,13 +231,49 @@ class PostContent {
     this.tableRows = const [],
     this.tableHeaderRows = 0,
     this.children = const [],
+    this.isBold = false,
+    this.isItalic = false,
+    this.isUnderline = false,
+    this.isStrikethrough = false,
+    this.color,
+    this.backgroundColor,
+    this.fontFamily,
+    this.fontSizeScale,
+    this.alignment,
+    this.listType,
   });
 
   factory PostContent.text(String t) =>
       PostContent._(type: PostContentType.text, text: t);
 
   factory PostContent.bold(String t) =>
-      PostContent._(type: PostContentType.bold, text: t);
+      PostContent._(type: PostContentType.bold, text: t, isBold: true);
+
+  factory PostContent.inline(
+    String t, {
+    String? url,
+    bool bold = false,
+    bool italic = false,
+    bool underline = false,
+    bool strikethrough = false,
+    String? color,
+    String? backgroundColor,
+    String? fontFamily,
+    double? fontSizeScale,
+  }) =>
+      PostContent._(
+        type: url == null ? PostContentType.text : PostContentType.link,
+        text: t,
+        url: url,
+        isBold: bold,
+        isItalic: italic,
+        isUnderline: underline,
+        isStrikethrough: strikethrough,
+        color: color,
+        backgroundColor: backgroundColor,
+        fontFamily: fontFamily,
+        fontSizeScale: fontSizeScale,
+      );
 
   factory PostContent.link(String t, String url) =>
       PostContent._(type: PostContentType.link, text: t, url: url);
@@ -274,6 +324,31 @@ class PostContent {
         tableRows: rows,
         tableHeaderRows: headerRows,
       );
+
+  factory PostContent.divider() =>
+      const PostContent._(type: PostContentType.divider, text: '');
+
+  factory PostContent.aligned(
+    List<PostContent> children, {
+    required String alignment,
+  }) =>
+      PostContent._(
+        type: PostContentType.aligned,
+        text: '',
+        children: List<PostContent>.unmodifiable(children),
+        alignment: alignment,
+      );
+
+  factory PostContent.list(
+    List<PostContent> children, {
+    String type = '',
+  }) =>
+      PostContent._(
+        type: PostContentType.list,
+        text: '',
+        children: List<PostContent>.unmodifiable(children),
+        listType: type,
+      );
 }
 
 enum PostContentType {
@@ -291,6 +366,9 @@ enum PostContentType {
   free,
   attachment,
   table,
+  divider,
+  aligned,
+  list,
 }
 
 class UserProfile {
@@ -334,6 +412,7 @@ class SearchResult {
   final String? excerpt;
   final String? replyCount;
   final String? viewCount;
+  final String? likeCount;
   final List<String> thumbnails;
   final bool hasHiddenContent;
 
@@ -348,6 +427,7 @@ class SearchResult {
     this.excerpt,
     this.replyCount,
     this.viewCount,
+    this.likeCount,
     this.thumbnails = const [],
     this.hasHiddenContent = false,
   });
@@ -426,6 +506,7 @@ class FavoriteItem {
   final String type;
   final String href;
   final String? tid;
+  final Thread? thread;
 
   const FavoriteItem({
     required this.favid,
@@ -433,6 +514,7 @@ class FavoriteItem {
     required this.type,
     required this.href,
     this.tid,
+    this.thread,
   });
 
   bool get isThread => tid != null && tid!.isNotEmpty;
@@ -504,6 +586,65 @@ class MallExchangeResult {
     required this.message,
     this.url,
   });
+}
+
+class MallCardRecord {
+  final String card;
+  final String exchangedAt;
+  final String? status;
+
+  const MallCardRecord({
+    required this.card,
+    this.exchangedAt = '',
+    this.status,
+  });
+}
+
+class MallCardPurchase {
+  final String tid;
+  final String title;
+  final String orderedAt;
+  final String? status;
+  final List<MallCardRecord> records;
+  final bool loadFailed;
+
+  const MallCardPurchase({
+    required this.tid,
+    required this.title,
+    this.orderedAt = '',
+    this.status,
+    this.records = const [],
+    this.loadFailed = false,
+  });
+
+  MallCardPurchase copyWith({
+    List<MallCardRecord>? records,
+    bool? loadFailed,
+  }) {
+    return MallCardPurchase(
+      tid: tid,
+      title: title,
+      orderedAt: orderedAt,
+      status: status,
+      records: records ?? this.records,
+      loadFailed: loadFailed ?? this.loadFailed,
+    );
+  }
+}
+
+class MallCardStatus {
+  final List<MallCardPurchase> purchases;
+
+  const MallCardStatus({
+    this.purchases = const [],
+  });
+
+  int get recordCount => purchases.fold<int>(
+        0,
+        (total, purchase) => total + purchase.records.length,
+      );
+
+  bool get isEmpty => recordCount == 0 && purchases.isEmpty;
 }
 
 class ForumBoard {
@@ -1026,6 +1167,7 @@ class PmMessage {
   final String time;
   final String date;
   final bool isMine;
+  final List<String> imageUrls;
 
   const PmMessage({
     this.pmid,
@@ -1034,6 +1176,7 @@ class PmMessage {
     this.time = '',
     this.date = '',
     this.isMine = false,
+    this.imageUrls = const [],
   });
 }
 
@@ -1043,6 +1186,7 @@ class PmConversationData {
   final String formhash;
   final String peerName;
   final String? peerAvatarUrl;
+  final bool? peerOnline;
   final int endTimestamp;
   final List<PmMessage> messages;
 
@@ -1052,6 +1196,7 @@ class PmConversationData {
     required this.formhash,
     required this.peerName,
     this.peerAvatarUrl,
+    this.peerOnline,
     required this.endTimestamp,
     this.messages = const [],
   });
@@ -1063,6 +1208,7 @@ class PmConversationSummary {
   final String? avatarUrl;
   final String? lastMessage;
   final String? lastTime;
+  final bool hasUnread;
 
   const PmConversationSummary({
     required this.touid,
@@ -1070,6 +1216,7 @@ class PmConversationSummary {
     this.avatarUrl,
     this.lastMessage,
     this.lastTime,
+    this.hasUnread = false,
   });
 }
 

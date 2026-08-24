@@ -91,83 +91,90 @@ class _CommunityPageState extends State<CommunityPage> {
               )
             else
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
                 sliver: SliverList.builder(
                   itemCount: _groups.length,
                   itemBuilder: (context, index) {
                     final group = _groups[index];
 
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: 18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 4,
-                                  height: 18,
-                                  decoration: BoxDecoration(
-                                    color: colors.primary,
-                                    borderRadius: BorderRadius.circular(99),
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Material(
+                        color: colors.surfaceContainerLow,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                          side: BorderSide(color: colors.outlineVariant),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(13, 10, 10, 9),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 3,
+                                    height: 15,
+                                    decoration: BoxDecoration(
+                                      color: colors.primary,
+                                      borderRadius: BorderRadius.circular(99),
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  group.name,
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '${group.boards.length}',
-                                  style: theme.textTheme.labelMedium?.copyWith(
-                                    color: colors.outline,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          LayoutBuilder(
-                            builder: (context, constraints) {
-                              final columns =
-                                  constraints.maxWidth >= 700 ? 3 : 2;
-                              final ratio =
-                                  constraints.maxWidth >= 700 ? 2.3 : 1.75;
-
-                              return GridView.builder(
-                                padding: EdgeInsets.zero,
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                gridDelegate:
-                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: columns,
-                                  mainAxisSpacing: 8,
-                                  crossAxisSpacing: 8,
-                                  childAspectRatio: ratio,
-                                ),
-                                itemCount: group.boards.length,
-                                itemBuilder: (context, boardIndex) {
-                                  final board = group.boards[boardIndex];
-                                  return _BoardCard(
-                                    board: board,
-                                    onTap: () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => ForumThreadsPage(
-                                          board: board,
-                                        ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      group.name,
+                                      style: theme.textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w800,
                                       ),
                                     ),
-                                  );
-                                },
-                              );
-                            },
-                          ),
-                        ],
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 7,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: colors.surfaceContainerHighest,
+                                      borderRadius: BorderRadius.circular(99),
+                                    ),
+                                    child: Text(
+                                      '${group.boards.length}',
+                                      style: theme.textTheme.labelSmall?.copyWith(
+                                        color: colors.onSurfaceVariant,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Divider(height: 1, color: colors.outlineVariant),
+                            for (var boardIndex = 0;
+                                boardIndex < group.boards.length;
+                                boardIndex++) ...[
+                              if (boardIndex > 0)
+                                Divider(
+                                  height: 1,
+                                  indent: 56,
+                                  color: colors.outlineVariant.withValues(
+                                    alpha: 0.72,
+                                  ),
+                                ),
+                              _BoardTile(
+                                board: group.boards[boardIndex],
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ForumThreadsPage(
+                                      board: group.boards[boardIndex],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -180,11 +187,11 @@ class _CommunityPageState extends State<CommunityPage> {
   }
 }
 
-class _BoardCard extends StatelessWidget {
+class _BoardTile extends StatelessWidget {
   final ForumBoard board;
   final VoidCallback onTap;
 
-  const _BoardCard({
+  const _BoardTile({
     required this.board,
     required this.onTap,
   });
@@ -194,31 +201,25 @@ class _BoardCard extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
 
-    return Material(
-      color: colors.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: colors.outlineVariant),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(11),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                padding: const EdgeInsets.all(5),
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 9, 8),
+        child: Row(
+          children: [
+            Container(
+                width: 34,
+                height: 34,
+                padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
                   color: colors.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(13),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: board.iconUrl == null
                     ? Icon(
                         Icons.forum_outlined,
                         color: colors.primary,
+                        size: 19,
                       )
                     : CachedNetworkImage(
                         imageUrl: board.iconUrl!,
@@ -226,27 +227,27 @@ class _BoardCard extends StatelessWidget {
                         errorWidget: (_, __, ___) => Icon(
                           Icons.forum_outlined,
                           color: colors.primary,
+                          size: 19,
                         ),
                       ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
+            ),
+            const SizedBox(width: 11),
+            Expanded(
                 child: Text(
                   board.name,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleSmall?.copyWith(
+                  style: theme.textTheme.bodyLarge?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 19,
-                color: colors.outline,
-              ),
-            ],
-          ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: colors.outline,
+            ),
+          ],
         ),
       ),
     );

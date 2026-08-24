@@ -56,8 +56,32 @@ class SmileyCatalog {
     ...comcom,
   ]);
 
+  /// 论坛可能从 bbs.binmt.cc、cdn-bbs.mt2.cn 或其他 CDN 返回同一套表情。
+  /// 只按固定资源路径识别，避免域名切换后被当成正文大图。
+  static bool isForumSmileyUrl(String? value) {
+    final url = (value ?? '').trim().toLowerCase();
+    if (url.isEmpty) return false;
+    return url.contains('/static/image/smiley/') ||
+        url.contains('/static/image/smilies/') ||
+        RegExp(r'/smil(?:ey|ie)s?/').hasMatch(url);
+  }
+
+  static String? _identity(String value) {
+    final normalized = value.trim().toLowerCase();
+    final match = RegExp(
+      r'/(?:static/image/)?smil(?:ey|ie)s?/(qq/qq\d+\.gif|comcom/\d+\.gif)',
+    ).firstMatch(normalized);
+    return match?.group(1);
+  }
+
   static String? markerForUrl(String url) {
-    final index = allUrls.indexOf(url);
+    var index = allUrls.indexOf(url);
+    if (index < 0) {
+      final identity = _identity(url);
+      if (identity != null) {
+        index = allUrls.indexWhere((item) => _identity(item) == identity);
+      }
+    }
     if (index < 0) {
       return null;
     }

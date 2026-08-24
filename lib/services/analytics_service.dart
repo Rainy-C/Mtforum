@@ -51,7 +51,7 @@ class AnalyticsService {
         'Accept': 'application/json',
         'Content-Type': 'application/json; charset=utf-8',
       },
-      validateStatus: (status) => status != null && status >= 200 && status < 500,
+      validateStatus: (status) => status != null && status >= 200 && status < 600,
     ),
   );
 
@@ -60,22 +60,31 @@ class AnalyticsService {
   AppStats? _latestStats;
 
   AppStats? get latestStats => _latestStats;
+  bool get isConfigured => _launchEndpoints.isNotEmpty && _statsEndpoints.isNotEmpty;
 
-  String get _launchEndpoint {
+  List<String> get _launchEndpoints {
     if (_launchEndpointOverride.isNotEmpty) {
-      return _launchEndpointOverride;
+      return <String>[_launchEndpointOverride];
     }
-    return _replaceFeedbackEndpoint('app/launch');
+    return _dedupeEndpoints(
+      FeedbackService.endpointCandidates
+          .map((endpoint) => _replaceFeedbackEndpoint(endpoint, 'app/launch')),
+    );
   }
 
-  String get _statsEndpoint {
+  List<String> get _statsEndpoints {
     if (_statsEndpointOverride.isNotEmpty) {
-      return _statsEndpointOverride;
+      return <String>[_statsEndpointOverride];
     }
     if (_launchEndpointOverride.isNotEmpty) {
-      return _replaceLastPathSegment(_launchEndpointOverride, 'stats');
+      return <String>[
+        _replaceLastPathSegment(_launchEndpointOverride, 'stats'),
+      ];
     }
-    return _replaceFeedbackEndpoint('app/stats');
+    return _dedupeEndpoints(
+      FeedbackService.endpointCandidates
+          .map((endpoint) => _replaceFeedbackEndpoint(endpoint, 'app/stats')),
+    );
   }
 
   /// 每个 App 进程只会上报一次，同一进程重复调用会复用同一个 Future
@@ -107,27 +116,35 @@ class AnalyticsService {
         headers['X-MTForum-Token'] = FeedbackService.appToken;
       }
 
-      final response = await _dio.post<String>(
-        _launchEndpoint,
-        data: jsonEncode({
-          'installId': installId,
-          'launchId': _launchId,
-          'appVersion': versionName,
-          'versionCode': versionCode,
-          'platform': Platform.operatingSystem,
-        }),
-        options: Options(headers: headers),
-      );
+      for (final endpoint in _launchEndpoints) {
+        try {
+          final response = await _dio.post<String>(
+            endpoint,
+            data: jsonEncode({
+              'installId': installId,
+              'launchId': _launchId,
+              'appVersion': versionName,
+              'versionCode': versionCode,
+              'platform': Platform.operatingSystem,
+            }),
+            options: Options(headers: headers),
+          );
 
-      if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
-        return null;
-      }
+          if ((response.statusCode ?? 0) < 200 ||
+              (response.statusCode ?? 0) >= 300) {
+            continue;
+          }
 
-      final stats = _parseStats(response.data);
-      if (stats != null) {
-        _latestStats = stats;
+          final stats = _parseStats(response.data);
+          if (stats != null) {
+            _latestStats = stats;
+          }
+          return stats;
+        } catch (_) {
+          // 当前统计服务不可用时自动尝试下一个候选地址。
+        }
       }
-      return stats;
+      return null;
     } catch (_) {
       // 匿名统计永远不能影响正常启动
       return null;
@@ -135,33 +152,44 @@ class AnalyticsService {
   }
 
   Future<AppStats?> fetchStats() async {
-    try {
-      final response = await _dio.get<String>(_statsEndpoint);
-      if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
-        return _latestStats;
-      }
+    for (final endpoint in _statsEndpoints) {
+      try {
+        final response = await _dio.get<String>(endpoint);
+        if ((response.statusCode ?? 0) < 200 ||
+            (response.statusCode ?? 0) >= 300) {
+          continue;
+        }
 
-      final stats = _parseStats(response.data);
-      if (stats != null) {
-        _latestStats = stats;
+        final stats = _parseStats(response.data);
+        if (stats != null) {
+          _latestStats = stats;
+          return stats;
+        }
+      } catch (_) {
+        // 当前统计查询地址失败时继续尝试候选地址。
       }
-      return stats ?? _latestStats;
-    } catch (_) {
-      return _latestStats;
     }
+    return _latestStats;
   }
 
   AppStats? _parseStats(String? raw) {
+    return parseStatsForTest(raw);
+  }
+
+  static AppStats? parseStatsForTest(String? raw) {
     final text = raw?.trim() ?? '';
     if (text.isEmpty) return null;
 
     try {
       final decoded = jsonDecode(text);
       if (decoded is! Map) return null;
-      if (decoded['ok'] == false) return null;
+      if (decoded['ok'] == false || decoded['status'] == false) return null;
+      final payload = decoded['data'] is Map
+          ? decoded['data'] as Map
+          : decoded;
 
       int readInt(String key) {
-        final value = decoded[key];
+        final value = payload[key];
         if (value is int) return value;
         if (value is num) return value.toInt();
         return int.tryParse('$value') ?? 0;
@@ -178,9 +206,9 @@ class AnalyticsService {
     }
   }
 
-  String _replaceFeedbackEndpoint(String suffix) {
+  String _replaceFeedbackEndpoint(String endpoint, String suffix) {
     try {
-      final uri = Uri.parse(FeedbackService.endpoint);
+      final uri = Uri.parse(endpoint);
       final segments = List<String>.from(uri.pathSegments);
       if (segments.isNotEmpty && segments.last == 'feedback') {
         segments.removeLast();
@@ -190,8 +218,20 @@ class AnalyticsService {
           .replace(pathSegments: segments, query: null, fragment: null)
           .toString();
     } catch (_) {
-      return 'http://114.66.62.198:8080/api/v1/$suffix';
+      return endpoint;
     }
+  }
+
+  List<String> _dedupeEndpoints(Iterable<String> values) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final value in values) {
+      final normalized = value.trim();
+      if (normalized.isNotEmpty && seen.add(normalized)) {
+        out.add(normalized);
+      }
+    }
+    return out;
   }
 
   String _replaceLastPathSegment(String endpoint, String replacement) {

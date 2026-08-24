@@ -6,6 +6,7 @@ import '../data/smiley_catalog.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
 import '../widgets/app_state_view.dart';
+import '../widgets/bbcode_preview.dart';
 
 class ThreadEditorPage extends StatefulWidget {
   final bool editing;
@@ -51,6 +52,7 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
   final _imagePicker = ImagePicker();
 
   PostEditorForm? _form;
+  String _editReplyQuotePrefix = '';
   bool _loading = true;
   bool _submitting = false;
   bool _allowNoticeAuthor = true;
@@ -82,6 +84,44 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
     super.dispose();
   }
 
+  (String, String) _splitGeneratedReplyQuote(String raw) {
+    final leading = RegExp(r'^\s*').firstMatch(raw)?.end ?? 0;
+    if (!raw.toLowerCase().startsWith('[quote]', leading)) {
+      return ('', raw);
+    }
+
+    final remaining = raw.substring(leading);
+    final generatedHeader = RegExp(
+      r'^\[quote\]\s*\[color=#999999\][^\r\n]*发表于[^\r\n]*\[/color\]\s*(?:\r?\n)?\s*\[color=#999999\]',
+      caseSensitive: false,
+    );
+    if (!generatedHeader.hasMatch(remaining)) {
+      return ('', raw);
+    }
+
+    var depth = 0;
+    int? quoteEnd;
+    final tokenPattern = RegExp(r'\[/?quote\]', caseSensitive: false);
+    for (final match in tokenPattern.allMatches(remaining)) {
+      final token = match.group(0)!.toLowerCase();
+      if (token == '[quote]') {
+        depth++;
+      } else {
+        depth--;
+        if (depth == 0) {
+          quoteEnd = leading + match.end;
+          break;
+        }
+      }
+    }
+    if (quoteEnd == null) return ('', raw);
+
+    final separator = RegExp(r'^[ \t]*(?:\r?\n)+')
+        .firstMatch(raw.substring(quoteEnd));
+    final prefixEnd = quoteEnd + (separator?.end ?? 0);
+    return (raw.substring(0, prefixEnd), raw.substring(prefixEnd));
+  }
+
   Future<void> _loadForm() async {
     setState(() {
       _loading = true;
@@ -102,7 +142,15 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
 
       _form = form;
       _subjectController.text = form.subject;
-      _messageController.text = SmileyCatalog.fromForumBbCode(form.message);
+
+      var editableMessage = form.message;
+      _editReplyQuotePrefix = '';
+      if (widget.editing) {
+        final parts = _splitGeneratedReplyQuote(form.message);
+        _editReplyQuotePrefix = parts.$1;
+        editableMessage = parts.$2;
+      }
+      _messageController.text = SmileyCatalog.fromForumBbCode(editableMessage);
       _messageController.selection = TextSelection.collapsed(
         offset: _messageController.text.length,
       );
@@ -450,13 +498,17 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
     }
 
     final subject = _subjectController.text.trim();
-    final message = SmileyCatalog.toForumBbCode(_messageController.text).trim();
+    final editableMessage =
+        SmileyCatalog.toForumBbCode(_messageController.text).trim();
+    final message = widget.editing && _editReplyQuotePrefix.isNotEmpty
+        ? '$_editReplyQuotePrefix$editableMessage'
+        : editableMessage;
 
     if (!widget.editing && subject.isEmpty) {
       _showMessage('请输入帖子标题');
       return;
     }
-    if (message.isEmpty) {
+    if (editableMessage.isEmpty) {
       _showMessage('请输入帖子正文');
       return;
     }
@@ -492,6 +544,69 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
     }
   }
 
+  Future<void> _showPreview() async {
+    final editableMessage =
+        SmileyCatalog.toForumBbCode(_messageController.text).trim();
+    if (editableMessage.isEmpty) {
+      _showMessage('请输入帖子正文后再预览');
+      return;
+    }
+    final message = widget.editing && _editReplyQuotePrefix.isNotEmpty
+        ? '$_editReplyQuotePrefix$editableMessage'
+        : editableMessage;
+    final attachmentUrls = <String, String>{
+      for (final attachment in _uploadedAttachments)
+        if (attachment.aid.isNotEmpty && attachment.url.isNotEmpty)
+          attachment.aid: attachment.url,
+    };
+
+    _messageFocusNode.unfocus();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.92,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.visibility_outlined),
+                  const SizedBox(width: 9),
+                  const Expanded(
+                    child: Text(
+                      '发帖预览',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(sheetContext),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: BbCodePreview(
+                subject: _subjectController.text,
+                bbcode: message,
+                attachmentUrls: attachmentUrls,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -509,6 +624,11 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
       appBar: AppBar(
         title: Text(title),
         actions: [
+          IconButton(
+            tooltip: '预览帖子',
+            onPressed: _loading || _uploadingAttachment ? null : _showPreview,
+            icon: const Icon(Icons.visibility_outlined),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 10),
             child: FilledButton(

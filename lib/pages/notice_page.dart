@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../services/comment_filter_service.dart';
+import '../services/message_badge_service.dart';
 import '../widgets/app_state_view.dart';
 import 'account/user_group_page.dart';
 import '../routes/thread_routes.dart';
@@ -22,6 +26,7 @@ class _NoticePageState extends State<NoticePage>
     with SingleTickerProviderStateMixin {
   final _api = ApiService.instance;
   final _scrollController = ScrollController();
+  final _commentFilter = CommentFilterService.instance;
   late final TabController _tabController;
 
   static const _sections = <_NoticeSection>[
@@ -66,6 +71,7 @@ class _NoticePageState extends State<NoticePage>
   int _sectionIndex = 0;
   String? _type = _sections.first.subtypes.first.type;
   List<NoticeItem> _items = const [];
+  final Map<String, String> _replyPreviews = {};
   bool _loading = true;
   bool _loadingMore = false;
   bool _hasMore = false;
@@ -81,7 +87,8 @@ class _NoticePageState extends State<NoticePage>
     _tabController = TabController(length: _sections.length, vsync: this);
     _tabController.addListener(_handleTabChange);
     _scrollController.addListener(_handleScroll);
-    _reload();
+    _commentFilter.addListener(_handleFilterChanged);
+    _initialize();
   }
 
   @override
@@ -91,8 +98,43 @@ class _NoticePageState extends State<NoticePage>
     _tabController.dispose();
     _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
+    _commentFilter.removeListener(_handleFilterChanged);
     super.dispose();
   }
+
+  Future<void> _initialize() async {
+    await _commentFilter.load();
+    if (mounted) await _reload();
+  }
+
+  void _handleFilterChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool _shouldHideNotice(
+    NoticeItem item, {
+    required String view,
+    required String? type,
+  }) {
+    if (!_commentFilter.noticesEnabled || !_commentFilter.hasKeywords) {
+      return false;
+    }
+    if (view != 'mypost' || type != 'post') return false;
+    return _commentFilter.matches(
+      '${item.content}\n${item.actionText}\n${item.targetTitle ?? ''}\n'
+      '${_replyPreviews[item.pid] ?? ''}',
+    );
+  }
+
+  List<NoticeItem> get _visibleItems => _items
+      .where(
+        (item) => !_shouldHideNotice(
+          item,
+          view: _section.view,
+          type: _type,
+        ),
+      )
+      .toList(growable: false);
 
   void _handleTabChange() {
     if (_tabController.indexIsChanging ||
@@ -129,6 +171,7 @@ class _NoticePageState extends State<NoticePage>
       if (!mounted) return;
       setState(() {
         _items = const [];
+        _replyPreviews.clear();
         _page = 1;
         _hasMore = false;
         _loading = false;
@@ -141,6 +184,7 @@ class _NoticePageState extends State<NoticePage>
     if (mounted) {
       setState(() {
         _items = const [];
+        _replyPreviews.clear();
         _page = 1;
         _hasMore = false;
         _loading = true;
@@ -166,6 +210,10 @@ class _NoticePageState extends State<NoticePage>
         _page = 1;
         _hasMore = data.hasMore;
       });
+      unawaited(MessageBadgeService.instance.markNoticesSeen(data.items));
+      if (requestedView == 'mypost' && requestedType == 'post') {
+        unawaited(_loadReplyPreviews(data.items, generation));
+      }
     } catch (e) {
       if (!mounted || generation != _generation) return;
       setState(() => _error = '通知加载失败：$e');
@@ -209,6 +257,10 @@ class _NoticePageState extends State<NoticePage>
         _page = nextPage;
         _hasMore = data.hasMore && data.items.isNotEmpty;
       });
+      unawaited(MessageBadgeService.instance.markNoticesSeen(data.items));
+      if (requestedView == 'mypost' && requestedType == 'post') {
+        unawaited(_loadReplyPreviews(data.items, generation));
+      }
     } catch (e) {
       if (mounted && generation == _generation) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -218,6 +270,51 @@ class _NoticePageState extends State<NoticePage>
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loadingMore = false);
+      }
+    }
+  }
+
+  Future<void> _loadReplyPreviews(
+    Iterable<NoticeItem> items,
+    int generation,
+  ) async {
+    final targets = items
+        .where(
+          (item) =>
+              item.pid?.isNotEmpty == true &&
+              item.tid?.isNotEmpty == true &&
+              item.targetUrl?.isNotEmpty == true &&
+              !_replyPreviews.containsKey(item.pid),
+        )
+        .toList(growable: false);
+    final failed = <NoticeItem>[];
+    // 限制并发，覆盖整页通知而不是只给前 10 条加载预览。
+    for (var offset = 0; offset < targets.length; offset += 4) {
+      final end = offset + 4 < targets.length ? offset + 4 : targets.length;
+      await Future.wait(
+        targets.sublist(offset, end).map((item) async {
+          try {
+            final preview = await _api.getNoticeReplyPreview(item);
+            if (!mounted || generation != _generation || preview == null) {
+              return;
+            }
+            setState(() => _replyPreviews[item.pid!] = preview);
+          } catch (_) {
+            failed.add(item);
+          }
+        }),
+      );
+      if (!mounted || generation != _generation) return;
+    }
+    // 网络瞬时失败的通知再串行补一次，避免一批请求失败后整组缺预览。
+    for (final item in failed) {
+      if (!mounted || generation != _generation) return;
+      try {
+        final preview = await _api.getNoticeReplyPreview(item);
+        if (!mounted || generation != _generation || preview == null) continue;
+        setState(() => _replyPreviews[item.pid!] = preview);
+      } catch (_) {
+        // 单条预览最终失败不影响通知列表和跳转。
       }
     }
   }
@@ -301,7 +398,11 @@ class _NoticePageState extends State<NoticePage>
     if (item.hasThreadTarget) {
       Navigator.push(
         context,
-        buildThreadRoute(item.tid!),
+        buildThreadRoute(
+          item.tid!,
+          targetPid: item.pid,
+          targetUrl: item.targetUrl,
+        ),
       );
       return;
     }
@@ -384,30 +485,41 @@ class _NoticePageState extends State<NoticePage>
   }
 
   Widget _buildBody() {
-    if (_loading && _items.isEmpty) {
+    final items = _visibleItems;
+    if (_loading && items.isEmpty) {
       return const AppStateView.loading();
     }
 
-    if (_error != null && _items.isEmpty) {
+    if (_error != null && items.isEmpty) {
       return AppStateView.error(
         message: _error!,
         onRetry: _reload,
       );
     }
 
-    if (_items.isEmpty) {
+    if (items.isEmpty) {
       return RefreshIndicator(
         onRefresh: _reload,
         child: ListView(
           controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 150),
+          children: [
+            const SizedBox(height: 150),
             AppStateView.empty(
               icon: Icons.notifications_none_rounded,
               title: '暂无通知',
-              message: '这个分类目前没有提醒内容。',
+              message: _items.isNotEmpty
+                  ? '当前页提醒均命中过滤关键词。'
+                  : '这个分类目前没有提醒内容。',
             ),
+            if (_hasMore)
+              Center(
+                child: FilledButton.tonalIcon(
+                  onPressed: _loadingMore ? null : _loadMore,
+                  icon: const Icon(Icons.expand_more_rounded),
+                  label: const Text('继续加载'),
+                ),
+              ),
           ],
         ),
       );
@@ -419,19 +531,20 @@ class _NoticePageState extends State<NoticePage>
         controller: _scrollController,
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
-        itemCount: _items.length + (_loadingMore ? 1 : 0),
+        itemCount: items.length + (_loadingMore ? 1 : 0),
         separatorBuilder: (_, __) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
-          if (index >= _items.length) {
+          if (index >= items.length) {
             return const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
               child: Center(child: CircularProgressIndicator()),
             );
           }
-          final item = _items[index];
+          final item = items[index];
           return _NoticeCard(
             item: item,
             sectionLabel: _section.label,
+            replyPreview: _replyPreviews[item.pid],
             onOpen: () => _openTarget(item),
             onIgnore: item.ignoreUrl == null ? null : () => _ignore(item),
           );
@@ -446,11 +559,13 @@ class _NoticeCard extends StatelessWidget {
   final String sectionLabel;
   final VoidCallback onOpen;
   final VoidCallback? onIgnore;
+  final String? replyPreview;
 
   const _NoticeCard({
     required this.item,
     required this.sectionLabel,
     required this.onOpen,
+    this.replyPreview,
     this.onIgnore,
   });
 
@@ -530,6 +645,29 @@ class _NoticeCard extends StatelessWidget {
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: colors.onSurfaceVariant,
                           height: 1.38,
+                        ),
+                      ),
+                    ],
+                    if (replyPreview?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 7),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          replyPreview!.trim(),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                            height: 1.4,
+                          ),
                         ),
                       ),
                     ],

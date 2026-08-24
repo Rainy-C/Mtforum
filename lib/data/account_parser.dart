@@ -1,3 +1,4 @@
+import 'package:html/dom.dart' as html_dom;
 import 'package:html/parser.dart' as html_parser;
 
 import '../models/models.dart';
@@ -29,20 +30,19 @@ class AccountParser {
       final authorUid =
           RegExp(r'uid=(\d+)').firstMatch(authorHref)?.group(1);
 
-      final stats = el.querySelectorAll(
-        '.comiis_xznalist_bottom .comiis_tm',
+      final stats = _extractThreadStats(el, tid);
+      final likeCount = stats.$1;
+      final replyCount = stats.$2;
+      final viewCount = stats.$3;
+
+      final forumEl = el.querySelector('a[href*="forum-"]');
+      final forumHref = forumEl?.attributes['href'] ?? '';
+      final forumId = RegExp(r'forum-(\d+)').firstMatch(forumHref)?.group(1);
+      final avatarEl = el.querySelector('img.top_tximg, .top_tximg img');
+      final avatarUrl = _absoluteUrl(
+        avatarEl?.attributes['src'] ?? avatarEl?.attributes['data-src'],
+        baseUrl,
       );
-
-      String? likeCount = el
-          .querySelector('.num-all_$tid')
-          ?.text
-          .trim();
-      likeCount ??= stats.isNotEmpty ? _clean(stats[0].text) : null;
-
-      final replyCount =
-          stats.length > 1 ? _clean(stats[1].text) : null;
-      final viewCount =
-          stats.length > 2 ? _clean(stats[2].text) : null;
 
       final thumbnails = <String>[];
       for (final image in el.querySelectorAll(
@@ -79,6 +79,11 @@ class AccountParser {
           title: _nullable(titleLink?.text) ?? '未知标题',
           authorUid: authorUid,
           authorName: _nullable(authorEl?.text),
+          avatarUrl: avatarUrl,
+          forumName: _nullable(
+            (forumEl?.text ?? '').replaceFirst('来自', '').trim(),
+          ),
+          forumId: forumId,
           replyCount: replyCount,
           viewCount: viewCount,
           likeCount: likeCount,
@@ -218,7 +223,10 @@ class AccountParser {
     );
   }
 
-  List<FavoriteItem> parseFavorites(String body) {
+  List<FavoriteItem> parseFavorites(
+    String body, {
+    required String baseUrl,
+  }) {
     final document = html_parser.parse(body);
     final result = <FavoriteItem>[];
 
@@ -229,9 +237,8 @@ class AccountParser {
       }
 
       final href = titleLink.attributes['href'] ?? '';
-      final tid = RegExp(r'thread-(\d+)-')
-          .firstMatch(href)
-          ?.group(1);
+      final tid = RegExp(r'thread-(\d+)-').firstMatch(href)?.group(1) ??
+          RegExp(r'(?:[?&])tid=(\d+)').firstMatch(href)?.group(1);
 
       final deleteHref = el
               .querySelector('a[href*="ac=favorite"][href*="op=delete"]')
@@ -241,8 +248,93 @@ class AccountParser {
               .firstMatch(deleteHref)
               ?.group(1) ??
           '';
-
       final type = el.querySelector('img.t')?.attributes['alt'] ?? '';
+
+      Thread? thread;
+      if (tid != null && tid.isNotEmpty) {
+        html_dom.Element? authorEl;
+        for (final candidate in el.querySelectorAll(
+          '.top_user, '
+          '.author a[href], '
+          '.by a[href*="uid="], '
+          'a[href*="space-uid-"]',
+        )) {
+          if (_clean(candidate.text).isNotEmpty) {
+            authorEl = candidate;
+            break;
+          }
+        }
+        final authorHref = authorEl?.attributes['href'] ?? '';
+        final authorUid = RegExp(r'uid=(\d+)')
+                .firstMatch(authorHref)
+                ?.group(1) ??
+            RegExp(r'space-uid-(\d+)')
+                .firstMatch(authorHref)
+                ?.group(1);
+        final forumEl = el.querySelector('a[href*="forum-"]');
+        final forumHref = forumEl?.attributes['href'] ?? '';
+        final forumId =
+            RegExp(r'forum-(\d+)').firstMatch(forumHref)?.group(1);
+        final avatarEl = el.querySelector(
+          'img.top_tximg, .top_tximg img, '
+          'img[src*="avatar.php"][src*="uid="]',
+        );
+        final stats = _extractThreadStats(el, tid);
+
+        final thumbnails = <String>[];
+        for (final image in el.querySelectorAll(
+          '.comiis_pyqlist_img img, .comiis_pyqlist_imgs img, '
+          '.list_img img, .comiis_list_img img',
+        )) {
+          final src = image.attributes['file'] ??
+              image.attributes['data-src'] ??
+              image.attributes['data-original'] ??
+              image.attributes['src'];
+          final absolute = _absoluteUrl(src, baseUrl);
+          if (absolute != null &&
+              !absolute.contains('smiley') &&
+              !absolute.contains('/static/image/') &&
+              !thumbnails.contains(absolute)) {
+            thumbnails.add(absolute);
+            if (thumbnails.length >= 3) break;
+          }
+        }
+
+        final itemText = _clean(el.text);
+        final itemHtml = el.innerHtml.toLowerCase();
+        final hasHiddenContent = itemText.contains('本内容被作者隐藏') ||
+            itemText.contains('回复后可见') ||
+            itemText.contains('回复可见') ||
+            itemText.contains('查看隐藏内容') ||
+            itemText.contains('隐藏内容') ||
+            itemHtml.contains('showhide') ||
+            itemHtml.contains('replyhide') ||
+            itemHtml.contains('hidecontent');
+
+        thread = Thread(
+          tid: tid,
+          title: _nullable(titleLink.text) ?? '未知标题',
+          authorUid: authorUid,
+          authorName: _nullable(authorEl?.text),
+          avatarUrl: _absoluteUrl(
+            avatarEl?.attributes['src'] ?? avatarEl?.attributes['data-src'],
+            baseUrl,
+          ),
+          forumName: _nullable(
+            (forumEl?.text ?? '').replaceFirst('来自', '').trim(),
+          ),
+          forumId: forumId,
+          likeCount: stats.$1,
+          replyCount: stats.$2,
+          viewCount: stats.$3,
+          lastReplyTime: _nullable(
+            el.querySelector('.forumlist_li_time .f_d, span.f_d')?.text,
+          ),
+          excerpt: _cleanThreadExcerpt(el.querySelector('.list_body a')?.text),
+          thumbnails: thumbnails,
+          hasHiddenContent: hasHiddenContent,
+        );
+      }
 
       result.add(
         FavoriteItem(
@@ -251,6 +343,7 @@ class AccountParser {
           type: type,
           href: href,
           tid: tid,
+          thread: thread,
         ),
       );
     }
@@ -318,6 +411,75 @@ class AccountParser {
     }
 
     return result;
+  }
+
+  (String?, String?, String?) _extractThreadStats(
+    html_dom.Element el,
+    String tid,
+  ) {
+    final nodes = el.querySelectorAll(
+      '.comiis_xznalist_bottom .comiis_tm, '
+      '.comiis_znalist_bottom .comiis_tm',
+    );
+    final values = nodes
+        .map((node) => _extractStatValue(node.text))
+        .whereType<String>()
+        .toList();
+
+    final statText = <String>[
+      el.querySelector('.comiis_xznalist_bottom')?.text ?? '',
+      el.querySelector('.comiis_znalist_bottom')?.text ?? '',
+      el.querySelector('.forumlist_li_info')?.text ?? '',
+      el.querySelector('.comiis_list_bottom')?.text ?? '',
+      el.text,
+    ].join(' ');
+
+    String? like = _extractStatValue(el.querySelector('.num-all_$tid')?.text);
+    like ??= _extractLabeledStat(statText, const ['点赞', '推荐']);
+    String? reply = _extractLabeledStat(statText, const ['评论', '回复']);
+    String? view = _extractLabeledStat(statText, const ['阅读', '浏览', '查看']);
+
+    if (values.length >= 3) {
+      like ??= values[0];
+      reply ??= values[1];
+      view ??= values[2];
+    } else if (values.length >= 2 && like != null) {
+      reply ??= values[0];
+      view ??= values[1];
+    }
+    return (like, reply, view);
+  }
+
+  String? _extractLabeledStat(String text, List<String> labels) {
+    final normalized = _clean(text);
+    const valuePattern = r'([\d,.]+(?:\.\d+)?\s*[万wWkK]?)';
+    for (final label in labels) {
+      final first = RegExp(
+        '$valuePattern\\s*${RegExp.escape(label)}',
+        caseSensitive: false,
+      ).firstMatch(normalized)?.group(1);
+      final firstValue = _extractStatValue(first);
+      if (firstValue != null) return firstValue;
+      final second = RegExp(
+        '${RegExp.escape(label)}\\s*[:：]?\\s*$valuePattern',
+        caseSensitive: false,
+      ).firstMatch(normalized)?.group(1);
+      final secondValue = _extractStatValue(second);
+      if (secondValue != null) return secondValue;
+    }
+    return null;
+  }
+
+  String? _extractStatValue(String? text) {
+    if (text == null) return null;
+    final normalized = _clean(text);
+    if (normalized.isEmpty) return null;
+    final value = RegExp(
+          r'[\d,.]+(?:\.\d+)?\s*[万wWkK]?',
+          caseSensitive: false,
+        ).firstMatch(normalized)?.group(0)?.replaceAll(RegExp(r'\s+'), '') ??
+        '';
+    return value.isEmpty ? null : value;
   }
 
   String _clean(String value) => value

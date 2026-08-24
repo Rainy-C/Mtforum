@@ -348,37 +348,62 @@ class _NavigationIconWithBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = badge;
-    if (value == null) return Icon(icon);
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          Icon(icon),
+          if (value != null)
+            Positioned(
+              right: -3,
+              top: 3,
+              child: _NavigationBadge(value: value),
+            ),
+        ],
+      ),
+    );
+  }
+}
 
+class _NavigationBadge extends StatelessWidget {
+  final String value;
+
+  const _NavigationBadge({required this.value});
+
+  @override
+  Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Icon(icon),
-        Positioned(
-          right: -11,
-          top: -8,
-          child: Container(
-            constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-            decoration: BoxDecoration(
-              color: colors.error,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: colors.surfaceContainerLow, width: 1.5),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              value,
-              style: TextStyle(
-                color: colors.onError,
-                fontSize: 10,
-                height: 1.2,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
+    return Container(
+      height: 18,
+      constraints: const BoxConstraints(minWidth: 18),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: colors.error,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colors.surfaceContainerLow,
+          width: 1.5,
         ),
-      ],
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        value,
+        textAlign: TextAlign.center,
+        textHeightBehavior: const TextHeightBehavior(
+          applyHeightToFirstAscent: false,
+          applyHeightToLastDescent: false,
+        ),
+        style: TextStyle(
+          color: colors.onError,
+          fontSize: 10,
+          height: 1,
+          fontWeight: FontWeight.w800,
+          leadingDistribution: TextLeadingDistribution.even,
+        ),
+      ),
     );
   }
 }

@@ -1,7 +1,7 @@
 name: mtforum
 description: MT论坛第三方客户端
 publish_to: 'none'
-version: 2.19.5+74
+version: 2.28.2+116
 
 environment:
   sdk: ^3.6.0

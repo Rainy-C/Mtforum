@@ -122,6 +122,78 @@ class PortalParser {
     );
   }
 
+  List<MallCardPurchase> parseMallCardPurchases(String html) {
+    final document = html_parser.parse(html);
+    final buyList = document.querySelector('#buylist');
+    if (buyList == null) {
+      return const [];
+    }
+
+    final purchases = <MallCardPurchase>[];
+    final seen = <String>{};
+
+    for (final item in buyList.children) {
+      final cardLink = item.querySelector('.views a[href*="ac=km"]');
+      final href = cardLink?.attributes['href'] ?? '';
+      final tid = RegExp(r'(?:[?&]|&amp;)tid=(\d+)')
+          .firstMatch(href)
+          ?.group(1);
+      if (tid == null || !seen.add(tid)) {
+        continue;
+      }
+
+      final title = _clean(item.querySelector('.mall-info h4 a')?.text ?? '');
+      final orderedAt = _clean(
+        item.querySelector('.sytime i')?.text ??
+            item.querySelector('.sytime')?.text.replaceFirst('下单时间：', '') ??
+            '',
+      );
+      final state = _nullable(_clean(item.querySelector('.sta')?.text ?? ''));
+
+      purchases.add(
+        MallCardPurchase(
+          tid: tid,
+          title: title.isEmpty ? '卡密订单' : title,
+          orderedAt: orderedAt,
+          status: state,
+        ),
+      );
+    }
+
+    return purchases;
+  }
+
+  List<MallCardRecord> parseMallCardRecords(String html) {
+    final document = html_parser.parse(html);
+    final records = <MallCardRecord>[];
+
+    for (final row in document.querySelectorAll('.kmdis .kmlist p')) {
+      final card = _clean(row.querySelector('.kmnr')?.text ?? '');
+      if (card.isEmpty) {
+        continue;
+      }
+
+      final exchangedAt = _clean(
+        row.querySelector('.kmtime')?.text ??
+            row.querySelector('.gmtime')?.text ??
+            '',
+      );
+      final state = _nullable(
+        _clean(row.querySelector('.gmstate')?.text ?? ''),
+      );
+
+      records.add(
+        MallCardRecord(
+          card: card,
+          exchangedAt: exchangedAt,
+          status: state,
+        ),
+      );
+    }
+
+    return records;
+  }
+
   String parsePopupText(String html) {
     final document = html_parser.parseFragment(html);
     return _clean(document.text ?? '');

@@ -4,11 +4,13 @@ class ForumLinkTarget {
   final ForumLinkKind kind;
   final String url;
   final String? id;
+  final String? pid;
 
   const ForumLinkTarget({
     required this.kind,
     required this.url,
     this.id,
+    this.pid,
   });
 }
 
@@ -33,6 +35,7 @@ ForumLinkTarget resolveForumLink(String rawUrl) {
   final directUser = _userIdFromText(raw) ?? _userIdFromText(normalized);
 
   final uri = Uri.tryParse(normalized);
+  final pid = _postIdFromText(raw) ?? _postIdFromText(normalized);
   final internal = _looksLikeForumUrl(raw) ||
       (uri != null && _isForumHost(uri.host));
 
@@ -45,6 +48,7 @@ ForumLinkTarget resolveForumLink(String rawUrl) {
       kind: ForumLinkKind.thread,
       url: normalized,
       id: directThread,
+      pid: pid,
     );
   }
 
@@ -55,6 +59,7 @@ ForumLinkTarget resolveForumLink(String rawUrl) {
         kind: ForumLinkKind.thread,
         url: normalized,
         id: tid,
+        pid: pid,
       );
     }
   }
@@ -79,6 +84,12 @@ ForumLinkTarget resolveForumLink(String rawUrl) {
   }
 
   return ForumLinkTarget(kind: ForumLinkKind.external, url: normalized);
+}
+
+String? _postIdFromText(String value) {
+  return RegExp(r'(?:[?&])pid=(\d+)', caseSensitive: false)
+      .firstMatch(value)
+      ?.group(1);
 }
 
 String _cleanRawUrl(String value) {

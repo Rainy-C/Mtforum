@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
 import '../widgets/app_state_view.dart';
+import '../widgets/thread_card.dart';
 import '../routes/thread_routes.dart';
 
 class FavoritesPage extends StatefulWidget {
@@ -218,6 +219,24 @@ class _FavoritesPageState extends State<FavoritesPage>
                     }
 
                     final item = _items[index];
+
+                    if (item.isThread) {
+                      final parsedThread = item.thread ??
+                          Thread(
+                            tid: item.tid!,
+                            title: item.title,
+                          );
+                      final thread =
+                          parsedThread.authorName?.trim().isNotEmpty == true
+                              ? parsedThread
+                              : parsedThread.copyWith(
+                                  authorName: '作者信息暂缺',
+                                );
+                      return ThreadCard(
+                        thread: thread,
+                        onTap: () => _open(item),
+                      );
+                    }
 
                     return Card(
                       margin: const EdgeInsets.only(bottom: 7),
