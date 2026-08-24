@@ -270,154 +270,309 @@ Future<void> showUpdateDialog(
 
   await showDialog<void>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      icon: Icon(Icons.system_update_rounded, color: colors.primary),
-      title: const Text('发现新版本'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
+    builder: (dialogContext) => Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 版本号卡片
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: colors.primaryContainer.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(10),
-              ),
+              padding: const EdgeInsets.fromLTRB(20, 18, 10, 18),
+              color: colors.primaryContainer.withValues(alpha: 0.72),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    'v${result.currentVersion}',
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: colors.onPrimaryContainer.withValues(alpha: 0.7),
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
+                      Icons.rocket_launch_rounded,
+                      color: colors.onPrimary,
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Icon(Icons.arrow_forward_rounded,
-                        size: 18, color: colors.primary),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '发现新版本',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            color: colors.onPrimaryContainer,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'MTForum v${info.version}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colors.onPrimaryContainer
+                                .withValues(alpha: 0.76),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  Text(
-                    'v${info.version}',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: colors.onPrimaryContainer,
-                      fontWeight: FontWeight.w700,
+                  IconButton(
+                    tooltip: '稍后更新',
+                    onPressed: () => Navigator.pop(dialogContext),
+                    icon: const Icon(Icons.close_rounded),
+                    color: colors.onPrimaryContainer,
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _UpdateVersionCard(
+                          label: '当前版本',
+                          version: result.currentVersion,
+                          emphasized: false,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Icon(
+                          Icons.arrow_forward_rounded,
+                          color: colors.primary,
+                        ),
+                      ),
+                      Expanded(
+                        child: _UpdateVersionCard(
+                          label: '最新版本',
+                          version: info.version,
+                          emphasized: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.auto_awesome_rounded,
+                        size: 19,
+                        color: colors.primary,
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          '本次更新',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      if (info.size != null && info.size! > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colors.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            _formatUpdateSize(info.size!),
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: colors.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(maxHeight: 230),
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainer,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: colors.outlineVariant.withValues(alpha: 0.72),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: lines.isEmpty
+                          ? Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: Text(
+                                '优化使用体验并修复已知问题',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                            )
+                          : Column(
+                              children: [
+                                for (var index = 0;
+                                    index < lines.length;
+                                    index++)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 22,
+                                          height: 22,
+                                          alignment: Alignment.center,
+                                          decoration: BoxDecoration(
+                                            color: colors.primaryContainer,
+                                            borderRadius:
+                                                BorderRadius.circular(7),
+                                          ),
+                                          child: Text(
+                                            '${index + 1}',
+                                            style: theme.textTheme.labelSmall
+                                                ?.copyWith(
+                                              color:
+                                                  colors.onPrimaryContainer,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            lines[index],
+                                            style: theme.textTheme.bodyMedium
+                                                ?.copyWith(height: 1.5),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 14),
-            // 更新日志标题
-            Row(
-              children: [
-                Icon(Icons.edit_note_rounded,
-                    size: 18, color: colors.primary),
-                const SizedBox(width: 5),
-                Text(
-                  '更新内容',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // 更新日志内容。统一规范化换行后放在独立内容区，避免长公告粘连。
-            Flexible(
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-                decoration: BoxDecoration(
-                  color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: lines.isEmpty
-                    ? Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Text(
-                          '新版本可用',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: colors.onSurfaceVariant,
-                          ),
-                        ),
-                      )
-                    : SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            for (final line in lines)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 7),
-                                      child: Container(
-                                        width: 5,
-                                        height: 5,
-                                        decoration: BoxDecoration(
-                                          color: colors.primary,
-                                          shape: BoxShape.circle,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 9),
-                                    Expanded(
-                                      child: Text(
-                                        line,
-                                        style: theme.textTheme.bodyMedium
-                                            ?.copyWith(height: 1.55),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
-                        ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+              color: colors.surfaceContainerLow,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(dialogContext);
+                        try {
+                          await UpdateService.instance
+                              .openDownloadInBrowser(info);
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('打开浏览器失败：$e')),
+                            );
+                          }
+                        }
+                      },
+                      icon: const Icon(
+                        Icons.open_in_browser_rounded,
+                        size: 18,
                       ),
+                      label: const Text('浏览器下载'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () {
+                        Navigator.pop(dialogContext);
+                        showUpdateDownloadDialog(context, info);
+                      },
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: const Text('立即更新'),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('稍后'),
-        ),
-        OutlinedButton.icon(
-          onPressed: () async {
-            Navigator.pop(dialogContext);
-            try {
-              await UpdateService.instance.openDownloadInBrowser(info);
-            } catch (e) {
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('打开浏览器失败：$e')),
-                );
-              }
-            }
-          },
-          icon: const Icon(Icons.open_in_browser_rounded, size: 18),
-          label: const Text('浏览器更新'),
-        ),
-        FilledButton.icon(
-          onPressed: () {
-            Navigator.pop(dialogContext);
-            showUpdateDownloadDialog(context, info);
-          },
-          icon: const Icon(Icons.download_rounded, size: 18),
-          label: const Text('内置更新'),
-        ),
-      ],
     ),
   );
+}
+
+String _formatUpdateSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kilobytes = bytes / 1024;
+  if (kilobytes < 1024) return '${kilobytes.toStringAsFixed(1)} KB';
+  final megabytes = kilobytes / 1024;
+  return '${megabytes.toStringAsFixed(1)} MB';
+}
+
+class _UpdateVersionCard extends StatelessWidget {
+  final String label;
+  final String version;
+  final bool emphasized;
+
+  const _UpdateVersionCard({
+    required this.label,
+    required this.version,
+    required this.emphasized,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: emphasized
+            ? colors.primaryContainer.withValues(alpha: 0.72)
+            : colors.surfaceContainer,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: emphasized
+              ? colors.primary.withValues(alpha: 0.28)
+              : colors.outlineVariant.withValues(alpha: 0.68),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'v$version',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: emphasized ? colors.primary : colors.onSurface,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 Future<void> showUpdateDownloadDialog(
