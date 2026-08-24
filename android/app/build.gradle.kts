@@ -38,10 +38,14 @@ android {
     signingConfigs {
         create("release") {
             if (keystoreFile.exists()) {
-                storeFile = file(keystoreProperties["storeFile"] as String)
-                storePassword = keystoreProperties["storePassword"] as String
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
+                val storeFilePath = keystoreProperties["storeFile"] as String
+                val storeFileObj = file(storeFilePath)
+                if (storeFileObj.exists()) {
+                    storeFile = storeFileObj
+                    storePassword = keystoreProperties["storePassword"] as String
+                    keyAlias = keystoreProperties["keyAlias"] as String
+                    keyPassword = keystoreProperties["keyPassword"] as String
+                }
             }
         }
     }
@@ -49,6 +53,10 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
+            // CI 环境无 keystore 时回退到 debug 签名
+            if (signingConfigs.getByName("release").storeFile == null) {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 }
