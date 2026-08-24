@@ -775,7 +775,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
 
   List<Post> get _filteredComments {
     var comments = _threadComments(widget.detail);
-    if (_commentFilter.commentsEnabled && _commentFilter.hasKeywords) {
+    if (_commentFilter.commentsEnabled && _commentFilter.hasRules) {
       comments = comments
           .where(
             (post) =>
