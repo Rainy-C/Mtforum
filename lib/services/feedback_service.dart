@@ -25,17 +25,17 @@ class FeedbackService {
   /// 旧版地址仅作兼容默认值，服务端新接口路径统一为 /api/v1/feedback。
   static const endpoint = String.fromEnvironment(
     'MTFORUM_FEEDBACK_URL',
-    defaultValue: 'http://107.151.233.210:8888/api/v1/feedback',
+    defaultValue: 'https://feedback.example.com/api/v1/feedback',
   );
 
 
   /// 旧反馈服务异常时的内置候选地址。通过 dart-define 指定的 endpoint 仍然优先。
   static const fallbackEndpoint =
-      'http://107.151.233.210:8888/api/v1/feedback';
+      'https://feedback.example.com/api/v1/feedback';
 
   /// 候选服务健康检查地址，仅用于诊断；正常提交不会额外预请求一次。
   static const fallbackHealthEndpoint =
-      'http://107.151.233.210:8888/healthz';
+      'https://feedback.example.com/healthz';
 
   static List<String> get endpointCandidates {
     final seen = <String>{};
