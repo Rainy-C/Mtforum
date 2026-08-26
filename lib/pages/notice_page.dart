@@ -9,6 +9,8 @@ import '../services/comment_filter_service.dart';
 import '../services/message_badge_service.dart';
 import '../widgets/app_state_view.dart';
 import 'account/user_group_page.dart';
+import 'account/social_center_page.dart';
+import 'account/poke_page.dart';
 import '../routes/thread_routes.dart';
 
 /// Discuz 论坛通知中心。
@@ -71,11 +73,13 @@ class _NoticePageState extends State<NoticePage>
   int _sectionIndex = 0;
   String? _type = _sections.first.subtypes.first.type;
   List<NoticeItem> _items = const [];
-  final Map<String, String> _replyPreviews = {};
+  final Map<String, Post> _replyPreviews = {};
   bool _loading = true;
   bool _loadingMore = false;
   bool _hasMore = false;
+  bool _showFilteredNotices = false;
   int _page = 1;
+  int _totalPages = 1;
   int _generation = 0;
   String? _error;
 
@@ -108,7 +112,11 @@ class _NoticePageState extends State<NoticePage>
   }
 
   void _handleFilterChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {
+      if (_filteredOutItems.isEmpty) _showFilteredNotices = false;
+    });
+    _scheduleAutoLoadNext();
   }
 
   bool _shouldHideNotice(
@@ -120,23 +128,33 @@ class _NoticePageState extends State<NoticePage>
       return false;
     }
     if (view != 'mypost' || type != 'post') return false;
-    final preview = _replyPreviews[item.pid]?.trim() ?? '';
-    return _commentFilter.matchesKeyword(
-      '${item.content}\n${item.actionText}\n${item.targetTitle ?? ''}\n'
-      '$preview',
-    ) ||
-        (preview.isNotEmpty && _commentFilter.matchesShortReply(preview));
+    final post = _replyPreviews[item.pid];
+    final preview = post == null ? '' : ApiService.buildPostPreview(post).trim();
+    return preview.isNotEmpty && _commentFilter.matches(preview);
   }
 
-  List<NoticeItem> get _visibleItems => _items
+  List<NoticeItem> get _filteredOutItems => _items
       .where(
-        (item) => !_shouldHideNotice(
+        (item) => _shouldHideNotice(
           item,
           view: _section.view,
           type: _type,
         ),
       )
       .toList(growable: false);
+
+  List<NoticeItem> get _visibleItems {
+    if (_showFilteredNotices) return _filteredOutItems;
+    return _items
+        .where(
+          (item) => !_shouldHideNotice(
+            item,
+            view: _section.view,
+            type: _type,
+          ),
+        )
+        .toList(growable: false);
+  }
 
   void _handleTabChange() {
     if (_tabController.indexIsChanging ||
@@ -148,6 +166,7 @@ class _NoticePageState extends State<NoticePage>
     setState(() {
       _sectionIndex = _tabController.index;
       _type = next.subtypes.isEmpty ? null : next.subtypes.first.type;
+      _showFilteredNotices = false;
     });
     _reload();
   }
@@ -159,9 +178,26 @@ class _NoticePageState extends State<NoticePage>
         !_hasMore) {
       return;
     }
-    if (_scrollController.position.extentAfter < 420) {
+    if (_scrollController.position.extentAfter < 1000) {
       _loadMore();
     }
+  }
+
+  void _scheduleAutoLoadNext() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _loading ||
+          _loadingMore ||
+          !_hasMore ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      // 首屏内容不足以产生滚动事件时也继续加载；列表较长时则在距底部
+      // 1000px 内预取，避免用户看到明显的分页停顿。
+      if (_scrollController.position.extentAfter < 1000) {
+        unawaited(_loadMore());
+      }
+    });
   }
 
   Future<void> _reload() async {
@@ -175,9 +211,11 @@ class _NoticePageState extends State<NoticePage>
         _items = const [];
         _replyPreviews.clear();
         _page = 1;
+        _totalPages = 1;
         _hasMore = false;
         _loading = false;
         _loadingMore = false;
+        _showFilteredNotices = false;
         _error = '请先登录后查看论坛通知';
       });
       return;
@@ -188,9 +226,11 @@ class _NoticePageState extends State<NoticePage>
         _items = const [];
         _replyPreviews.clear();
         _page = 1;
+        _totalPages = 1;
         _hasMore = false;
         _loading = true;
         _loadingMore = false;
+        _showFilteredNotices = false;
         _error = null;
       });
     }
@@ -210,7 +250,8 @@ class _NoticePageState extends State<NoticePage>
       setState(() {
         _items = data.items;
         _page = 1;
-        _hasMore = data.hasMore;
+        _totalPages = data.totalPages;
+        _hasMore = data.hasMore || _page < _totalPages;
       });
       unawaited(MessageBadgeService.instance.markNoticesSeen(data.items));
       if (requestedView == 'mypost' && requestedType == 'post') {
@@ -222,6 +263,7 @@ class _NoticePageState extends State<NoticePage>
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
+        _scheduleAutoLoadNext();
       }
     }
   }
@@ -233,6 +275,7 @@ class _NoticePageState extends State<NoticePage>
     final requestedView = _section.view;
     final requestedType = _type;
     final nextPage = _page + 1;
+    var loadSucceeded = false;
 
     setState(() => _loadingMore = true);
     try {
@@ -250,19 +293,28 @@ class _NoticePageState extends State<NoticePage>
 
       final merged = <NoticeItem>[..._items];
       final keys = merged.map(_noticeKey).toSet();
+      var addedCount = 0;
       for (final item in data.items) {
-        if (keys.add(_noticeKey(item))) merged.add(item);
+        if (keys.add(_noticeKey(item))) {
+          merged.add(item);
+          addedCount++;
+        }
       }
 
       setState(() {
         _items = merged;
         _page = nextPage;
-        _hasMore = data.hasMore && data.items.isNotEmpty;
+        if (data.totalPages > _totalPages) {
+          _totalPages = data.totalPages;
+        }
+        _hasMore = addedCount > 0 &&
+            (data.hasMore || nextPage < _totalPages);
       });
       unawaited(MessageBadgeService.instance.markNoticesSeen(data.items));
       if (requestedView == 'mypost' && requestedType == 'post') {
         unawaited(_loadReplyPreviews(data.items, generation));
       }
+      loadSucceeded = true;
     } catch (e) {
       if (mounted && generation == _generation) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -272,6 +324,7 @@ class _NoticePageState extends State<NoticePage>
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loadingMore = false);
+        if (loadSucceeded) _scheduleAutoLoadNext();
       }
     }
   }
@@ -307,6 +360,7 @@ class _NoticePageState extends State<NoticePage>
         }),
       );
       if (!mounted || generation != _generation) return;
+      _scheduleAutoLoadNext();
     }
     // 网络瞬时失败的通知再串行补一次，避免一批请求失败后整组缺预览。
     for (final item in failed) {
@@ -319,6 +373,7 @@ class _NoticePageState extends State<NoticePage>
         // 单条预览最终失败不影响通知列表和跳转。
       }
     }
+    _scheduleAutoLoadNext();
   }
 
   String _noticeKey(NoticeItem item) {
@@ -328,7 +383,10 @@ class _NoticePageState extends State<NoticePage>
 
   void _selectSubtype(String type) {
     if (_type == type) return;
-    setState(() => _type = type);
+    setState(() {
+      _type = type;
+      _showFilteredNotices = false;
+    });
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
     }
@@ -396,7 +454,24 @@ class _NoticePageState extends State<NoticePage>
     }
   }
 
+  Future<void> _pokeBack(NoticeItem item) async {
+    if (item.authorUid.isEmpty) return;
+    final sent = await showPokeDialog(
+      context,
+      uid: item.authorUid,
+      username: item.username.isEmpty ? 'UID ${item.authorUid}' : item.username,
+    );
+    if (sent == true && mounted) _reload();
+  }
+
   void _openTarget(NoticeItem item) {
+    if (_type == 'friend' || item.type == 'friend') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const FriendRequestsPage()),
+      ).then((_) => _reload());
+      return;
+    }
     if (item.hasThreadTarget) {
       Navigator.push(
         context,
@@ -480,6 +555,43 @@ class _NoticePageState extends State<NoticePage>
                 ),
               ),
             ),
+          if (_filteredOutItems.isNotEmpty)
+            Material(
+              color: colors.surfaceContainerLow,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 7, 10, 7),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.filter_alt_outlined,
+                      size: 19,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _showFilteredNotices
+                            ? '正在查看 ${_filteredOutItems.length} 条已过滤回复'
+                            : '已过滤 ${_filteredOutItems.length} 条回复通知'
+                                '${_totalPages > 1 ? ' · 已加载 $_page/$_totalPages 页' : ''}',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _showFilteredNotices = !_showFilteredNotices;
+                        });
+                        if (_scrollController.hasClients) {
+                          _scrollController.jumpTo(0);
+                        }
+                      },
+                      child: Text(_showFilteredNotices ? '返回通知' : '查看'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Expanded(child: _buildBody()),
         ],
       ),
@@ -511,7 +623,7 @@ class _NoticePageState extends State<NoticePage>
               icon: Icons.notifications_none_rounded,
               title: '暂无通知',
               message: _items.isNotEmpty
-                  ? '当前页提醒均已被过滤。'
+                  ? '当前页提醒均已被过滤，可点击上方入口查看。'
                   : '这个分类目前没有提醒内容。',
             ),
             if (_hasMore)
@@ -547,6 +659,11 @@ class _NoticePageState extends State<NoticePage>
             item: item,
             sectionLabel: _section.label,
             replyPreview: _replyPreviews[item.pid],
+            hasLocalAction: _type == 'friend' || item.type == 'friend',
+            onPokeBack: (_type == 'poke' || item.type == 'poke') &&
+                    item.authorUid.isNotEmpty
+                ? () => _pokeBack(item)
+                : null,
             onOpen: () => _openTarget(item),
             onIgnore: item.ignoreUrl == null ? null : () => _ignore(item),
           );
@@ -561,7 +678,9 @@ class _NoticeCard extends StatelessWidget {
   final String sectionLabel;
   final VoidCallback onOpen;
   final VoidCallback? onIgnore;
-  final String? replyPreview;
+  final Post? replyPreview;
+  final bool hasLocalAction;
+  final VoidCallback? onPokeBack;
 
   const _NoticeCard({
     required this.item,
@@ -569,6 +688,8 @@ class _NoticeCard extends StatelessWidget {
     required this.onOpen,
     this.replyPreview,
     this.onIgnore,
+    this.hasLocalAction = false,
+    this.onPokeBack,
   });
 
   @override
@@ -578,7 +699,8 @@ class _NoticeCard extends StatelessWidget {
     final title = item.isSystem
         ? sectionLabel
         : (item.username.isEmpty ? sectionLabel : item.username);
-    final canOpen = item.targetUrl != null || item.hasThreadTarget;
+    final canOpen =
+        hasLocalAction || item.targetUrl != null || item.hasThreadTarget;
     final action = item.actionText.isEmpty ? item.content : item.actionText;
 
     return Card(
@@ -594,144 +716,298 @@ class _NoticeCard extends StatelessWidget {
         onTap: canOpen ? onOpen : null,
         onLongPress: onIgnore,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(11, 11, 11, 10),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _NoticeAvatar(item: item),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _NoticeAvatar(item: item),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (item.isUnread) ...[
-                          Container(
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: colors.primary,
-                              shape: BoxShape.circle,
+                        Row(
+                          children: [
+                            if (item.isUnread) ...[
+                              Container(
+                                width: 7,
+                                height: 7,
+                                decoration: BoxDecoration(
+                                  color: colors.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                            ],
+                            Expanded(
+                              child: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 7),
-                        ],
-                        Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
+                            if (item.time.isNotEmpty) ...[
+                              const SizedBox(width: 8),
+                              Text(
+                                item.time,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: colors.outline,
+                                ),
+                              ),
+                            ],
+                            if (onIgnore != null) ...[
+                              const SizedBox(width: 3),
+                              SizedBox(
+                                width: 32,
+                                height: 32,
+                                child: IconButton(
+                                  tooltip: '忽略这条通知',
+                                  onPressed: onIgnore,
+                                  padding: EdgeInsets.zero,
+                                  visualDensity: VisualDensity.compact,
+                                  iconSize: 18,
+                                  color: colors.outline,
+                                  icon: const Icon(
+                                    Icons.notifications_off_outlined,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
-                        if (item.time.isNotEmpty) ...[
-                          const SizedBox(width: 8),
+                        if (action.trim().isNotEmpty) ...[
+                          const SizedBox(height: 3),
                           Text(
-                            item.time,
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: colors.outline,
+                            action.trim(),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: colors.onSurfaceVariant,
+                              height: 1.35,
                             ),
                           ),
                         ],
                       ],
                     ),
-                    if (action.trim().isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        action.trim(),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: colors.onSurfaceVariant,
-                          height: 1.38,
-                        ),
-                      ),
-                    ],
-                    if (replyPreview?.trim().isNotEmpty == true) ...[
-                      const SizedBox(height: 7),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colors.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          replyPreview!.trim(),
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colors.onSurfaceVariant,
-                            height: 1.4,
-                          ),
-                        ),
-                      ),
-                    ],
-                    if (canOpen) ...[
-                      const SizedBox(height: 7),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            item.hasThreadTarget
+                  ),
+                ],
+              ),
+              if (replyPreview != null) ...[
+                const SizedBox(height: 8),
+                _NoticeReplyPreview(post: replyPreview!),
+              ],
+              if (canOpen) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.primaryContainer.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        hasLocalAction
+                            ? Icons.group_add_outlined
+                            : item.hasThreadTarget
                                 ? Icons.article_outlined
                                 : Icons.open_in_new_rounded,
-                            size: 16,
+                        size: 16,
+                        color: colors.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          item.targetTitle ??
+                              (hasLocalAction
+                                  ? '处理好友申请'
+                                  : item.hasThreadTarget
+                                      ? '查看相关帖子'
+                                      : '查看相关页面'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelLarge?.copyWith(
                             color: colors.primary,
+                            fontWeight: FontWeight.w800,
                           ),
-                          const SizedBox(width: 5),
-                          Flexible(
-                            child: Text(
-                              item.targetTitle ??
-                                  (item.hasThreadTarget ? '查看相关帖子' : '查看相关页面'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                color: colors.primary,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 1),
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            size: 18,
-                            color: colors.primary,
-                          ),
-                        ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        size: 18,
+                        color: colors.primary,
                       ),
                     ],
-                  ],
+                  ),
                 ),
+              ],
+              if (onPokeBack != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: ActionChip(
+                    onPressed: onPokeBack,
+                    visualDensity: VisualDensity.compact,
+                    avatar: Icon(
+                      Icons.waving_hand_outlined,
+                      size: 17,
+                      color: colors.primary,
+                    ),
+                    label: const Text('回打招呼'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NoticeReplyPreview extends StatelessWidget {
+  final Post post;
+
+  const _NoticeReplyPreview({required this.post});
+
+  List<String> get _imageUrls {
+    final result = <String>[];
+    final seen = <String>{};
+
+    void collect(Iterable<PostContent> contents) {
+      for (final content in contents) {
+        if (content.type == PostContentType.image) {
+          final url = content.url?.trim() ?? '';
+          if (url.isNotEmpty && seen.add(url)) result.add(url);
+        }
+        if (content.children.isNotEmpty) collect(content.children);
+      }
+    }
+
+    collect(post.richContent);
+    for (final rawUrl in post.images) {
+      final url = rawUrl.trim();
+      if (url.isNotEmpty && seen.add(url)) result.add(url);
+    }
+    return result;
+  }
+
+  void _openImage(BuildContext context, String url) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _NoticeImagePage(url: url),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final images = _imageUrls;
+    final text = ApiService.buildPostPreview(post).trim();
+    final showText = text.isNotEmpty && !(text == '[图片]' && images.isNotEmpty);
+
+    if (!showText && images.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showText)
+            Text(
+              text,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.onSurfaceVariant,
+                height: 1.45,
               ),
-              if (onIgnore != null)
-                PopupMenuButton<String>(
-                  tooltip: '更多',
-                  padding: EdgeInsets.zero,
-                  icon: Icon(Icons.more_vert_rounded, color: colors.outline),
-                  onSelected: (value) {
-                    if (value == 'ignore') onIgnore?.call();
-                  },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(
-                      value: 'ignore',
-                      child: Row(
-                        children: [
-                          Icon(Icons.notifications_off_outlined, size: 19),
-                          SizedBox(width: 10),
-                          Text('屏蔽此类通知'),
-                        ],
+            ),
+          for (var index = 0; index < images.length; index++) ...[
+            if (showText || index > 0) const SizedBox(height: 8),
+            GestureDetector(
+              onTap: () => _openImage(context, images[index]),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: double.infinity,
+                  height: 180,
+                  color: colors.surfaceContainerHigh,
+                  child: CachedNetworkImage(
+                    imageUrl: images[index],
+                    fit: BoxFit.contain,
+                    placeholder: (_, __) => const Center(
+                      child: SizedBox.square(
+                        dimension: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
                     ),
-                  ],
+                    errorWidget: (_, __, ___) => Center(
+                      child: Icon(
+                        Icons.broken_image_outlined,
+                        color: colors.outline,
+                      ),
+                    ),
+                  ),
                 ),
-            ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NoticeImagePage extends StatelessWidget {
+  final String url;
+
+  const _NoticeImagePage({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: const Text('查看图片'),
+      ),
+      body: InteractiveViewer(
+        minScale: 1,
+        maxScale: 5,
+        child: Center(
+          child: CachedNetworkImage(
+            imageUrl: url,
+            width: double.infinity,
+            height: double.infinity,
+            fit: BoxFit.contain,
+            placeholder: (_, __) => const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
+            errorWidget: (_, __, ___) => const Center(
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: Colors.white70,
+                size: 48,
+              ),
+            ),
           ),
         ),
       ),

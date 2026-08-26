@@ -7,10 +7,12 @@ import 'package:flutter/material.dart';
 class AppTheme {
   static const Color seedColor = Color(0xFF3F67B1);
 
-  static ThemeData get light => _build(Brightness.light);
-  static ThemeData get dark => _build(Brightness.dark);
+  static ThemeData light({String? fontFamily}) =>
+      _build(Brightness.light, fontFamily: fontFamily);
+  static ThemeData dark({String? fontFamily}) =>
+      _build(Brightness.dark, fontFamily: fontFamily);
 
-  static ThemeData _build(Brightness brightness) {
+  static ThemeData _build(Brightness brightness, {String? fontFamily}) {
     final isDark = brightness == Brightness.dark;
     final generated = ColorScheme.fromSeed(
       seedColor: seedColor,
@@ -63,6 +65,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
+      fontFamily: fontFamily,
       colorScheme: scheme,
       scaffoldBackgroundColor: scheme.surface,
       canvasColor: scheme.surface,

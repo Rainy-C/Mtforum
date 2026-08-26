@@ -537,60 +537,92 @@ class UserCenterParser {
     required String baseUrl,
   }) {
     final source = _unwrapCdata(raw);
-    if (_clean(html_parser.parseFragment(source).text ?? '')
-        .contains('没有新的好友请求')) {
-      return const [];
-    }
-
     final document = html_parser.parse(source);
     final result = <FriendRequestItem>[];
     final seen = <String>{};
 
+    void addRequest({
+      required String uid,
+      required html_dom.Element container,
+      required html_dom.Element accept,
+    }) {
+      if (uid.isEmpty || !seen.add(uid)) return;
+      // “通过”链接的 mod=spacecp 也包含 mod=space，不能与用户主页链接
+      // 混用一个 CSS 并集，否则 DOM 顺序会让按钮文字被当成用户名。
+      var profile = container.querySelector('p.tit > a, p.tit a');
+      if (profile == null) {
+        for (final link in container.querySelectorAll('a[href*="uid=$uid"]')) {
+          final href = (link.attributes['href'] ?? '').replaceAll('&amp;', '&');
+          final uri = Uri.tryParse(href);
+          if (uri?.queryParameters['mod'] == 'space' ||
+              RegExp(r'space-uid-\d+', caseSensitive: false).hasMatch(href)) {
+            profile = link;
+            break;
+          }
+        }
+      }
+      var username = _clean(profile?.text ?? '');
+      if (username.isEmpty) {
+        username = _clean(
+          container.querySelector('p.tit a, .tit a, h4 a, .xw1')?.text ?? '',
+        );
+      }
+      if (username.isEmpty) username = 'UID $uid';
+
+      final ignore = container.querySelector(
+        'a[href*="ac=friend"][href*="op=ignore"][href*="uid=$uid"]',
+      );
+      final avatar = container.querySelector(
+        'a.list01_limg img, img[src*="avatar.php?uid=$uid"], '
+        'img[src*="avatar"], img[src*="uc_server"], img',
+      );
+      result.add(
+        FriendRequestItem(
+          uid: uid,
+          username: username,
+          avatarUrl: _absoluteUrl(avatar?.attributes['src'], baseUrl),
+          acceptUrl: _absoluteUrl(accept.attributes['href'], baseUrl),
+          requestTime: _sanitizeVisibleText(
+            container.querySelector('p.txt font, .txt .f_d')?.text ?? '',
+          ),
+          isOnline: _sanitizeVisibleText(
+            container.querySelector('font.kmtit, .kmtit')?.text ?? '',
+          ).contains('在线'),
+          ignoreUrl: _absoluteUrl(ignore?.attributes['href'], baseUrl),
+        ),
+      );
+    }
+
+    // mobile=2 已确认的稳定结构，优先按容器 ID 解析，避免弹窗链接的
+    // class/handlekey 因模板变化而导致整个申请列表为空。
+    for (final item in document.querySelectorAll(
+      'li.b_t[id^="comiis_friendbox_"], li[id^="comiis_friendbox_"]',
+    )) {
+      final uid = RegExp(r'^comiis_friendbox_(\d+)$')
+              .firstMatch(item.id)
+              ?.group(1) ??
+          '';
+      final accept = item.querySelector(
+        'a[href*="ac=friend"][href*="op=add"][href*="uid=$uid"]',
+      );
+      if (uid.isNotEmpty && accept != null) {
+        addRequest(uid: uid, container: item, accept: accept);
+      }
+    }
+
+    // 兼容 AJAX/桌面模板没有 comiis_friendbox_* ID 的结构。
     for (final add in document.querySelectorAll(
       'a[href*="ac=friend"][href*="op=add"][href*="uid="]',
     )) {
       final href = add.attributes['href'] ?? '';
       final uid =
           RegExp(r'(?:^|[?&])uid=(\d+)').firstMatch(href)?.group(1);
-      if (uid == null || !seen.add(uid)) {
-        continue;
-      }
+      if (uid == null || seen.contains(uid)) continue;
 
       final container = _nearestContainer(add);
-      final profile = container?.querySelector(
-        'a[href*="mod=space"][href*="uid=$uid"], '
-        'a[href*="space&uid=$uid"]',
-      );
-
-      var username = _clean(profile?.text ?? '');
-      if (username.isEmpty) {
-        username = _clean(
-          container?.querySelector('.tit a, h4 a, .xw1')?.text ?? '',
-        );
+      if (container != null) {
+        addRequest(uid: uid, container: container, accept: add);
       }
-      if (username.isEmpty) {
-        username = 'UID $uid';
-      }
-
-      final ignore = container?.querySelector(
-        'a[href*="ac=friend"][href*="op=ignore"][href*="uid=$uid"]',
-      );
-      final avatar = container?.querySelector(
-        'img[src*="avatar"], img[src*="uc_server"], img',
-      );
-
-      result.add(
-        FriendRequestItem(
-          uid: uid,
-          username: username,
-          avatarUrl: _absoluteUrl(avatar?.attributes['src'], baseUrl),
-          acceptUrl: _absoluteUrl(href, baseUrl),
-          ignoreUrl: _absoluteUrl(
-            ignore?.attributes['href'],
-            baseUrl,
-          ),
-        ),
-      );
     }
 
     return result;
@@ -1790,17 +1822,37 @@ class UserCenterParser {
         actionText = actionText.replaceFirst(targetTitle, '').trim();
       }
       actionText = actionText
-          .replaceAll(RegExp(r'\s*(?:查看|详情)\s*$'), '')
+          .replaceFirst(RegExp(r'^[：:]\s*'), '')
+          .replaceAll(
+            RegExp(
+              r'(?:\s*[|丨]?\s*(?:查看|详情|回打招呼|忽略|屏蔽)\s*[|丨]?)+\s*$',
+            ),
+            '',
+          )
+          .replaceAll(RegExp(r'^[\s|丨·•]+|[\s|丨·•]+$'), '')
           .trim();
       if (actionText.isEmpty) actionText = content;
 
       final timeNode = item.querySelector('h2.f_d, .f_d');
       final time = _sanitizeVisibleText(timeNode?.text ?? '')
           .replaceAll('屏蔽', '')
+          .replaceAll('忽略', '')
+          .replaceAll(RegExp(r'^[\s|丨·•]+|[\s|丨·•]+$'), '')
           .trim();
-      final ignoreLink = item.querySelector(
+      var ignoreLink = item.querySelector(
         'h2 a[href*="op=ignore"], a[href*="ac=common"][href*="op=ignore"]',
       );
+      if (ignoreLink == null) {
+        for (final link in item.querySelectorAll('a[href]')) {
+          final label = _sanitizeVisibleText(
+            '${link.text} ${link.attributes['title'] ?? ''}',
+          );
+          if (label.contains('忽略') || label.contains('屏蔽')) {
+            ignoreLink = link;
+            break;
+          }
+        }
+      }
       final ignoreHref =
           (ignoreLink?.attributes['href'] ?? '').replaceAll('&amp;', '&');
       final ignoreUrl = _absoluteUrl(ignoreHref, baseUrl);
@@ -1843,17 +1895,63 @@ class UserCenterParser {
     }
 
     var hasMore = false;
-    for (final link in document.querySelectorAll('.comiis_page a[href*="page="]')) {
+    var totalPages = currentPage < 1 ? 1 : currentPage;
+
+    // Comiis 通知页的移动模板主要用 #dumppage <select>
+    // 表示分页，不一定输出 .comiis_page 的下一页链接。
+    // 旧解析只查链接，因此第 1 页会被误判为最后一页。
+    final pageOptions = document.querySelectorAll('#dumppage option');
+    if (pageOptions.isNotEmpty) {
+      var totalPage = pageOptions.length;
+      for (final option in pageOptions) {
+        final value = (option.attributes['value'] ?? '').replaceAll('&amp;', '&');
+        final valueUri = Uri.tryParse(value);
+        final queryPage =
+            int.tryParse(valueUri?.queryParameters['page'] ?? '');
+        int? textPage;
+        for (final match in RegExp(r'\d+').allMatches(option.text)) {
+          final candidate = int.tryParse(match.group(0) ?? '');
+          if (candidate != null && candidate > (textPage ?? 0)) {
+            textPage = candidate;
+          }
+        }
+        final parsedPage = queryPage ?? textPage;
+        if (parsedPage != null && parsedPage > totalPage) {
+          totalPage = parsedPage;
+        }
+      }
+      totalPages = totalPage > totalPages ? totalPage : totalPages;
+      hasMore = currentPage < totalPage;
+    }
+
+    for (final link in document.querySelectorAll(
+      '.comiis_page a[href*="page="], .pg a[href*="page="], '
+      'a.nxt[href], a[rel="next"][href]',
+    )) {
       final href = (link.attributes['href'] ?? '').replaceAll('&amp;', '&');
       final uri = Uri.tryParse(href);
-      final page = int.tryParse(uri?.queryParameters['page'] ?? '');
-      if (page != null && page > currentPage) {
+      final page = int.tryParse(uri?.queryParameters['page'] ?? '') ??
+          int.tryParse(
+            RegExp(r'(?:[?&]|&amp;)page=(\d+)')
+                    .firstMatch(href)
+                    ?.group(1) ??
+                '',
+          );
+      if (page != null && page > totalPages) totalPages = page;
+      if ((page != null && page > currentPage) ||
+          link.classes.contains('nxt') ||
+          link.attributes['rel'] == 'next') {
         hasMore = true;
+        if (totalPages <= currentPage) totalPages = currentPage + 1;
         break;
       }
     }
 
-    return NoticePageData(items: result, hasMore: hasMore);
+    return NoticePageData(
+      items: result,
+      hasMore: hasMore,
+      totalPages: totalPages,
+    );
   }
 
 

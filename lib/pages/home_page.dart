@@ -9,6 +9,11 @@ import '../routes/thread_routes.dart';
 import 'ranklist_page.dart';
 import 'search_page.dart';
 
+class HomePageController {
+  VoidCallback? _scrollToTopCallback;
+
+  void scrollToTop() => _scrollToTopCallback?.call();
+}
 
 enum _HomeFeedSort {
   hot('hot', '最新热门', Icons.local_fire_department_outlined),
@@ -31,7 +36,9 @@ enum _HomeFeedSort {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final HomePageController? controller;
+
+  const HomePage({super.key, this.controller});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -53,14 +60,26 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    widget.controller?._scrollToTopCallback = _scrollToTop;
     _scrollController.addListener(_onScroll);
     _initializeFeed();
   }
 
   @override
   void dispose() {
+    widget.controller?._scrollToTopCallback = null;
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _scrollToTop() {
+    if (!_scrollController.hasClients) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    _scrollController.animateTo(
+      _scrollController.position.minScrollExtent,
+      duration: const Duration(milliseconds: 460),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   void _onScroll() {
@@ -164,9 +183,10 @@ class _HomePageState extends State<HomePage> {
           controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            SliverAppBar.large(
+            SliverAppBar(
               title: const Text('MT论坛'),
               pinned: true,
+              centerTitle: false,
               actions: [
                 IconButton(
                   tooltip: '搜索',

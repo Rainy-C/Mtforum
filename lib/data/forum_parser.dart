@@ -28,11 +28,31 @@ class ForumParser {
 
     final result = <Thread>[];
     for (final el in items) {
-      final titleLink = el.querySelector(
-        '.mmlist_li_box h2 a, h2 a[href*="thread-"]',
+      html_dom.Element? titleLink = el.querySelector(
+        '.mmlist_li_box h2 a[href*="thread-"], '
+        'h2 a[href*="thread-"], '
+        '.mmlist_li_box .list_body a[href*="thread-"], '
+        '.mmlist_li_box > a[href*="thread-"]',
       );
+
+      // 无标题帖、动态式帖子以及部分登录模板不会输出标题 h2。
+      // 此时不再依赖 DOM 层级，直接从卡片内寻找第一个带可读文本的
+      // 主题链接；搜索与首页因此使用完全一致的兜底规则。
+      if (titleLink == null) {
+        for (final anchor in el.querySelectorAll('a[href]')) {
+          final candidate = anchor.attributes['href'] ?? '';
+          final isThreadLink =
+              RegExp(r'thread-\d+-?').hasMatch(candidate) ||
+                  RegExp(r'(?:[?&]|&amp;)tid=\d+').hasMatch(candidate);
+          if (isThreadLink && _cleanInline(anchor.text).isNotEmpty) {
+            titleLink = anchor;
+            break;
+          }
+        }
+      }
       final href = titleLink?.attributes['href'] ?? '';
-      final tid = RegExp(r'thread-(\d+)-?').firstMatch(href)?.group(1);
+      final tid = RegExp(r'thread-(\d+)-?').firstMatch(href)?.group(1) ??
+          RegExp(r'(?:[?&]|&amp;)tid=(\d+)').firstMatch(href)?.group(1);
       if (tid == null || tid.isEmpty) continue;
 
       final authorEl = el.querySelector('.top_user');
@@ -200,11 +220,25 @@ class ForumParser {
       page: page,
       baseUrl: baseUrl,
     );
+    final likeCount = _extractStatValue(
+      document
+          .querySelector(
+            '#comiis_recommend_num, em.comiis_recommend_num',
+          )
+          ?.text,
+    );
+    final replyCount = _extractStatValue(
+      document
+          .querySelector('a.comiis_position_key span.comiis_kmvnum')
+          ?.text,
+    );
 
     return ThreadDetail(
       tid: tid,
       title: title,
       posts: posts,
+      replyCount: replyCount,
+      likeCount: likeCount,
       formhash: formhash,
       noticeauthor: noticeauthor,
       fid: fid,
@@ -274,6 +308,16 @@ class ForumParser {
           ).firstMatch(body)?.group(1) ?? '',
         ) ??
         1024;
+    final attachmentAids = <String>{};
+    for (final input in document.querySelectorAll('input[name]')) {
+      final name = input.attributes['name'] ?? '';
+      final match = RegExp(
+        r'^attachnew\[(\d+)\]\[(?:description|readperm|price)\]$',
+        caseSensitive: false,
+      ).firstMatch(name);
+      final aid = match?.group(1);
+      if (aid != null && aid.isNotEmpty) attachmentAids.add(aid);
+    }
 
     return PostEditorForm(
       formhash: formhash,
@@ -291,6 +335,7 @@ class ForumParser {
       uploadUid: uploadUid,
       uploadHash: uploadHash,
       maxUploadSizeKb: maxUploadSizeKb,
+      attachmentAids: attachmentAids.toList(growable: false),
     );
   }
 
@@ -321,7 +366,16 @@ class ForumParser {
     final limitInfo = parts.length > 7 ? parts[7].trim() : '';
 
     if (status != '0' || aid.isEmpty) {
-      final reason = limitInfo.isNotEmpty ? limitInfo : '服务器拒绝了附件';
+      final statusReason = switch (status) {
+        '1' => '服务器写入失败',
+        '2' => '图片超过论坛大小限制',
+        '3' => '论坛不支持该图片格式',
+        '9' => '图片无效或尺寸过小',
+        _ => '服务器拒绝了附件',
+      };
+      final reason = limitInfo.isNotEmpty && limitInfo != '0'
+          ? limitInfo
+          : statusReason;
       return PostAttachmentUploadResult(
         success: false,
         message: '上传失败：$reason',
@@ -331,7 +385,7 @@ class ForumParser {
 
     final url = relativePath.isEmpty
         ? ''
-        : 'https://cdn-bbs.mt2.cn/data/attachment/forum/$relativePath';
+        : 'https://cdn.binmt.cc/data/attachment/forum/$relativePath';
     return PostAttachmentUploadResult(
       success: true,
       message: '上传成功',
@@ -438,6 +492,8 @@ class ForumParser {
         content: parsedMessage.text,
         floor: floor,
         postTime: _extractPostTime(block),
+        lastEditTime: parsedMessage.lastEditTime,
+        lastEditor: parsedMessage.lastEditor,
         isOp: isOp,
         images: postImages,
         richContent: parsedMessage.contents,
@@ -587,8 +643,25 @@ class ForumParser {
       }
     }
 
-    for (final node
-        in message.querySelectorAll('script, style, .pstatus').toList()) {
+    String? lastEditTime;
+    String? lastEditor;
+    for (final node in message.querySelectorAll('i.pstatus').toList()) {
+      final text = _cleanInline(node.text);
+      final match = RegExp(
+        r'本帖最后由\s+(.+?)\s+于\s+'
+        r'(\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)'
+        r'\s+编辑',
+      ).firstMatch(text);
+      if (match != null && lastEditTime == null) {
+        lastEditor = match.group(1)?.trim();
+        lastEditTime = match.group(2)?.trim();
+      }
+      // pstatus 位于正文容器内，提取后必须移除，
+      // 避免“本帖最后由…编辑”混入帖子正文。
+      node.remove();
+    }
+
+    for (final node in message.querySelectorAll('script, style').toList()) {
       node.remove();
     }
 
@@ -615,12 +688,15 @@ class ForumParser {
 
     var cleanedHtml = message.innerHtml
         .replaceAll(
-          RegExp(r'<br\s*/?>', caseSensitive: false),
+          RegExp(
+            r'<br\s*/?>[ \t]*(?:\r?\n)?',
+            caseSensitive: false,
+          ),
           '\n',
         )
         .replaceAll(
           RegExp(
-            r'</(?:div|p|li|ol|ul|blockquote|pre)>',
+            r'</(?:div|p|li|ol|ul|blockquote|pre)>[ \t]*(?:\r?\n)?',
             caseSensitive: false,
           ),
           '\n',
@@ -635,6 +711,8 @@ class ForumParser {
     return _ParsedMessage(
       text: text,
       hiddenHint: hiddenHint,
+      lastEditTime: lastEditTime,
+      lastEditor: lastEditor,
       images: images,
       contents: contents,
     );
@@ -656,7 +734,10 @@ class ForumParser {
         return;
       }
 
-      final value = _cleanMultiline(textBuffer.toString());
+      // 这里不能 trim：<br> 可能正好位于普通文字与 color/size 等
+      // 样式节点之间。若 flush 时删掉首尾换行，预览里正常的分段在
+      // 帖子详情中就会粘成一行。
+      final value = _normalizeMultiline(textBuffer.toString());
       textBuffer.clear();
 
       if (value.isEmpty) {
@@ -893,11 +974,18 @@ class ForumParser {
       String? linkUrl,
     }) {
       if (child is html_dom.Text) {
-        final value = child.text
+        final rawText = child.text
             .replaceAll('\u00a0', ' ')
             .replaceAll('\r\n', '\n')
-            .replaceAll('\r', '\n')
-            .replaceAll(RegExp(r'[ \t\n]+'), ' ');
+            .replaceAll('\r', '\n');
+        if (rawText.trim().isEmpty && rawText.contains('\n')) return;
+        var value = rawText.replaceAll(RegExp(r'[ \t\n]+'), ' ');
+        if (RegExp(r'^[ \t]*\n').hasMatch(rawText)) {
+          value = value.trimLeft();
+        }
+        if (RegExp(r'\n[ \t]*$').hasMatch(rawText)) {
+          value = value.trimRight();
+        }
         if (value.isNotEmpty) {
           contents.add(
             PostContent.inline(
@@ -1003,7 +1091,23 @@ class ForumParser {
 
     processNode = (html_dom.Node node) {
       if (node is html_dom.Text) {
-        textBuffer.write(node.text);
+        // HTML 源码中为排版添加的 CRLF/缩进不是正文换行，
+        // 浏览器也会把它们折叠为普通空白。真正的用户换行由
+        // <br> 节点单独处理，避免 <br />\r\n 被计算两次。
+        final rawText = node.text;
+        if (rawText.trim().isEmpty && rawText.contains(RegExp(r'[\r\n]'))) {
+          return;
+        }
+        var value = rawText
+            .replaceAll('\u00a0', ' ')
+            .replaceAll(RegExp(r'[ \t\r\n]+'), ' ');
+        if (RegExp(r'^[ \t]*[\r\n]').hasMatch(rawText)) {
+          value = value.trimLeft();
+        }
+        if (RegExp(r'[\r\n][ \t]*$').hasMatch(rawText)) {
+          value = value.trimRight();
+        }
+        if (value.isNotEmpty) textBuffer.write(value);
         return;
       }
 
@@ -1023,6 +1127,21 @@ class ForumParser {
           node.attributes['data-type']?.toLowerCase() == 'code';
 
       if (tag == 'table') {
+        // Discuz 会用 table/td 包裹正文图片做布局。若直接转成
+        // 文本表格，cell.text 会丢掉 <img>，App 最终只渲染出空单元格。
+        // 带图片的表格按普通富媒体容器递归，纯文字表格则保留
+        // 原有的行列渲染。
+        final containsRenderableImage =
+            node.querySelectorAll('img').any(isRenderableInlineImage);
+        if (containsRenderableImage) {
+          flushText();
+          for (final child in node.nodes) {
+            processNode(child);
+          }
+          flushText();
+          return;
+        }
+
         final rows = tableRows(node);
         if (rows.isNotEmpty) {
           flushText();
@@ -1061,10 +1180,13 @@ class ForumParser {
       if (tag == 'ul' || tag == 'ol') {
         flushText();
         final listChildren = <PostContent>[];
+        final listItems = node.children
+            .where(
+              (element) => (element.localName ?? '').toLowerCase() == 'li',
+            )
+            .toList(growable: false);
         var index = 0;
-        for (final item in node.children.where(
-          (element) => (element.localName ?? '').toLowerCase() == 'li',
-        )) {
+        for (final item in listItems) {
           index++;
           final type = (node.attributes['type'] ?? '').toLowerCase();
           final marker = tag == 'ol' || type == '1'
@@ -1073,8 +1195,21 @@ class ForumParser {
                   ? '${String.fromCharCode(96 + ((index - 1) % 26) + 1)}. '
                   : '• ';
           listChildren.add(PostContent.text(marker));
-          listChildren.addAll(_parseRichContent(item, baseUrl: baseUrl));
-          if (index < node.children.length) {
+
+          final itemContents = _parseRichContent(item, baseUrl: baseUrl);
+          for (final content in itemContents) {
+            // Discuz 常把 [list][*]渲染成：
+            //   <li><div align="left">正文</div></li>
+            // left 只是模板默认样式，不应在 App 中再变成独立块。
+            // 否则列表符号会独占一行，正文被挤到下一段。
+            if (content.type == PostContentType.aligned &&
+                content.alignment == 'left') {
+              listChildren.addAll(content.children);
+            } else {
+              listChildren.add(content);
+            }
+          }
+          if (index < listItems.length) {
             listChildren.add(PostContent.text('\n'));
           }
         }
@@ -1433,7 +1568,10 @@ class ForumParser {
     }
 
     flushText();
-    return _promoteCommandSnippets(_normalizeRichContents(contents));
+    final normalized = _normalizeRichContents(contents);
+    return _promoteCommandSnippets(
+      _normalizeRichBlockBoundaries(normalized),
+    );
   }
 
   /// 兼容极少数页面仍把 BBCode 原文直接塞进正文的情况。
@@ -1679,7 +1817,9 @@ class ForumParser {
 
     for (final item in input) {
       if (isPlainText(item)) {
-        final text = _cleanMultiline(item.text);
+        // 纯换行也是有意义的富文本节点，尤其用于连接两个不同样式的
+        // TextSpan。保留边界换行，只清理行内多余空格。
+        final text = _normalizeMultiline(item.text);
         if (text.isEmpty) {
           continue;
         }
@@ -1689,7 +1829,7 @@ class ForumParser {
           final previous = result.removeLast();
           result.add(
             PostContent.text(
-              _cleanMultiline('${previous.text}\n$text'),
+              _normalizeMultiline('${previous.text}$text'),
             ),
           );
         } else {
@@ -1702,6 +1842,55 @@ class ForumParser {
       }
     }
 
+    return result;
+  }
+
+  /// 只处理完整富文本树里的块级边界。
+  ///
+  /// 不能把这段逻辑放进 [_normalizeRichContents]：普通文字缓冲区会在
+  /// color/size/url 等样式节点前后多次 flush，单独的 `\n` 在那一层看似
+  /// 是首尾空白，实际上是两个行内样式之间必须保留的换行。
+  List<PostContent> _normalizeRichBlockBoundaries(List<PostContent> input) {
+    bool isInline(PostContent item) {
+      return item.type == PostContentType.text ||
+          item.type == PostContentType.bold ||
+          item.type == PostContentType.link ||
+          item.type == PostContentType.emoji;
+    }
+
+    PostContent withText(PostContent item, String text) {
+      return PostContent.inline(
+        text,
+        url: item.url,
+        bold: item.isBold || item.type == PostContentType.bold,
+        italic: item.isItalic,
+        underline: item.isUnderline,
+        strikethrough: item.isStrikethrough,
+        color: item.color,
+        backgroundColor: item.backgroundColor,
+        fontFamily: item.fontFamily,
+        fontSizeScale: item.fontSizeScale,
+      );
+    }
+
+    final result = <PostContent>[];
+    for (var index = 0; index < input.length; index++) {
+      final item = input[index];
+      if (item.type != PostContentType.text &&
+          item.type != PostContentType.bold &&
+          item.type != PostContentType.link) {
+        result.add(item);
+        continue;
+      }
+
+      var text = item.text;
+      final followsBlock = index == 0 || !isInline(input[index - 1]);
+      final precedesBlock =
+          index == input.length - 1 || !isInline(input[index + 1]);
+      if (followsBlock) text = text.replaceFirst(RegExp(r'^\n+'), '');
+      if (precedesBlock) text = text.replaceFirst(RegExp(r'\n+$'), '');
+      if (text.isNotEmpty) result.add(withText(item, text));
+    }
     return result;
   }
 
@@ -1960,7 +2149,13 @@ class ForumParser {
               caseSensitive: false, dotAll: true),
           ' ',
         )
-        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(
+          RegExp(
+            r'<br\s*/?>[ \t]*(?:\r?\n)?',
+            caseSensitive: false,
+          ),
+          '\n',
+        )
         .replaceAll(RegExp(r'<[^>]+>'), ' ');
 
     return _cleanMultiline(value);
@@ -2281,7 +2476,11 @@ class ForumParser {
   }
 
   String _cleanMultiline(String value) {
-    var text = value
+    return _normalizeMultiline(value).trim();
+  }
+
+  String _normalizeMultiline(String value) {
+    final text = value
         .replaceAll('&nbsp;', ' ')
         .replaceAll('\u00a0', ' ')
         .replaceAll('\r\n', '\n')
@@ -2292,9 +2491,9 @@ class ForumParser {
         .map((line) => line.replaceAll(RegExp(r'[ \t]+'), ' ').trimRight())
         .toList();
 
-    text = lines.join('\n');
-    text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
-    return text.trim();
+    // 连续换行来自用户正文中的多个 <br>，必须原样保留；调用方根据
+    // 场景决定是否裁剪首尾。富文本节点边界不能裁剪。
+    return lines.join('\n');
   }
 
   String? _cssProperty(String? style, String name) {
@@ -2469,12 +2668,16 @@ class _ReplyRelation {
 class _ParsedMessage {
   final String text;
   final String? hiddenHint;
+  final String? lastEditTime;
+  final String? lastEditor;
   final List<String> images;
   final List<PostContent> contents;
 
   const _ParsedMessage({
     required this.text,
     this.hiddenHint,
+    this.lastEditTime,
+    this.lastEditor,
     this.images = const [],
     this.contents = const [],
   });

@@ -10,11 +10,13 @@ import '../models/models.dart';
 class ThreadCard extends StatelessWidget {
   final Thread thread;
   final VoidCallback onTap;
+  final VoidCallback? onRemove;
 
   const ThreadCard({
     super.key,
     required this.thread,
     required this.onTap,
+    this.onRemove,
   });
 
   @override
@@ -53,6 +55,15 @@ class ThreadCard extends StatelessWidget {
                   if (thread.hasHiddenContent) ...[
                     const SizedBox(width: 8),
                     const _HiddenBadge(),
+                  ],
+                  if (onRemove != null) ...[
+                    const SizedBox(width: 2),
+                    IconButton(
+                      tooltip: '取消收藏',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onRemove,
+                      icon: const Icon(Icons.bookmark_remove_outlined),
+                    ),
                   ],
                 ],
               ),

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 
+import 'install_identity_service.dart';
 import 'update_service.dart';
 
 class FeedbackSubmitResult {
@@ -14,6 +15,24 @@ class FeedbackSubmitResult {
     required this.success,
     required this.message,
     this.id,
+  });
+}
+
+class FeedbackReply {
+  final String id;
+  final String feedbackId;
+  final String title;
+  final String content;
+  final String? actionUrl;
+  final DateTime? createdAt;
+
+  const FeedbackReply({
+    required this.id,
+    required this.feedbackId,
+    required this.title,
+    required this.content,
+    this.actionUrl,
+    this.createdAt,
   });
 }
 
@@ -67,7 +86,8 @@ class FeedbackService {
         'Accept': 'application/json',
         'Content-Type': 'application/json; charset=utf-8',
       },
-      validateStatus: (status) => status != null && status >= 200 && status < 600,
+      validateStatus: (status) =>
+          status != null && status >= 200 && status < 600,
     ),
   );
 
@@ -106,6 +126,7 @@ class FeedbackService {
     } catch (_) {
       // 版本信息不是提交反馈的硬依赖。
     }
+    final installId = await InstallIdentityService.instance.getId();
 
     final headers = <String, dynamic>{};
     if (appToken.isNotEmpty) {
@@ -120,6 +141,7 @@ class FeedbackService {
           data: jsonEncode({
             'content': normalizedContent,
             'contact': normalizedContact,
+            'installId': installId,
             'appVersion': versionName,
             'versionCode': versionCode,
             'platform': Platform.operatingSystem,
@@ -211,5 +233,80 @@ class FeedbackService {
           success: false,
           message: '反馈服务暂时不可用，请稍后重试',
         );
+  }
+
+  Future<List<FeedbackReply>> fetchPendingReplies() async {
+    final installId = await InstallIdentityService.instance.getId();
+    final headers = <String, dynamic>{};
+    if (appToken.isNotEmpty) headers['X-MTForum-Token'] = appToken;
+    headers['X-MTForum-Install-ID'] = installId;
+
+    for (final endpoint in endpointCandidates) {
+      try {
+        final response = await _dio.get<String>(
+          '$endpoint/replies',
+          options: Options(headers: headers),
+        );
+        final status = response.statusCode ?? 0;
+        if (status < 200 || status >= 300) continue;
+        final decoded = jsonDecode(response.data ?? '{}');
+        if (decoded is! Map || decoded['replies'] is! List) continue;
+        final replies = <FeedbackReply>[];
+        for (final raw in decoded['replies'] as List) {
+          if (raw is! Map) continue;
+          final id = '${raw['id'] ?? ''}'.trim();
+          final content = '${raw['content'] ?? ''}'.trim();
+          if (id.isEmpty || content.isEmpty) continue;
+          final actionUrl = '${raw['actionUrl'] ?? ''}'.trim();
+          replies.add(
+            FeedbackReply(
+              id: id,
+              feedbackId: '${raw['feedbackId'] ?? ''}'.trim(),
+              title: '${raw['title'] ?? ''}'.trim().isEmpty
+                  ? '反馈回复'
+                  : '${raw['title']}'.trim(),
+              content: content,
+              actionUrl: actionUrl.isEmpty ? null : actionUrl,
+              createdAt: DateTime.tryParse('${raw['createdAt'] ?? ''}'),
+            ),
+          );
+        }
+        replies.sort((a, b) {
+          final left = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final right = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          return left.compareTo(right);
+        });
+        return replies;
+      } catch (_) {
+        // 当前候选不可用时继续尝试下一个反馈服务地址。
+      }
+    }
+    return const [];
+  }
+
+  Future<bool> markReplyRead(String replyId) async {
+    final normalizedId = replyId.trim();
+    if (normalizedId.isEmpty) return false;
+    final installId = await InstallIdentityService.instance.getId();
+    final headers = <String, dynamic>{};
+    if (appToken.isNotEmpty) headers['X-MTForum-Token'] = appToken;
+
+    for (final endpoint in endpointCandidates) {
+      try {
+        final base = Uri.parse('$endpoint/replies/');
+        final target =
+            base.resolve('${Uri.encodeComponent(normalizedId)}/read');
+        final response = await _dio.postUri<String>(
+          target,
+          data: jsonEncode({'installId': installId}),
+          options: Options(headers: headers),
+        );
+        final status = response.statusCode ?? 0;
+        if (status >= 200 && status < 300) return true;
+      } catch (_) {
+        // 当前候选不可用时继续尝试。
+      }
+    }
+    return false;
   }
 }

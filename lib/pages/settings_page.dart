@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -22,6 +23,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _autoCheck = true;
   bool _checking = false;
+  bool _fontChanging = false;
   String _version = '';
 
   @override
@@ -76,9 +78,11 @@ class _SettingsPageState extends State<SettingsPage> {
             autofocus: true,
             minLines: 5,
             maxLines: 10,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               hintText: '每行一个关键词\n也支持逗号或分号分隔',
-              helperText: '包含任一关键词的评论或回复提醒将被隐藏',
+              helperText: _commentFilter.keywordContainsEnabled
+                  ? '模糊过滤：内容中包含任一关键词即隐藏'
+                  : '精确过滤：整条内容与关键词一致才隐藏',
               alignLabelWithHint: true,
             ),
           ),
@@ -101,22 +105,22 @@ class _SettingsPageState extends State<SettingsPage> {
     controller.dispose();
   }
 
-  Future<void> _editShortReplyMaxLength() async {
+  Future<void> _editMaxMatchedContentLength() async {
     final controller = TextEditingController(
-      text: '${_commentFilter.shortReplyMaxLength}',
+      text: '${_commentFilter.maxMatchedContentLength}',
     );
     final value = await showDialog<int>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('设置短回复字数'),
+        title: const Text('设置关键词过滤长度上限'),
         content: TextField(
           controller: controller,
           autofocus: true,
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           decoration: const InputDecoration(
-            labelText: '最大过滤字数',
-            helperText: '可设置 1–20，空格不计入字数',
+            labelText: '最大内容字数',
+            helperText: '可设置 1–500，超过此长度的内容将被保留',
           ),
         ),
         actions: [
@@ -127,7 +131,7 @@ class _SettingsPageState extends State<SettingsPage> {
           FilledButton(
             onPressed: () {
               final parsed = int.tryParse(controller.text);
-              if (parsed == null || parsed < 1 || parsed > 20) return;
+              if (parsed == null || parsed < 1 || parsed > 500) return;
               Navigator.pop(context, parsed);
             },
             child: const Text('保存'),
@@ -137,7 +141,53 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     controller.dispose();
     if (value != null) {
-      await _commentFilter.setShortReplyMaxLength(value);
+      await _commentFilter.setMaxMatchedContentLength(value);
+    }
+  }
+
+  Future<void> _pickCustomFont() async {
+    if (_fontChanging) return;
+    setState(() => _fontChanging = true);
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['ttf', 'otf'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.single;
+      final bytes = file.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        throw const FormatException('无法读取字体文件');
+      }
+      await _theme.installCustomFont(bytes, file.name);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已应用字体：${file.name}')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('字体导入失败：$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _fontChanging = false);
+    }
+  }
+
+  Future<void> _resetCustomFont() async {
+    if (_fontChanging) return;
+    setState(() => _fontChanging = true);
+    try {
+      await _theme.clearCustomFont();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已恢复系统字体')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _fontChanging = false);
     }
   }
 
@@ -319,6 +369,30 @@ class _SettingsPageState extends State<SettingsPage> {
                         ],
                       ),
                     ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.font_download_outlined),
+                      title: const Text('自定义字体'),
+                      subtitle: Text(
+                        _theme.hasCustomFont
+                            ? _theme.customFontName ?? '已应用自定义字体'
+                            : '从本地选择 TTF 或 OTF 字体',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: _fontChanging
+                          ? const SizedBox.square(
+                              dimension: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : _theme.hasCustomFont
+                              ? TextButton(
+                                  onPressed: _resetCustomFont,
+                                  child: const Text('恢复'),
+                                )
+                              : const Icon(Icons.chevron_right_rounded),
+                      onTap: _fontChanging ? null : _pickCustomFont,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 18),
@@ -331,44 +405,82 @@ class _SettingsPageState extends State<SettingsPage> {
                       title: const Text('过滤关键词'),
                       subtitle: Text(
                         _commentFilter.hasKeywords
-                            ? '已设置 ${_commentFilter.keywords.length} 个关键词'
+                            ? '已设置 ${_commentFilter.keywords.length} 个关键词 · '
+                                '${_commentFilter.fuzzyMatchingEnabled ? '模糊过滤' : '精确过滤'}'
                             : '尚未设置关键词',
                       ),
                       trailing: const Icon(Icons.chevron_right_rounded),
                       onTap: _editFilterKeywords,
                     ),
                     const Divider(height: 1),
-                    SwitchListTile(
-                      secondary: const Icon(Icons.short_text_rounded),
-                      title: const Text('短回复过滤'),
+                    ListTile(
+                      leading: const Icon(Icons.manage_search_rounded),
+                      title: const Text('关键词匹配方式'),
                       subtitle: Text(
-                        '隐藏去除空格后不超过 '
-                        '${_commentFilter.shortReplyMaxLength} 个字的回复',
+                        _commentFilter.fuzzyMatchingEnabled
+                            ? '模糊匹配：内容中包含任一关键词即过滤'
+                            : '精确匹配：整条内容与关键词一致才过滤',
                       ),
-                      value: _commentFilter.shortReplyEnabled,
-                      onChanged: _commentFilter.setShortReplyEnabled,
                     ),
-                    if (_commentFilter.shortReplyEnabled) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment<bool>(
+                              value: false,
+                              icon: Icon(Icons.filter_alt_outlined),
+                              label: Text('精确匹配'),
+                            ),
+                            ButtonSegment<bool>(
+                              value: true,
+                              icon: Icon(Icons.saved_search_rounded),
+                              label: Text('模糊匹配'),
+                            ),
+                          ],
+                          selected: {_commentFilter.fuzzyMatchingEnabled},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (selection) {
+                            _commentFilter.setFuzzyMatchingEnabled(
+                              selection.first,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.shield_outlined),
+                      title: const Text('关键词过滤最大长度'),
+                      subtitle: Text(
+                        '超过 ${_commentFilter.maxMatchedContentLength} 字的内容'
+                        '即使命中关键词也不会隐藏',
+                      ),
+                      value: _commentFilter.matchLengthLimitEnabled,
+                      onChanged: _commentFilter.setMatchLengthLimitEnabled,
+                    ),
+                    if (_commentFilter.matchLengthLimitEnabled) ...[
                       const Divider(height: 1),
                       ListTile(
                         leading: const SizedBox(width: 24),
-                        title: const Text('最大过滤字数'),
-                        subtitle: const Text('点击修改，可设置 1–20'),
+                        title: const Text('最大匹配内容长度'),
+                        subtitle: const Text('点击修改，可设置 1–500'),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text('≤ ${_commentFilter.shortReplyMaxLength}'),
+                            Text('≤ ${_commentFilter.maxMatchedContentLength}'),
                             const Icon(Icons.chevron_right_rounded),
                           ],
                         ),
-                        onTap: _editShortReplyMaxLength,
+                        onTap: _editMaxMatchedContentLength,
                       ),
                     ],
                     const Divider(height: 1),
                     SwitchListTile(
                       secondary: const Icon(Icons.forum_outlined),
                       title: const Text('评论区过滤'),
-                      subtitle: const Text('应用关键词和短回复过滤规则'),
+                      subtitle: const Text('在评论区应用关键词过滤规则'),
                       value: _commentFilter.commentsEnabled,
                       onChanged: _commentFilter.setCommentsEnabled,
                     ),

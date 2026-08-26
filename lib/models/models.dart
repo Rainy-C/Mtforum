@@ -79,6 +79,8 @@ class Post {
   final String content;
   final String? floor;
   final String? postTime;
+  final String? lastEditTime;
+  final String? lastEditor;
   final bool isOp;
   final List<String> images;
   final List<PostContent> richContent;
@@ -98,6 +100,8 @@ class Post {
     required this.content,
     this.floor,
     this.postTime,
+    this.lastEditTime,
+    this.lastEditor,
     this.isOp = false,
     this.images = const [],
     this.richContent = const [],
@@ -114,6 +118,9 @@ class ThreadDetail {
   final String tid;
   final String title;
   final List<Post> posts;
+  final String? replyCount;
+  final String? likeCount;
+  final String? viewCount;
   final String formhash;
   final String noticeauthor;
   final String fid;
@@ -124,6 +131,9 @@ class ThreadDetail {
     required this.tid,
     required this.title,
     required this.posts,
+    this.replyCount,
+    this.likeCount,
+    this.viewCount,
     required this.formhash,
     required this.noticeauthor,
     required this.fid,
@@ -147,6 +157,7 @@ class PostEditorForm {
   final String uploadUid;
   final String uploadHash;
   final int maxUploadSizeKb;
+  final List<String> attachmentAids;
 
   const PostEditorForm({
     required this.formhash,
@@ -163,6 +174,7 @@ class PostEditorForm {
     this.uploadUid = '',
     this.uploadHash = '',
     this.maxUploadSizeKb = 1024,
+    this.attachmentAids = const [],
   });
 
   bool get canUploadImages => uploadUid.isNotEmpty && uploadHash.isNotEmpty;
@@ -505,6 +517,7 @@ class FavoriteItem {
   final String title;
   final String type;
   final String href;
+  final String? deleteUrl;
   final String? tid;
   final Thread? thread;
 
@@ -513,6 +526,7 @@ class FavoriteItem {
     required this.title,
     required this.type,
     required this.href,
+    this.deleteUrl,
     this.tid,
     this.thread,
   });
@@ -768,10 +782,12 @@ class NoticeItem {
 class NoticePageData {
   final List<NoticeItem> items;
   final bool hasMore;
+  final int totalPages;
 
   const NoticePageData({
     required this.items,
     this.hasMore = false,
+    this.totalPages = 1,
   });
 }
 
@@ -811,6 +827,8 @@ class FriendRequestItem {
   final String? avatarUrl;
   final String? acceptUrl;
   final String? ignoreUrl;
+  final String requestTime;
+  final bool isOnline;
 
   const FriendRequestItem({
     required this.uid,
@@ -818,6 +836,8 @@ class FriendRequestItem {
     this.avatarUrl,
     this.acceptUrl,
     this.ignoreUrl,
+    this.requestTime = '',
+    this.isOnline = false,
   });
 }
 

@@ -1,13 +1,15 @@
 name: mtforum
 description: MT论坛第三方客户端
 publish_to: 'none'
-version: 2.30.1+121
+version: 2.41.0+149
 
 environment:
   sdk: ^3.6.0
 
 dependencies:
   flutter:
+    sdk: flutter
+  flutter_localizations:
     sdk: flutter
   dio: ^5.7.0
   cookie_jar: ^4.0.8

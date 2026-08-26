@@ -33,6 +33,7 @@ class ApiService {
   final List<void Function()> _loginListeners = [];
 
   late final Dio _dio;
+  late final Dio _desktopDio;
   late final CookieJar _cookieJar;
   late final SharedPreferences _prefs;
 
@@ -47,7 +48,7 @@ class ApiService {
   final Map<String, ThreadDetail> _findPostPageCache = {};
   final Map<String, DateTime> _findPostPageCacheTimes = {};
   final Map<String, Future<ThreadDetail>> _findPostPageRequests = {};
-  final Map<String, Future<Post?>> _favoriteAuthorRequests = {};
+  final Map<String, Future<_FavoriteDetailData?>> _favoriteDetailRequests = {};
   static const Duration _findPostPageCacheTtl = Duration(minutes: 2);
 
   bool get isLoggedIn =>
@@ -95,6 +96,20 @@ class ApiService {
       ),
     );
     _dio.interceptors.add(CookieManager(_cookieJar));
+    _desktopDio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 25),
+        headers: const {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                  'AppleWebKit/537.36 (KHTML, like Gecko) '
+                  'Chrome/150.0.0.0 Safari/537.36',
+          'Accept-Language': 'zh-CN,zh;q=0.9',
+          'Accept-Encoding': 'gzip',
+        },
+      ),
+    );
 
     // 所有 HTML/AJAX 响应只要带 formhash，就自动收入缓存。
     // 这样浏览帖子、签到页、社区等页面后，写操作无需再次专门请求。
@@ -245,7 +260,7 @@ class ApiService {
     _findPostPageCache.clear();
     _findPostPageCacheTimes.clear();
     _findPostPageRequests.clear();
-    _favoriteAuthorRequests.clear();
+    _favoriteDetailRequests.clear();
 
     await _prefs.remove('forum_formhash');
     await _prefs.remove('forum_formhash_auth');
@@ -534,7 +549,7 @@ class ApiService {
     return requestUri.resolve(value.replaceAll('&amp;', '&'));
   }
 
-  Future<String?> getNoticeReplyPreview(NoticeItem item) async {
+  Future<Post?> getNoticeReplyPreview(NoticeItem item) async {
     final tid = item.tid?.trim() ?? '';
     final pid = item.pid?.trim() ?? '';
     final targetUrl = item.targetUrl?.trim() ?? '';
@@ -545,10 +560,7 @@ class ApiService {
       targetUrl: targetUrl,
     );
     for (final post in detail.posts) {
-      if (post.pid == pid) {
-        final value = buildPostPreview(post);
-        return value.isEmpty ? null : value;
-      }
+      if (post.pid == pid) return post;
     }
     return null;
   }
@@ -641,6 +653,7 @@ class ApiService {
     required PostEditorForm form,
     required List<int> bytes,
     required String fileName,
+    String? referer,
   }) async {
     if (!isLoggedIn) {
       return const PostAttachmentUploadResult(
@@ -685,7 +698,7 @@ class ApiService {
       options: Options(
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
-          'Referer': _postEditorReferer(form),
+          'Referer': referer ?? _postEditorReferer(form),
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -741,12 +754,29 @@ class ApiService {
     return '$baseUrl/forum.php?mod=post&action=newthread&fid=${form.fid}';
   }
 
+  void _addAttachmentBindings(
+    Map<String, dynamic> data,
+    Iterable<String> aids, {
+    bool includePermissions = false,
+  }) {
+    for (final rawAid in aids) {
+      final aid = rawAid.trim();
+      if (aid.isEmpty || !RegExp(r'^\d+$').hasMatch(aid)) continue;
+      data['attachnew[$aid][description]'] = '';
+      if (includePermissions) {
+        data['attachnew[$aid][readperm]'] = '';
+        data['attachnew[$aid][price]'] = '';
+      }
+    }
+  }
+
   Future<ThreadSubmitResult> submitNewThread({
     required PostEditorForm form,
     required String subject,
     required String message,
     bool? allowNoticeAuthor,
     bool? useSig,
+    Iterable<String> uploadedAttachmentAids = const [],
   }) async {
     if (!isLoggedIn) {
       return const ThreadSubmitResult(success: false, message: '请先登录');
@@ -761,6 +791,21 @@ class ApiService {
       return const ThreadSubmitResult(success: false, message: '请输入帖子正文');
     }
 
+    final data = <String, dynamic>{
+      'formhash': form.formhash,
+      'posttime': form.posttime,
+      'delete': form.deleteValue,
+      'topicsubmit': 'yes',
+      'htmlon': '0',
+      'subject': title,
+      'message': content,
+      if (allowNoticeAuthor ?? (form.allowNoticeAuthor != '0'))
+        'allownoticeauthor': '1',
+      if (useSig ?? (form.useSig != '0')) 'usesig': '1',
+      'save': '',
+    };
+    _addAttachmentBindings(data, uploadedAttachmentAids);
+
     final response = await _dio.post<String>(
       '/forum.php',
       queryParameters: {
@@ -773,18 +818,7 @@ class ApiService {
         'handlekey': 'postform',
         'inajax': 1,
       },
-      data: {
-        'formhash': form.formhash,
-        'posttime': form.posttime,
-        'delete': form.deleteValue,
-        'topicsubmit': 'yes',
-        'subject': title,
-        'message': content,
-        if (allowNoticeAuthor ?? (form.allowNoticeAuthor != '0'))
-          'allownoticeauthor': '1',
-        if (useSig ?? (form.useSig != '0')) 'usesig': '1',
-        'save': '',
-      },
+      data: data,
       options: Options(
         contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
         headers: {
@@ -990,6 +1024,7 @@ class ApiService {
     required String message,
     bool? allowNoticeAuthor,
     bool? useSig,
+    Iterable<String> uploadedAttachmentAids = const [],
   }) async {
     if (!isLoggedIn) {
       return const ThreadSubmitResult(success: false, message: '请先登录');
@@ -999,6 +1034,30 @@ class ApiService {
     if (content.isEmpty) {
       return const ThreadSubmitResult(success: false, message: '帖子正文不能为空');
     }
+
+    final data = <String, dynamic>{
+      'formhash': form.formhash,
+      'posttime': form.posttime,
+      'delete': form.deleteValue,
+      'htmlon': '0',
+      'fid': form.fid,
+      'tid': form.tid,
+      'pid': form.pid,
+      'page': form.page,
+      'editsubmit': 'yes',
+      'subject': subject.trim(),
+      'message': content,
+      if (allowNoticeAuthor ?? (form.allowNoticeAuthor != '0'))
+        'allownoticeauthor': '1',
+      if (useSig ?? (form.useSig != '0')) 'usesig': '1',
+      'save': '',
+    };
+    _addAttachmentBindings(
+      data,
+      form.attachmentAids,
+      includePermissions: true,
+    );
+    _addAttachmentBindings(data, uploadedAttachmentAids);
 
     final response = await _dio.post<String>(
       '/forum.php',
@@ -1011,22 +1070,7 @@ class ApiService {
         'handlekey': 'postform',
         'inajax': 1,
       },
-      data: {
-        'formhash': form.formhash,
-        'posttime': form.posttime,
-        'delete': form.deleteValue,
-        'fid': form.fid,
-        'tid': form.tid,
-        'pid': form.pid,
-        'page': form.page,
-        'editsubmit': 'yes',
-        'subject': subject.trim(),
-        'message': content,
-        if (allowNoticeAuthor ?? (form.allowNoticeAuthor != '0'))
-          'allownoticeauthor': '1',
-        if (useSig ?? (form.useSig != '0')) 'usesig': '1',
-        'save': '',
-      },
+      data: data,
       options: Options(
         contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
         headers: {
@@ -1061,12 +1105,59 @@ class ApiService {
     );
   }
 
+  Future<PostEditorForm> getReplyPostForm({
+    required String tid,
+    required String fid,
+    String? repquotePid,
+  }) async {
+    if (!isLoggedIn) throw StateError('请先登录');
+
+    final targetPid = repquotePid?.trim() ?? '';
+    final response = await _dio.get<String>(
+      '/forum.php',
+      queryParameters: {
+        'mod': 'post',
+        'action': 'reply',
+        'fid': fid,
+        'tid': tid,
+        if (targetPid.isNotEmpty) 'repquote': targetPid,
+        'extra': '',
+        'mobile': 2,
+      },
+      options: Options(
+        headers: {'Referer': '$baseUrl/thread-$tid-1-1.html'},
+        responseType: ResponseType.plain,
+        followRedirects: true,
+      ),
+    );
+
+    final body = response.data ?? '';
+    final form = _parser.parsePostEditorForm(
+      body,
+      fallbackFid: fid,
+      fallbackTid: tid,
+      fallbackPid: targetPid,
+    );
+    if (form.formhash.isEmpty ||
+        form.posttime.isEmpty ||
+        !form.canUploadImages) {
+      final readable = _extractAjaxMessage(body);
+      throw StateError(
+        readable.isEmpty ? '未获取到回复图片上传凭证，请重试' : readable,
+      );
+    }
+    _rememberFormhash(form.formhash);
+    return form;
+  }
+
   Future<ReplyResult> replyThread({
     required String tid,
     required String fid,
     required String noticeauthor,
     required String message,
     String? repquotePid,
+    PostEditorForm? replyForm,
+    Iterable<String> uploadedAttachmentAids = const [],
   }) async {
     if (!isLoggedIn) {
       return const ReplyResult(success: false, message: '请先登录');
@@ -1078,17 +1169,26 @@ class ApiService {
     // 隐藏字段，再把这些字段随表单一起 POST。跳过这一步时，服务端会把
     // 回复保存成普通回帖，客户端刷新后自然无法判断“回复了谁”。
     final data = <String, dynamic>{
-      'formhash': await getFormhash(),
+      'formhash': replyForm?.formhash ?? await getFormhash(),
+      if (replyForm?.posttime.isNotEmpty == true)
+        'posttime': replyForm!.posttime,
+      'delete': '0',
+      'htmlon': '0',
+      'save': '',
+      'replysubmit': 'yes',
       'noticeauthor': noticeauthor,
+      'noticetrimstr': '',
+      'noticeauthormsg': '',
       'message': message,
     };
+    _addAttachmentBindings(data, uploadedAttachmentAids);
 
     var postQuery = <String, dynamic>{
       'mod': 'post',
       'action': 'reply',
       'fid': fid,
       'tid': tid,
-      'extra': 'page=1',
+      'extra': '',
       'replysubmit': 'yes',
       'mobile': 2,
       'handlekey': 'fastpost',
@@ -1143,6 +1243,7 @@ class ApiService {
       }
       data['message'] = message;
       data['replysubmit'] = 'yes';
+      _addAttachmentBindings(data, uploadedAttachmentAids);
 
       final action = (form.attributes['action'] ?? '')
           .replaceAll('&amp;', '&')
@@ -1677,6 +1778,93 @@ class ApiService {
     return _enrichFavoriteAuthors(items);
   }
 
+  /// 使用收藏列表为每一项返回的专属删除地址取消收藏。
+  ///
+  /// Discuz 的删除动作依赖 favid/formhash，不能只拿 tid 调通用收藏接口。
+  Future<bool> cancelFavoriteItem(FavoriteItem item) async {
+    if (!isLoggedIn) return false;
+    final rawUrl = item.deleteUrl?.trim() ?? '';
+    final uri = Uri.tryParse(rawUrl);
+    final forumHost = Uri.parse(baseUrl).host;
+    if (uri == null ||
+        rawUrl.isEmpty ||
+        (uri.hasAuthority && uri.host != forumHost)) {
+      return false;
+    }
+
+    try {
+      final target = uri.hasAuthority
+          ? uri
+          : Uri.parse(baseUrl).resolveUri(uri);
+      final dialogUri = target.replace(
+        queryParameters: {
+          ...target.queryParameters,
+          'mobile': '2',
+          'infloat': 'yes',
+          'handlekey': 'favorite',
+        },
+      );
+      final referer =
+          '$baseUrl/home.php?mod=space&do=favorite&view=me&type=${item.type}';
+      final dialog = await _dio.getUri<String>(
+        dialogUri,
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': referer,
+          },
+          responseType: ResponseType.plain,
+          followRedirects: true,
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+      if ((dialog.statusCode ?? 0) < 200 ||
+          (dialog.statusCode ?? 0) >= 400) {
+        return false;
+      }
+      final hash = _extractFormhash(dialog.data ?? '') ?? await getFormhash();
+      if (hash.isEmpty) return false;
+
+      final submitUri = target.replace(
+        queryParameters: {
+          ...target.queryParameters,
+          'mobile': '2',
+        },
+      );
+      final response = await _dio.postUri<String>(
+        submitUri,
+        data: {
+          'referer': '$baseUrl/./',
+          'deletesubmit': 'true',
+          'formhash': hash,
+          'handlekey': 'comiis',
+        },
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': referer,
+          },
+          responseType: ResponseType.plain,
+          followRedirects: true,
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+      final status = response.statusCode ?? 0;
+      final body = response.data ?? '';
+      if (status < 200 || status >= 400) return false;
+      if (body.contains('请先登录') ||
+          body.contains('抱歉，您尚未登录') ||
+          body.contains('无权进行当前操作') ||
+          body.contains('非法请求')) {
+        return false;
+      }
+      return !body.contains('favid=${item.favid}');
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<List<FavoriteItem>> _enrichFavoriteAuthors(
     List<FavoriteItem> items,
   ) async {
@@ -1684,23 +1872,32 @@ class ApiService {
     final missingIndexes = <int>[
       for (var index = 0; index < result.length; index++)
         if (result[index].isThread &&
-            (result[index].thread?.authorName?.trim().isEmpty ?? true))
+            ((result[index].thread?.authorName?.trim().isEmpty ?? true) ||
+                (result[index].thread?.likeCount?.trim().isEmpty ?? true) ||
+                (result[index].thread?.replyCount?.trim().isEmpty ?? true)))
           index,
     ];
 
-    // 收藏页模板经常不输出作者。按每批 4 个请求帖子第一页补齐楼主，
-    // 避免一次性并发过多，也避免把“缺失字段”错误展示成“匿名发帖”。
-    for (var start = 0; start < missingIndexes.length; start += 4) {
-      final end = (start + 4).clamp(0, missingIndexes.length).toInt();
+    // 收藏页只有标题。按每批 3 个请求 PC 详情，一次补齐作者、点赞、
+    // 回复和阅读，同时限制并发避免收藏较多时瞬间发出过多请求。
+    for (var start = 0; start < missingIndexes.length; start += 3) {
+      final end = (start + 3).clamp(0, missingIndexes.length).toInt();
       final batch = missingIndexes.sublist(start, end);
-      final authors = await Future.wait(
-        batch.map((index) => _getFavoriteAuthor(result[index].tid!)),
+      final details = await Future.wait(
+        batch.map((index) => _getFavoriteDetail(result[index].tid!)),
       );
 
       for (var offset = 0; offset < batch.length; offset++) {
         final index = batch[offset];
-        final author = authors[offset];
-        if (author == null) continue;
+        final data = details[offset];
+        if (data == null) continue;
+        final detail = data.detail;
+        final author = detail.posts.isEmpty
+            ? null
+            : detail.posts.firstWhere(
+                (post) => post.isOp,
+                orElse: () => detail.posts.first,
+              );
         final item = result[index];
         final thread = item.thread ?? Thread(tid: item.tid!, title: item.title);
         result[index] = FavoriteItem(
@@ -1708,11 +1905,15 @@ class ApiService {
           title: item.title,
           type: item.type,
           href: item.href,
+          deleteUrl: item.deleteUrl,
           tid: item.tid,
           thread: thread.copyWith(
-            authorUid: author.authorUid,
-            authorName: author.authorName,
-            avatarUrl: author.avatarUrl,
+            authorUid: author?.authorUid,
+            authorName: author?.authorName,
+            avatarUrl: author?.avatarUrl,
+            likeCount: detail.likeCount,
+            replyCount: data.replyCount ?? detail.replyCount,
+            viewCount: data.viewCount,
           ),
         );
       }
@@ -1720,19 +1921,63 @@ class ApiService {
     return result;
   }
 
-  Future<Post?> _getFavoriteAuthor(String tid) {
-    return _favoriteAuthorRequests.putIfAbsent(tid, () async {
+  Future<_FavoriteDetailData?> _getFavoriteDetail(String tid) {
+    return _favoriteDetailRequests.putIfAbsent(tid, () async {
       try {
-        final detail = await getThreadDetail(tid, page: 1);
-        if (detail.posts.isEmpty) return null;
-        return detail.posts.firstWhere(
-          (post) => post.isOp,
-          orElse: () => detail.posts.first,
-        );
+        return await _getDesktopFavoriteDetail(tid);
       } catch (_) {
         return null;
       }
     });
+  }
+
+  Future<_FavoriteDetailData?> _getDesktopFavoriteDetail(String tid) async {
+    try {
+      // 独立 Dio 不挂 CookieManager：PC UA 且不带 mobile 参数，避免论坛
+      // 已有移动模板 Cookie 让服务端继续返回不含阅读量的 mobile=2 页面。
+      final cookie = <String>[
+        if (_auth?.isNotEmpty == true) 'cQWy_2132_auth=$_auth',
+        if (_saltkey?.isNotEmpty == true) 'cQWy_2132_saltkey=$_saltkey',
+      ].join('; ');
+      final response = await _desktopDio.get<String>(
+        '$baseUrl/thread-$tid-1-1.html',
+        options: Options(
+          headers: {
+            if (cookie.isNotEmpty) 'Cookie': cookie,
+          },
+          responseType: ResponseType.plain,
+          followRedirects: true,
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+      if ((response.statusCode ?? 0) < 200 ||
+          (response.statusCode ?? 0) >= 400) {
+        return null;
+      }
+      final body = response.data ?? '';
+      final document = html_parser.parse(body);
+      final reply = document
+          .querySelector('div.bm_h.comiis_snvbt span.comiis_hfs > strong')
+          ?.text
+          .trim();
+      final view = document
+          .querySelector('div.bm_h.comiis_snvbt span.comiis_cks > strong')
+          ?.text
+          .trim();
+      return _FavoriteDetailData(
+        detail: _parser.parseThreadDetail(
+          body,
+          tid: tid,
+          page: 1,
+          baseUrl: baseUrl,
+        ),
+        replyCount:
+            RegExp(r'^\d+$').hasMatch(reply ?? '') ? reply : null,
+        viewCount: RegExp(r'^\d+$').hasMatch(view ?? '') ? view : null,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<List<FriendItem>> getMyFriends({
@@ -2044,15 +2289,45 @@ class ApiService {
 
     final response = await _dio.get<String>(
       '/home.php',
-      queryParameters: const {
+      queryParameters: {
+        'mod': 'spacecp',
+        'ac': 'friend',
+        'op': 'request',
+        'mobile': 2,
+        '_t': DateTime.now().millisecondsSinceEpoch,
+      },
+      options: Options(
+        headers: {
+          'Referer':
+              '$baseUrl/home.php?mod=space&do=friend&view=trace',
+          'Cache-Control': 'no-cache',
+        },
+        responseType: ResponseType.plain,
+        followRedirects: true,
+      ),
+    );
+
+    final primary = _userCenterParser.parseFriendRequests(
+      response.data ?? '',
+      baseUrl: baseUrl,
+    );
+    if (primary.isNotEmpty) return primary;
+
+    // 部分 Comiis 会让 mobile=2 首次请求只返回页面外壳；旧 AJAX 片段
+    // 则直接包含申请列表。主请求为空时再探测一次，真实无申请时仍返回空。
+    final fallback = await _dio.get<String>(
+      '/home.php',
+      queryParameters: {
         'mod': 'spacecp',
         'ac': 'friend',
         'op': 'request',
         'inajax': 1,
+        '_t': DateTime.now().millisecondsSinceEpoch,
       },
       options: Options(
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
+          'Cache-Control': 'no-cache',
           'Referer':
               '$baseUrl/home.php?mod=space&do=friend&view=trace',
         },
@@ -2060,9 +2335,8 @@ class ApiService {
         followRedirects: true,
       ),
     );
-
     return _userCenterParser.parseFriendRequests(
-      response.data ?? '',
+      fallback.data ?? '',
       baseUrl: baseUrl,
     );
   }
@@ -2245,8 +2519,9 @@ class ApiService {
   }
 
   Future<OperationResult> respondFriendRequest(
-    String? actionUrl,
-  ) async {
+    String? actionUrl, {
+    String group = '1',
+  }) async {
     if (!isLoggedIn || actionUrl == null || actionUrl.isEmpty) {
       return const OperationResult(
         success: false,
@@ -2255,33 +2530,179 @@ class ApiService {
     }
 
     try {
-      final uri = Uri.parse(actionUrl);
-      final query = Map<String, dynamic>.from(uri.queryParameters);
-      query['inajax'] = 1;
+      final uri = Uri.parse(actionUrl.replaceAll('&amp;', '&'));
+      final op = uri.queryParameters['op'] ?? '';
+      final uid = uri.queryParameters['uid'] ?? '';
 
-      final response = await _dio.get<String>(
-        uri.path,
-        queryParameters: query,
+      if (op == 'ignore') {
+        if (uid.isEmpty) {
+          return const OperationResult(
+            success: false,
+            message: '好友申请 UID 无效',
+          );
+        }
+        // 使用探测文档确认的最小参数，避免列表链接携带的 handlekey 被
+        // 模板解释成“删除好友”弹窗而没有真正忽略待处理申请。
+        final query = <String, dynamic>{
+          'mod': 'spacecp',
+          'ac': 'friend',
+          'op': 'ignore',
+          'uid': uid,
+          'confirm': 1,
+          'mobile': 2,
+          '_t': DateTime.now().millisecondsSinceEpoch,
+        };
+        final response = await _dio.get<String>(
+          '/home.php',
+          queryParameters: query,
+          options: Options(
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest',
+              'Cache-Control': 'no-cache',
+              'Referer':
+                  '$baseUrl/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
+            },
+            responseType: ResponseType.plain,
+            followRedirects: true,
+          ),
+        );
+        final text = _extractAjaxMessage(response.data ?? '');
+        final failed = text.contains('失败') ||
+            text.contains('错误') ||
+            text.contains('不存在');
+        if (failed) {
+          return OperationResult(
+            success: false,
+            message: text.isEmpty ? '忽略失败' : text,
+          );
+        }
+
+        var remaining = await getFriendRequests();
+        if (remaining.any((item) => item.uid == uid)) {
+          // 某些 AJAX 模板只有带 handlekey 时才执行回调，再按页面原始
+          // 参数补做一次，但最终仍以待处理列表是否消失作为成功标准。
+          final retryQuery = <String, dynamic>{
+            ...query,
+            'handlekey': uri.queryParameters['handlekey'] ?? 'delfriendhk',
+            'inajax': 1,
+            '_t': DateTime.now().millisecondsSinceEpoch,
+          };
+          await _dio.get<String>(
+            '/home.php',
+            queryParameters: retryQuery,
+            options: Options(
+              headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Cache-Control': 'no-cache',
+                'Referer':
+                    '$baseUrl/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
+              },
+              responseType: ResponseType.plain,
+              followRedirects: true,
+            ),
+          );
+          remaining = await getFriendRequests();
+        }
+        final success = !remaining.any((item) => item.uid == uid);
+        return OperationResult(
+          success: success,
+          message: success ? '已忽略好友申请' : '论坛未移除该申请，请刷新后重试',
+        );
+      }
+
+      if (op != 'add' || uid.isEmpty) {
+        return const OperationResult(
+          success: false,
+          message: '不支持的好友请求操作',
+        );
+      }
+
+      // “通过”链接只是批准表单入口，必须先 GET 取得真实 formhash，
+      // 再 POST add2submit/group 才会真正通过好友请求。
+      final formQuery = Map<String, dynamic>.from(uri.queryParameters)
+        ..['mobile'] = 2;
+      final formResponse = await _dio.get<String>(
+        uri.path.isEmpty ? '/home.php' : uri.path,
+        queryParameters: formQuery,
         options: Options(
-          headers: const {
-            'X-Requested-With': 'XMLHttpRequest',
+          headers: {
+            'Referer':
+                '$baseUrl/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
         ),
       );
+      final formBody = formResponse.data ?? '';
+      final document = html_parser.parse(formBody);
+      final form = document.querySelector(
+        'form[id^="addratifyform_"], '
+        'form[action*="ac=friend"][action*="op=add"]',
+      );
+      if (form == null) {
+        final text = _extractAjaxMessage(formBody);
+        return OperationResult(
+          success: false,
+          message: text.isEmpty ? '未获取到好友批准表单' : text,
+        );
+      }
 
-      final text = _extractAjaxMessage(response.data ?? '');
+      final data = <String, dynamic>{};
+      for (final input in form.querySelectorAll('input[name]')) {
+        final name = input.attributes['name']?.trim() ?? '';
+        if (name.isEmpty) continue;
+        final type = (input.attributes['type'] ?? '').toLowerCase();
+        if (type == 'submit' || type == 'button' || type == 'radio') continue;
+        data[name] = input.attributes['value'] ?? '';
+      }
+      final safeGroup = RegExp(r'^[0-7]$').hasMatch(group) ? group : '1';
+      data['add2submit'] = 'true';
+      final formhash = data['formhash']?.toString() ?? '';
+      data['formhash'] = formhash.isNotEmpty ? formhash : await getFormhash();
+      data['group'] = safeGroup;
+      data['from'] = data['from'] ?? '';
+      data['referer'] = data['referer'] ?? '$baseUrl/./';
+      data['add2submit_btn'] = 'true';
 
+      final actionRaw = (form.attributes['action'] ?? actionUrl)
+          .replaceAll('&amp;', '&');
+      final actionUri = Uri.parse(baseUrl).resolve(actionRaw);
+      final response = await _dio.post<String>(
+        actionUri.path.isEmpty ? '/home.php' : actionUri.path,
+        queryParameters: actionUri.queryParameters,
+        data: data,
+        options: Options(
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': Uri.parse(baseUrl).resolveUri(uri).toString(),
+          },
+          contentType: Headers.formUrlEncodedContentType,
+          responseType: ResponseType.plain,
+          followRedirects: true,
+        ),
+      );
+      final body = response.data ?? '';
+      final text = _extractAjaxMessage(body);
       final failed = text.contains('失败') ||
           text.contains('错误') ||
           text.contains('不存在');
-
+      var success = false;
+      if (!failed) {
+        try {
+          // 不依赖不同模板的成功文案，以真实待处理列表为准。
+          final remaining = await getFriendRequests();
+          success = !remaining.any((item) => item.uid == uid);
+        } catch (_) {
+          success = body.contains('succeedhandle') ||
+              text.contains('批准') ||
+              text.contains('操作成功');
+        }
+      }
       return OperationResult(
-        success: !failed,
-        message: text.isEmpty
-            ? (!failed ? '操作成功' : '操作失败')
-            : text,
+        success: success,
+        message: success
+            ? '已通过好友申请'
+            : (text.isEmpty ? '通过好友申请失败' : text),
       );
     } catch (e) {
       return OperationResult(
@@ -3352,12 +3773,20 @@ class ApiService {
     };
     final noticeType = type?.trim() ?? '';
     if (noticeType.isNotEmpty) query['type'] = noticeType;
-    if (safePage > 1) query['page'] = safePage;
+    if (safePage > 1) {
+      query['page'] = safePage;
+      query['inajax'] = 1;
+    }
 
     final response = await _dio.get<String>(
       '/home.php',
       queryParameters: query,
       options: Options(
+        headers: {
+          if (safePage > 1) 'X-Requested-With': 'XMLHttpRequest',
+          'Referer': '$baseUrl/home.php?mod=space&do=notice'
+              '&view=$view&mobile=2',
+        },
         responseType: ResponseType.plain,
         followRedirects: true,
       ),
@@ -4269,4 +4698,16 @@ class ApiService {
     if (value.startsWith('/')) return '$baseUrl$value';
     return '$baseUrl/$value';
   }
+}
+
+class _FavoriteDetailData {
+  final ThreadDetail detail;
+  final String? replyCount;
+  final String? viewCount;
+
+  const _FavoriteDetailData({
+    required this.detail,
+    this.replyCount,
+    this.viewCount,
+  });
 }

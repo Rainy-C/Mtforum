@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -17,6 +18,59 @@ import '../widgets/user_level_badge.dart';
 import '../routes/forum_link_router.dart';
 import 'account/user_profile_page.dart';
 import 'thread_editor_page.dart';
+
+Future<({PostEditorForm form, PostAttachmentUploadResult attachment})?>
+    _pickAndUploadReplyImage({
+  required String tid,
+  required String fid,
+  String? repquotePid,
+  PostEditorForm? currentForm,
+}) async {
+  final file = await ImagePicker().pickImage(
+    source: ImageSource.gallery,
+    imageQuality: 88,
+    maxWidth: 2560,
+    maxHeight: 2560,
+  );
+  if (file == null) return null;
+
+  final api = ApiService.instance;
+  final form = currentForm ??
+      await api.getReplyPostForm(
+        tid: tid,
+        fid: fid,
+        repquotePid: repquotePid,
+      );
+  final attachment = await api.uploadPostImage(
+    form: form,
+    bytes: await file.readAsBytes(),
+    fileName: file.name,
+    referer: '${ApiService.baseUrl}/thread-$tid-1-1.html',
+  );
+  if (!attachment.success || attachment.aid.isEmpty) {
+    throw StateError(attachment.message);
+  }
+  return (form: form, attachment: attachment);
+}
+
+void _insertAtSelection(TextEditingController controller, String text) {
+  final value = controller.value;
+  final selection = value.selection;
+  final valid = selection.isValid && selection.start >= 0 && selection.end >= 0;
+  final start = valid ? selection.start : value.text.length;
+  final end = valid ? selection.end : start;
+  final next = value.text.replaceRange(start, end, text);
+  controller.value = TextEditingValue(
+    text: next,
+    selection: TextSelection.collapsed(offset: start + text.length),
+    composing: TextRange.empty,
+  );
+}
+
+String _replyError(Object error) => error.toString().replaceFirst(
+      RegExp(r'^(Bad state|StateError|Exception):\s*'),
+      '',
+    );
 
 Future<void> _openPostLink(BuildContext context, String rawUrl) async {
   final target = resolveForumLink(rawUrl);
@@ -491,7 +545,9 @@ class _CommentsSheetState extends State<_CommentsSheet> {
   bool _loadingAll = false;
   bool _loadAllFailed = false;
   bool _sending = false;
+  bool _uploadingImage = false;
   bool _showSmileys = false;
+  bool _showFilteredComments = false;
   bool _reverseOrder = false;
   late int _minLoadedPage;
   late int _maxLoadedPage;
@@ -504,6 +560,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
   bool _targetWindowPrimed = false;
   String? _contextHighlightPid;
   Post? _replyTarget;
+  PostEditorForm? _replyForm;
+  final List<PostAttachmentUploadResult> _replyAttachments = [];
 
   bool get _targetMode =>
       widget.initialTargetPid?.trim().isNotEmpty == true;
@@ -540,7 +598,10 @@ class _CommentsSheetState extends State<_CommentsSheet> {
   }
 
   void _onFilterChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {
+      if (_filteredOutComments.isEmpty) _showFilteredComments = false;
+    });
   }
 
   void _resetTargetWindowState() {
@@ -773,22 +834,29 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     await _restoreViewportAnchor(anchor);
   }
 
-  List<Post> get _filteredComments {
-    var comments = _threadComments(widget.detail);
-    if (_commentFilter.commentsEnabled && _commentFilter.hasRules) {
-      comments = comments
-          .where(
-            (post) =>
-                post.pid == widget.initialTargetPid ||
-                !_commentFilter.matches(post.content),
-          )
-          .toList(growable: false);
+  List<Post> get _rawComments => _threadComments(widget.detail);
+
+  bool _isCommentFiltered(Post post) {
+    if (!_commentFilter.commentsEnabled || !_commentFilter.hasRules) {
+      return false;
     }
-    return comments;
+    // 从通知定位进来的目标楼层始终可见，避免过滤规则破坏跳转。
+    if (post.pid == widget.initialTargetPid) return false;
+    return _commentFilter.matches(post.content);
   }
 
+  List<Post> get _filteredOutComments => _rawComments
+      .where(_isCommentFiltered)
+      .toList(growable: false);
+
+  List<Post> get _filteredComments => _rawComments
+      .where((post) => !_isCommentFiltered(post))
+      .toList(growable: false);
+
   List<Post> get _comments {
-    final comments = List<Post>.from(_filteredComments);
+    final source =
+        _showFilteredComments ? _filteredOutComments : _filteredComments;
+    final comments = List<Post>.from(source);
     if (_targetMode || !_reverseOrder) return comments;
     return comments.reversed.toList(growable: false);
   }
@@ -901,7 +969,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     final targetPid = widget.initialTargetPid?.trim() ?? '';
     final targeted = post.pid == targetPid;
     final contextHighlighted = post.pid == _contextHighlightPid;
-    final chronological = _filteredComments;
+    final chronological =
+        _showFilteredComments ? _rawComments : _filteredComments;
     final parentPid = _commentThreadService.resolveParentPid(
       post,
       chronological,
@@ -1132,8 +1201,46 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     );
   }
 
+  Future<void> _pickReplyImage() async {
+    if (_sending || _uploadingImage) return;
+    if (!ApiService.instance.isLoggedIn) {
+      _ensureLogin();
+      return;
+    }
+    setState(() {
+      _uploadingImage = true;
+      _showSmileys = false;
+    });
+    try {
+      final result = await _pickAndUploadReplyImage(
+        tid: widget.detail.tid,
+        fid: widget.detail.fid,
+        repquotePid: _replyTarget?.pid,
+        currentForm: _replyForm,
+      );
+      if (!mounted || result == null) return;
+      _replyForm = result.form;
+      _replyAttachments.add(result.attachment);
+      _insertAtSelection(
+        _composerController,
+        '[attachimg]${result.attachment.aid}[/attachimg]\n',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('图片已上传并插入评论')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('图片上传失败：${_replyError(e)}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingImage = false);
+    }
+  }
+
   Future<void> _sendComment() async {
-    if (_sending) return;
+    if (_sending || _uploadingImage) return;
     if (!ApiService.instance.isLoggedIn) {
       _ensureLogin();
       return;
@@ -1153,6 +1260,9 @@ class _CommentsSheetState extends State<_CommentsSheet> {
         noticeauthor: widget.detail.noticeauthor,
         message: message,
         repquotePid: target?.pid,
+        replyForm: _replyForm,
+        uploadedAttachmentAids:
+            _replyAttachments.map((attachment) => attachment.aid),
       );
 
       if (!mounted) return;
@@ -1166,6 +1276,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
       _composerController.clear();
       setState(() {
         _replyTarget = null;
+        _replyForm = null;
+        _replyAttachments.clear();
         _showSmileys = false;
       });
       _composerFocusNode.unfocus();
@@ -1203,8 +1315,11 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     final colors = theme.colorScheme;
     final media = MediaQuery.of(context);
     final comments = _comments;
-    final rawCommentCount = _threadComments(widget.detail).length;
-    final allCommentsFiltered = rawCommentCount > 0 && comments.isEmpty;
+    final rawCommentCount = _rawComments.length;
+    final filteredCommentCount = _filteredOutComments.length;
+    final allCommentsFiltered = rawCommentCount > 0 &&
+        !_showFilteredComments &&
+        comments.isEmpty;
     final loading = _loadingAll ||
         widget.isLoadingMore() ||
         (_targetMode &&
@@ -1215,6 +1330,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     final loggedIn = ApiService.instance.isLoggedIn;
     final canSend = loggedIn &&
         !_sending &&
+        !_uploadingImage &&
         _composerController.text.trim().isNotEmpty;
 
     return Padding(
@@ -1248,15 +1364,22 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            widget.initialTargetPid?.trim().isNotEmpty == true
-                                ? '已定位到回复'
-                                : '评论区',
+                            _showFilteredComments
+                                ? '已过滤评论'
+                                : widget.initialTargetPid
+                                            ?.trim()
+                                            .isNotEmpty ==
+                                        true
+                                    ? '已定位到回复'
+                                    : '评论区',
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w800,
                             ),
                           ),
                           Text(
-                            _loadingAll
+                            _showFilteredComments
+                                ? '共 $filteredCommentCount 条·点击返回查看全部评论'
+                                : _loadingAll
                                 ? '正在加载全部评论…'
                                 : comments.isEmpty
                                     ? (allCommentsFiltered
@@ -1280,7 +1403,9 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                           : (_reverseOrder
                               ? '当前倒序，点击切换正序'
                               : '当前正序，点击切换倒序'),
-                      onPressed: _loadingAll || _targetMode
+                      onPressed: _loadingAll ||
+                              _targetMode ||
+                              _showFilteredComments
                           ? null
                           : () => _setCommentOrder(!_reverseOrder),
                       icon: Icon(
@@ -1298,6 +1423,58 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                 ),
               ),
               Divider(color: colors.outlineVariant, height: 1),
+              if (filteredCommentCount > 0)
+                Material(
+                  color: colors.surfaceContainerLow,
+                  child: InkWell(
+                    onTap: () {
+                      setState(() {
+                        _showFilteredComments = !_showFilteredComments;
+                      });
+                      if (_scrollController.hasClients) {
+                        _scrollController.jumpTo(
+                          _scrollController.position.minScrollExtent,
+                        );
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            _showFilteredComments
+                                ? Icons.arrow_back_rounded
+                                : Icons.filter_alt_outlined,
+                            size: 18,
+                            color: colors.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _showFilteredComments
+                                  ? '正在查看 $filteredCommentCount 条已过滤评论'
+                                  : '已过滤 $filteredCommentCount 条评论',
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ),
+                          Text(
+                            _showFilteredComments ? '返回评论' : '查看',
+                            style: theme.textTheme.labelLarge?.copyWith(
+                              color: colors.primary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 18,
+                            color: colors.primary,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               Expanded(
                 child: comments.isEmpty && !loading && !hasMore
                     ? Center(
@@ -1319,7 +1496,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                             const SizedBox(height: 4),
                             Text(
                               allCommentsFiltered
-                                  ? '当前评论均命中过滤关键词'
+                                  ? '点击顶部“已过滤”查看隐藏内容'
                                   : '来发表第一条评论吧',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: colors.outline,
@@ -1369,11 +1546,14 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                 focusNode: _composerFocusNode,
                 loggedIn: loggedIn,
                 sending: _sending,
+                uploadingImage: _uploadingImage,
+                attachmentCount: _replyAttachments.length,
                 canSend: canSend,
                 showSmileys: _showSmileys,
                 replyTargetName: _replyTarget?.authorName,
                 onTapInput: _hideSmileysForKeyboard,
                 onToggleSmileys: _toggleSmileys,
+                onPickImage: _pickReplyImage,
                 onCancelReply: _cancelReply,
                 onSend: _sendComment,
                 onSmileySelected: _insertSmiley,
@@ -1391,11 +1571,14 @@ class _CommentComposer extends StatelessWidget {
   final FocusNode focusNode;
   final bool loggedIn;
   final bool sending;
+  final bool uploadingImage;
+  final int attachmentCount;
   final bool canSend;
   final bool showSmileys;
   final String? replyTargetName;
   final VoidCallback onTapInput;
   final VoidCallback onToggleSmileys;
+  final VoidCallback onPickImage;
   final VoidCallback onCancelReply;
   final VoidCallback onSend;
   final ValueChanged<String> onSmileySelected;
@@ -1405,11 +1588,14 @@ class _CommentComposer extends StatelessWidget {
     required this.focusNode,
     required this.loggedIn,
     required this.sending,
+    required this.uploadingImage,
+    required this.attachmentCount,
     required this.canSend,
     required this.showSmileys,
     required this.replyTargetName,
     required this.onTapInput,
     required this.onToggleSmileys,
+    required this.onPickImage,
     required this.onCancelReply,
     required this.onSend,
     required this.onSmileySelected,
@@ -1476,7 +1662,26 @@ class _CommentComposer extends StatelessWidget {
                         : Icons.sentiment_satisfied_alt_rounded,
                   ),
                 ),
-                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: attachmentCount > 0
+                      ? '已添加 $attachmentCount 张图片'
+                      : '添加图片',
+                  onPressed: loggedIn && !sending && !uploadingImage
+                      ? onPickImage
+                      : null,
+                  icon: uploadingImage
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Badge(
+                          isLabelVisible: attachmentCount > 0,
+                          label: Text('$attachmentCount'),
+                          child: const Icon(Icons.image_outlined),
+                        ),
+                ),
+                const SizedBox(width: 2),
                 Expanded(
                   child: TextField(
                     controller: controller,
@@ -1579,6 +1784,15 @@ class _PostCard extends StatelessWidget {
         ? _contentWithoutQuotedContext(post)
         : post.content.trim();
     final postTime = post.postTime?.trim() ?? '';
+    final lastEditTime = post.lastEditTime?.trim() ?? '';
+    final lastEditor = post.lastEditor?.trim() ?? '';
+    final authorName = post.authorName?.trim() ?? '';
+    final editLabel = lastEditTime.isEmpty
+        ? ''
+        : lastEditor.isNotEmpty &&
+                lastEditor.toLowerCase() != authorName.toLowerCase()
+            ? '$lastEditor 编辑于 $lastEditTime'
+            : '编辑于 $lastEditTime';
     final replyParentFloor = replyParent == null
         ? ''
         : (_floorText(replyParent!.floor).isEmpty
@@ -1677,7 +1891,8 @@ class _PostCard extends StatelessWidget {
                         ],
                       ),
                       if ((post.authorLevel?.trim().isNotEmpty ?? false) ||
-                          postTime.isNotEmpty)
+                          postTime.isNotEmpty ||
+                          editLabel.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Wrap(
@@ -1692,6 +1907,8 @@ class _PostCard extends StatelessWidget {
                                 ),
                               if (postTime.isNotEmpty)
                                 _PostTimeLabel(time: postTime),
+                              if (editLabel.isNotEmpty)
+                                _PostEditLabel(text: editLabel),
                             ],
                           ),
                         ),
@@ -1914,6 +2131,43 @@ class _PostTimeLabel extends StatelessWidget {
   }
 }
 
+class _PostEditLabel extends StatelessWidget {
+  final String text;
+
+  const _PostEditLabel({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Semantics(
+      label: '帖子$text',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.edit_outlined,
+            size: 13,
+            color: colors.outline,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+              height: 1.15,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Pill extends StatelessWidget {
   final String text;
   final bool primary;
@@ -1994,10 +2248,12 @@ Color? _parseBbColor(String? raw) {
 class _RichContentView extends StatelessWidget {
   final List<PostContent> contents;
   final ValueChanged<String>? onImageTap;
+  final TextAlign textAlign;
 
   const _RichContentView({
     required this.contents,
     this.onImageTap,
+    this.textAlign = TextAlign.left,
   });
 
   Future<void> _openUrl(BuildContext context, String url) async {
@@ -2016,10 +2272,14 @@ class _RichContentView extends StatelessWidget {
         return;
       }
 
+      final richText = _InlineRichText(
+        contents: List<PostContent>.from(inline),
+        textAlign: textAlign,
+      );
       widgets.add(
-        _InlineRichText(
-          contents: List<PostContent>.from(inline),
-        ),
+        textAlign == TextAlign.left
+            ? richText
+            : SizedBox(width: double.infinity, child: richText),
       );
       inline.clear();
     }
@@ -2100,26 +2360,7 @@ class _RichContentView extends StatelessWidget {
           if (content.children.isEmpty) {
             break;
           }
-          widgets.add(
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.symmetric(vertical: 6),
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              decoration: BoxDecoration(
-                color: colors.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(10),
-                border: Border(
-                  left: BorderSide(
-                    color: colors.primary,
-                    width: 3,
-                  ),
-                ),
-              ),
-              child: _InlineRichText(
-                contents: content.children,
-              ),
-            ),
-          );
+          widgets.add(_RichQuoteBlock(contents: content.children));
 
         case PostContentType.code:
           flushInline();
@@ -2202,12 +2443,22 @@ class _RichContentView extends StatelessWidget {
               'right' => Alignment.centerRight,
               _ => Alignment.centerLeft,
             };
+            final alignedText = switch (content.alignment) {
+              'center' => TextAlign.center,
+              'right' => TextAlign.right,
+              'justify' => TextAlign.justify,
+              _ => TextAlign.left,
+            };
             widgets.add(
-              Align(
-                alignment: alignment,
-                child: _RichContentView(
-                  contents: content.children,
-                  onImageTap: onImageTap,
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Align(
+                  alignment: alignment,
+                  child: _RichContentView(
+                    contents: content.children,
+                    onImageTap: onImageTap,
+                    textAlign: alignedText,
+                  ),
                 ),
               ),
             );
@@ -2284,11 +2535,78 @@ class _RichContentView extends StatelessWidget {
   }
 }
 
+class _RichQuoteBlock extends StatelessWidget {
+  final List<PostContent> contents;
+
+  const _RichQuoteBlock({required this.contents});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final firstText = contents.isEmpty ? '' : contents.first.text.trim();
+    final isHidden = firstText.contains('本帖隐藏的内容') ||
+        firstText.contains('隐藏内容');
+
+    if (!isHidden) {
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(10),
+          border: Border(
+            left: BorderSide(color: colors.primary, width: 3),
+          ),
+        ),
+        child: _InlineRichText(contents: contents),
+      );
+    }
+
+    final body = contents.skip(1).toList(growable: true);
+    while (body.isNotEmpty &&
+        body.first.type == PostContentType.text &&
+        body.first.text.trim().isEmpty) {
+      body.removeAt(0);
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            firstText.isEmpty ? '本帖隐藏的内容:' : firstText,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: colors.tertiary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (body.isNotEmpty) ...[
+            const SizedBox(height: 7),
+            _InlineRichText(contents: body),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _InlineRichText extends StatefulWidget {
   final List<PostContent> contents;
+  final TextAlign textAlign;
 
   const _InlineRichText({
     required this.contents,
+    this.textAlign = TextAlign.left,
   });
 
   @override
@@ -2443,6 +2761,7 @@ class _InlineRichTextState extends State<_InlineRichText> {
     }
 
     return RichText(
+      textAlign: widget.textAlign,
       text: TextSpan(
         style: baseStyle,
         children: spans,
@@ -3104,65 +3423,70 @@ class _TableBlock extends StatelessWidget {
         )
         .toList(growable: false);
 
+    final divider = BorderSide(color: colors.outlineVariant);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
         color: colors.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.outlineVariant),
       ),
       clipBehavior: Clip.antiAlias,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Table(
-          defaultColumnWidth: const IntrinsicColumnWidth(),
-          border: TableBorder.all(
-            color: colors.outlineVariant,
-            width: 1,
-          ),
-          children: [
-            for (var rowIndex = 0;
-                rowIndex < normalizedRows.length;
-                rowIndex++)
-              TableRow(
-                decoration: BoxDecoration(
-                  color: rowIndex < headerRows
-                      ? colors.primaryContainer.withValues(alpha: 0.55)
-                      : (rowIndex.isOdd
-                          ? colors.surfaceContainerHighest
-                              .withValues(alpha: 0.42)
-                          : colors.surfaceContainerLow),
-                ),
-                children: [
-                  for (final cell in normalizedRows[rowIndex])
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        minWidth: 84,
-                        maxWidth: 280,
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 11,
-                          vertical: 9,
-                        ),
-                        child: SelectableText(
-                          cell,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            height: 1.45,
-                            fontWeight: rowIndex < headerRows
-                                ? FontWeight.w700
-                                : FontWeight.w400,
-                            color: rowIndex < headerRows
-                                ? colors.onPrimaryContainer
-                                : colors.onSurface,
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+            child: Table(
+              defaultColumnWidth: const IntrinsicColumnWidth(),
+              border: TableBorder(
+                horizontalInside: divider,
+                verticalInside: divider,
+              ),
+              children: [
+                for (var rowIndex = 0;
+                    rowIndex < normalizedRows.length;
+                    rowIndex++)
+                  TableRow(
+                    decoration: BoxDecoration(
+                      color: rowIndex < headerRows
+                          ? colors.primaryContainer.withValues(alpha: 0.55)
+                          : (rowIndex.isOdd
+                              ? colors.surfaceContainerHighest
+                                  .withValues(alpha: 0.42)
+                              : colors.surfaceContainerLow),
+                    ),
+                    children: [
+                      for (final cell in normalizedRows[rowIndex])
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            minWidth: 84,
+                            maxWidth: 280,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 11,
+                              vertical: 9,
+                            ),
+                            child: SelectableText(
+                              cell,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                height: 1.45,
+                                fontWeight: rowIndex < headerRows
+                                    ? FontWeight.w700
+                                    : FontWeight.w400,
+                                color: rowIndex < headerRows
+                                    ? colors.onPrimaryContainer
+                                    : colors.onSurface,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                ],
-              ),
-          ],
+                    ],
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -3423,7 +3747,10 @@ class _ReplySheetState extends State<_ReplySheet> {
   final _focusNode = FocusNode();
 
   bool _sending = false;
+  bool _uploadingImage = false;
   bool _showSmileys = false;
+  PostEditorForm? _replyForm;
+  final List<PostAttachmentUploadResult> _replyAttachments = [];
 
   @override
   void dispose() {
@@ -3474,7 +3801,42 @@ class _ReplySheetState extends State<_ReplySheet> {
     );
   }
 
+  Future<void> _pickImage() async {
+    if (_sending || _uploadingImage) return;
+    setState(() {
+      _uploadingImage = true;
+      _showSmileys = false;
+    });
+    try {
+      final result = await _pickAndUploadReplyImage(
+        tid: widget.tid,
+        fid: widget.fid,
+        repquotePid: widget.repquotePid,
+        currentForm: _replyForm,
+      );
+      if (!mounted || result == null) return;
+      _replyForm = result.form;
+      _replyAttachments.add(result.attachment);
+      _insertAtSelection(
+        _controller,
+        '[attachimg]${result.attachment.aid}[/attachimg]\n',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('图片已上传并插入回复')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('图片上传失败：${_replyError(e)}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingImage = false);
+    }
+  }
+
   Future<void> _send() async {
+    if (_sending || _uploadingImage) return;
     final editorValue = _controller.text.trim();
     if (editorValue.isEmpty) {
       return;
@@ -3494,6 +3856,9 @@ class _ReplySheetState extends State<_ReplySheet> {
         noticeauthor: widget.noticeauthor,
         message: message,
         repquotePid: widget.repquotePid,
+        replyForm: _replyForm,
+        uploadedAttachmentAids:
+            _replyAttachments.map((attachment) => attachment.aid),
       );
 
       if (!mounted) {
@@ -3610,6 +3975,27 @@ class _ReplySheetState extends State<_ReplySheet> {
                         ),
                       ),
                       const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        tooltip: _replyAttachments.isEmpty
+                            ? '添加图片'
+                            : '已添加 ${_replyAttachments.length} 张图片',
+                        onPressed:
+                            _sending || _uploadingImage ? null : _pickImage,
+                        icon: _uploadingImage
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Badge(
+                                isLabelVisible: _replyAttachments.isNotEmpty,
+                                label: Text('${_replyAttachments.length}'),
+                                child: const Icon(Icons.image_outlined),
+                              ),
+                      ),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _showSmileys
@@ -3624,7 +4010,8 @@ class _ReplySheetState extends State<_ReplySheet> {
                       ),
                       const SizedBox(width: 8),
                       FilledButton.icon(
-                        onPressed: _sending ? null : _send,
+                        onPressed:
+                            _sending || _uploadingImage ? null : _send,
                         icon: _sending
                             ? const SizedBox(
                                 width: 16,

@@ -28,6 +28,7 @@ class _FavoritesPageState extends State<FavoritesPage>
   bool _loading = false;
   bool _loadingMore = false;
   bool _hasMore = true;
+  final Set<String> _removing = {};
   String? _error;
 
   @override
@@ -157,6 +158,49 @@ class _FavoritesPageState extends State<FavoritesPage>
     );
   }
 
+  Future<void> _removeFavorite(FavoriteItem item) async {
+    if (_removing.contains(item.favid)) return;
+    if (item.deleteUrl?.trim().isEmpty ?? true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该收藏缺少删除凭据，请刷新后重试')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.bookmark_remove_outlined),
+        title: const Text('取消收藏？'),
+        content: Text(
+          item.title.isEmpty ? '确认从收藏中移除这一项吗？' : '“${item.title}”将从收藏列表中移除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('保留'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('取消收藏'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _removing.add(item.favid));
+    final success = await _api.cancelFavoriteItem(item);
+    if (!mounted) return;
+    setState(() {
+      _removing.remove(item.favid);
+      if (success) _items.remove(item);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(success ? '已取消收藏' : '取消收藏失败，请刷新后重试')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -235,6 +279,9 @@ class _FavoritesPageState extends State<FavoritesPage>
                       return ThreadCard(
                         thread: thread,
                         onTap: () => _open(item),
+                        onRemove: _removing.contains(item.favid)
+                            ? null
+                            : () => _removeFavorite(item),
                       );
                     }
 
@@ -250,7 +297,18 @@ class _FavoritesPageState extends State<FavoritesPage>
                         subtitle: item.favid.isEmpty
                             ? null
                             : Text('收藏 ID ${item.favid}'),
-                        trailing: const Icon(Icons.chevron_right_rounded),
+                        trailing: IconButton(
+                          tooltip: '取消收藏',
+                          onPressed: _removing.contains(item.favid)
+                              ? null
+                              : () => _removeFavorite(item),
+                          icon: _removing.contains(item.favid)
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.bookmark_remove_outlined),
+                        ),
                         onTap: () => _open(item),
                       ),
                     );

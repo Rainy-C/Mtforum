@@ -565,7 +565,7 @@ class _PmConversationPageState extends State<PmConversationPage> {
                                       ? _messages[messageIndex - 1].date
                                       : _messages[messageIndex - 1].time,
                                 );
-                          final fullTimestamp = _pmFullTimestamp(message);
+                          final bubbleTime = _pmBubbleTime(message);
 
                           return Column(
                             children: [
@@ -669,10 +669,10 @@ class _PmConversationPageState extends State<PmConversationPage> {
                                         _PmInlineMessageText(
                                           text: message.content,
                                         ),
-                                      if (fullTimestamp.isNotEmpty) ...[
+                                      if (bubbleTime.isNotEmpty) ...[
                                         const SizedBox(height: 4),
                                         Text(
-                                          fullTimestamp,
+                                          bubbleTime,
                                           style: theme.textTheme.labelSmall
                                               ?.copyWith(
                                             color: colors.outline,
@@ -828,14 +828,14 @@ String _normalizedPmClock(String raw) {
       '${second == null ? '' : ':$second'}';
 }
 
-String _pmFullTimestamp(PmMessage message) {
-  final date = _normalizedPmDate(
-    message.date.isNotEmpty ? message.date : message.time,
-  );
-  final clock = _normalizedPmClock(message.time);
-  if (date.isEmpty) return clock;
-  if (clock.isEmpty) return date;
-  return '$date $clock';
+String _pmBubbleTime(PmMessage message) {
+  for (final raw in [message.time, message.date]) {
+    if (RegExp(r'(?:上午|下午)?\s*\d{1,2}:\d{2}(?::\d{2})?')
+        .hasMatch(raw)) {
+      return _normalizedPmClock(raw);
+    }
+  }
+  return '';
 }
 
 String _expandedPmListTime(String raw, {DateTime? reference}) {

@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'pages/home_page.dart';
 import 'pages/community_page.dart';
@@ -8,6 +10,7 @@ import 'pages/messages_page.dart';
 import 'pages/profile_page.dart';
 import 'services/analytics_service.dart';
 import 'services/api_service.dart';
+import 'services/feedback_service.dart';
 import 'services/message_badge_service.dart';
 import 'services/theme_service.dart';
 import 'services/sign_service.dart';
@@ -34,8 +37,15 @@ class MTForumApp extends StatelessWidget {
         return MaterialApp(
           title: 'MT论坛',
           debugShowCheckedModeBanner: false,
-          theme: AppTheme.light,
-          darkTheme: AppTheme.dark,
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
+          supportedLocales: const [Locale('zh', 'CN')],
+          theme: AppTheme.light(
+            fontFamily: ThemeService.instance.customFontFamily,
+          ),
+          darkTheme: AppTheme.dark(
+            fontFamily: ThemeService.instance.customFontFamily,
+          ),
           themeMode: ThemeService.instance.mode,
           builder: (context, child) {
             final media = MediaQuery.of(context);
@@ -65,17 +75,20 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _autoSignRunning = false;
+  bool _feedbackReplyCheckRunning = false;
+  final _homeController = HomePageController();
 
-  final _pages = const [
-    HomePage(),
-    CommunityPage(),
-    MessagesPage(),
-    ProfilePage(),
-  ];
+  late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
+    _pages = [
+      HomePage(controller: _homeController),
+      const CommunityPage(),
+      const MessagesPage(),
+      const ProfilePage(),
+    ];
     WidgetsBinding.instance.addObserver(this);
     ApiService.instance.addLoginListener(_onLoginChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) => _runStartupTasks());
@@ -101,6 +114,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       MessageBadgeService.instance.refresh(force: true);
+      unawaited(_checkFeedbackReplies());
     }
   }
 
@@ -109,7 +123,83 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     unawaited(AnalyticsService.instance.reportLaunch());
     await _runAutoSign();
     await MessageBadgeService.instance.refresh(force: true);
+    await _checkFeedbackReplies();
     await _checkUpdate();
+  }
+
+  Future<void> _checkFeedbackReplies() async {
+    if (_feedbackReplyCheckRunning || !mounted) return;
+    _feedbackReplyCheckRunning = true;
+    try {
+      final replies = await FeedbackService.instance.fetchPendingReplies();
+      for (final reply in replies) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            icon: const Icon(Icons.mark_chat_read_outlined),
+            title: Text(reply.title),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SelectableText(reply.content),
+                    if (reply.feedbackId.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        '反馈编号：${_shortFeedbackId(reply.feedbackId)}',
+                        style: Theme.of(dialogContext)
+                            .textTheme
+                            .labelMedium
+                            ?.copyWith(
+                              color:
+                                  Theme.of(dialogContext).colorScheme.outline,
+                            ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              if (reply.actionUrl != null)
+                TextButton.icon(
+                  onPressed: () async {
+                    final uri = Uri.tryParse(reply.actionUrl!);
+                    if (uri != null) {
+                      await launchUrl(
+                        uri,
+                        mode: LaunchMode.externalApplication,
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.open_in_new_rounded),
+                  label: const Text('查看详情'),
+                ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('知道了'),
+              ),
+            ],
+          ),
+        );
+        await FeedbackService.instance.markReplyRead(reply.id);
+      }
+    } catch (_) {
+      // 回复查询不能影响正常启动和页面恢复。
+    } finally {
+      _feedbackReplyCheckRunning = false;
+    }
+  }
+
+  String _shortFeedbackId(String value) {
+    final normalized = value.trim();
+    if (normalized.length <= 12) return normalized;
+    return normalized.substring(normalized.length - 12);
   }
 
   Future<void> _runAutoSign() async {
@@ -164,7 +254,10 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
           return NavigationBar(
             selectedIndex: _currentIndex,
             onDestinationSelected: (index) {
-              if (index == _currentIndex) return;
+              if (index == _currentIndex) {
+                if (index == 0) _homeController.scrollToTop();
+                return;
+              }
               FocusManager.instance.primaryFocus?.unfocus();
               setState(() => _currentIndex = index);
               if (index == 2) {
