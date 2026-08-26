@@ -500,14 +500,15 @@ class _FriendRequestListState extends State<_FriendRequestList> {
 
   Future<void> _operate(
     FriendRequestItem item,
-    String? url,
-  ) async {
+    String? url, {
+    String group = '1',
+  }) async {
     if (_operating.contains(item.uid)) {
       return;
     }
 
     setState(() => _operating.add(item.uid));
-    final result = await _api.respondFriendRequest(url);
+    final result = await _api.respondFriendRequest(url, group: group);
 
     if (!mounted) {
       return;
@@ -524,10 +525,192 @@ class _FriendRequestListState extends State<_FriendRequestList> {
     }
   }
 
+  Future<void> _accept(FriendRequestItem item) async {
+    const groups = <(String, String)>[
+      ('0', '其他'),
+      ('1', '通过本站认识'),
+      ('2', '通过活动认识'),
+      ('3', '通过朋友认识'),
+      ('4', '亲人'),
+      ('5', '同事'),
+      ('6', '同学'),
+      ('7', '不分组'),
+    ];
+    final group = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                child: Text(
+                  '通过 ${item.username} 的好友申请',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(8, 0, 8, 6),
+                child: Text('选择好友分组'),
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final entry in groups)
+                      ListTile(
+                        leading: Icon(
+                          entry.$1 == '1'
+                              ? Icons.check_circle_outline_rounded
+                              : Icons.group_outlined,
+                        ),
+                        title: Text(entry.$2),
+                        trailing: entry.$1 == '1'
+                            ? const Text('默认')
+                            : null,
+                        onTap: () => Navigator.pop(context, entry.$1),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (group == null || !mounted) return;
+    await _operate(item, item.acceptUrl, group: group);
+  }
+
+  Widget _buildRequestCard(FriendRequestItem item) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final operating = _operating.contains(item.uid);
+    final detail = [
+      'UID ${item.uid}',
+      if (item.requestTime.isNotEmpty) item.requestTime,
+    ].join(' · ');
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 25,
+                  backgroundImage: item.avatarUrl == null
+                      ? null
+                      : CachedNetworkImageProvider(item.avatarUrl!),
+                  child: item.avatarUrl == null
+                      ? const Icon(Icons.person_outline_rounded)
+                      : null,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              item.username,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          if (item.isOnline) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: colors.tertiaryContainer,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '在线',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: colors.onTertiaryContainer,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        detail,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (operating)
+              const SizedBox(
+                height: 40,
+                child: Center(
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: item.ignoreUrl == null
+                          ? null
+                          : () => _operate(item, item.ignoreUrl),
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      label: const Text('忽略'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed:
+                          item.acceptUrl == null ? null : () => _accept(item),
+                      icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+                      label: const Text('通过'),
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-
     if (_loading) {
       return const AppStateView.loading();
     }
@@ -544,51 +727,12 @@ class _FriendRequestListState extends State<_FriendRequestList> {
               child: AppStateView.empty(
                 icon: Icons.group_add_outlined,
                 title: '暂无好友申请',
-                message: '目前没有新的好友请求。',
+                message: '目前没有待处理请求；好友通知也可能是对方已通过您的申请。',
               ),
             )
           else
             for (final item in _items)
-              Card(
-                margin: const EdgeInsets.only(bottom: 10),
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage: item.avatarUrl == null
-                        ? null
-                        : CachedNetworkImageProvider(item.avatarUrl!),
-                    child: item.avatarUrl == null
-                        ? const Icon(Icons.person_outline_rounded)
-                        : null,
-                  ),
-                  title: Text(item.username),
-                  subtitle: Text('UID ${item.uid}'),
-                  trailing: _operating.contains(item.uid)
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Wrap(
-                          spacing: 4,
-                          children: [
-                            TextButton(
-                              onPressed: item.ignoreUrl == null
-                                  ? null
-                                  : () => _operate(item, item.ignoreUrl),
-                              child: const Text('忽略'),
-                            ),
-                            FilledButton(
-                              onPressed: item.acceptUrl == null
-                                  ? null
-                                  : () => _operate(item, item.acceptUrl),
-                              child: const Text('通过'),
-                            ),
-                          ],
-                        ),
-                ),
-              ),
+              _buildRequestCard(item),
         ],
       ),
     );

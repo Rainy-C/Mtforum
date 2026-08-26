@@ -522,6 +522,8 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
               message: message,
               allowNoticeAuthor: _allowNoticeAuthor,
               useSig: _useSig,
+              uploadedAttachmentAids:
+                  _uploadedAttachments.map((item) => item.aid),
             )
           : await _api.submitNewThread(
               form: form,
@@ -529,6 +531,8 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
               message: message,
               allowNoticeAuthor: _allowNoticeAuthor,
               useSig: _useSig,
+              uploadedAttachmentAids:
+                  _uploadedAttachments.map((item) => item.aid),
             );
 
       if (!mounted) return;

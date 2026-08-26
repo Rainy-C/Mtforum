@@ -342,6 +342,7 @@ class AccountParser {
           title: _clean(titleLink.text),
           type: type,
           href: href,
+          deleteUrl: _absoluteUrl(deleteHref, baseUrl),
           tid: tid,
           thread: thread,
         ),

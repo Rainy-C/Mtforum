@@ -3,9 +3,9 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'feedback_service.dart';
+import 'install_identity_service.dart';
 import 'update_service.dart';
 
 class AppStats {
@@ -25,8 +25,6 @@ class AppStats {
 class AnalyticsService {
   AnalyticsService._();
   static final AnalyticsService instance = AnalyticsService._();
-
-  static const _installIdKey = 'anonymous_install_id_v1';
 
   /// 如需把统计接口部署到和反馈接口不同的服务器，可单独覆盖
   /// --dart-define=MTFORUM_ANALYTICS_URL=https://example.com/api/v1/app/launch
@@ -94,12 +92,7 @@ class AnalyticsService {
 
   Future<AppStats?> _reportLaunchImpl() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      var installId = prefs.getString(_installIdKey)?.trim() ?? '';
-      if (!_isValidOpaqueId(installId)) {
-        installId = _generateOpaqueId();
-        await prefs.setString(_installIdKey, installId);
-      }
+      final installId = await getInstallId();
 
       var versionName = '';
       var versionCode = '';
@@ -149,6 +142,12 @@ class AnalyticsService {
       // 匿名统计永远不能影响正常启动
       return null;
     }
+  }
+
+  /// 反馈定向回复与匿名启动统计共用同一个随机安装标识。
+  /// 该值不来自论坛 UID、系统设备 ID，也不会携带论坛 Cookie。
+  Future<String> getInstallId() async {
+    return InstallIdentityService.instance.getId();
   }
 
   Future<AppStats?> fetchStats() async {
@@ -246,10 +245,6 @@ class AnalyticsService {
     } catch (_) {
       return endpoint;
     }
-  }
-
-  static bool _isValidOpaqueId(String value) {
-    return RegExp(r'^[A-Za-z0-9_-]{16,128}$').hasMatch(value);
   }
 
   static String _generateOpaqueId() {

@@ -68,8 +68,9 @@ class _BbNode {
 class _BbParser {
   static const _knownTags = <String>{
     'b', 'i', 'u', 's', 'strike', 'color', 'size', 'font', 'backcolor',
-    'url', 'email', 'img', 'attach', 'attachimg', 'audio', 'media', 'flash',
-    'quote', 'code', 'free', 'hide', 'align', 'list', 'hr', '*',
+    'url', 'email', 'qq', 'img', 'attach', 'attachimg', 'audio', 'video',
+    'media', 'flash', 'quote', 'code', 'free', 'hide', 'align', 'list', 'hr',
+    '*',
   };
 
   final _token = RegExp(
@@ -153,8 +154,8 @@ class _BbNodeView extends StatelessWidget {
 
   bool _isBlock(_BbNode node) {
     const blockTags = <String>{
-      'img', 'attach', 'attachimg', 'audio', 'media', 'flash', 'quote',
-      'code', 'free', 'hide', 'align', 'list', 'hr',
+      'img', 'attach', 'attachimg', 'audio', 'video', 'media', 'flash',
+      'quote', 'code', 'free', 'hide', 'align', 'list', 'hr',
     };
     return blockTags.contains(node.tag) || node.children.any(_isBlock);
   }
@@ -238,6 +239,7 @@ class _BbNodeView extends StatelessWidget {
         break;
       case 'url':
       case 'email':
+      case 'qq':
         style = style.copyWith(
           color: colors.primary,
           decoration: TextDecoration.underline,
@@ -322,6 +324,7 @@ class _BbNodeView extends StatelessWidget {
           title: '音频',
         );
       case 'media':
+      case 'video':
         return _mediaCard(
           context,
           Icons.play_circle_outline_rounded,

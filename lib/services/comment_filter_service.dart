@@ -12,35 +12,45 @@ class CommentFilterService extends ChangeNotifier {
   static const _commentsEnabledKey = 'comment_filter_comments_enabled';
   static const _noticesEnabledKey = 'comment_filter_notices_enabled';
   static const _keywordsKey = 'comment_filter_keywords';
-  static const _shortReplyEnabledKey = 'comment_filter_short_reply_enabled';
-  static const _shortReplyMaxLengthKey =
-      'comment_filter_short_reply_max_length';
-  static const defaultShortReplyMaxLength = 3;
+  static const _keywordContainsEnabledKey =
+      'comment_filter_keyword_contains_enabled';
+  static const _matchLengthLimitEnabledKey =
+      'comment_filter_match_length_limit_enabled';
+  static const _maxMatchedContentLengthKey =
+      'comment_filter_max_matched_content_length';
+  static const defaultMaxMatchedContentLength = 20;
 
   bool _commentsEnabled = false;
   bool _noticesEnabled = false;
-  bool _shortReplyEnabled = false;
-  int _shortReplyMaxLength = defaultShortReplyMaxLength;
+  bool _keywordContainsEnabled = false;
+  bool _matchLengthLimitEnabled = false;
+  int _maxMatchedContentLength = defaultMaxMatchedContentLength;
   List<String> _keywords = const [];
   bool _loaded = false;
 
   bool get commentsEnabled => _commentsEnabled;
   bool get noticesEnabled => _noticesEnabled;
-  bool get shortReplyEnabled => _shortReplyEnabled;
-  int get shortReplyMaxLength => _shortReplyMaxLength;
+  bool get keywordContainsEnabled => _keywordContainsEnabled;
+  bool get fuzzyMatchingEnabled => _keywordContainsEnabled;
+  bool get matchLengthLimitEnabled => _matchLengthLimitEnabled;
+  int get maxMatchedContentLength => _maxMatchedContentLength;
   List<String> get keywords => List.unmodifiable(_keywords);
   bool get hasKeywords => _keywords.isNotEmpty;
-  bool get hasRules => hasKeywords || _shortReplyEnabled;
+  bool get hasRules => hasKeywords;
 
   Future<void> load() async {
     if (_loaded) return;
     final prefs = await SharedPreferences.getInstance();
     _commentsEnabled = prefs.getBool(_commentsEnabledKey) ?? false;
     _noticesEnabled = prefs.getBool(_noticesEnabledKey) ?? false;
-    _shortReplyEnabled = prefs.getBool(_shortReplyEnabledKey) ?? false;
-    _shortReplyMaxLength = (prefs.getInt(_shortReplyMaxLengthKey) ??
-            defaultShortReplyMaxLength)
-        .clamp(1, 20)
+    _keywordContainsEnabled =
+        prefs.getBool(_keywordContainsEnabledKey) ?? false;
+    _matchLengthLimitEnabled =
+        prefs.getBool(_matchLengthLimitEnabledKey) ?? false;
+    _maxMatchedContentLength =
+        (prefs.getInt(_maxMatchedContentLengthKey) ??
+                defaultMaxMatchedContentLength)
+            .clamp(1, 500)
         .toInt();
     _keywords = _normalize(prefs.getStringList(_keywordsKey) ?? const []);
     _loaded = true;
@@ -61,18 +71,32 @@ class CommentFilterService extends ChangeNotifier {
     await prefs.setBool(_noticesEnabledKey, value);
   }
 
-  Future<void> setShortReplyEnabled(bool value) async {
-    _shortReplyEnabled = value;
+  Future<void> setKeywordContainsEnabled(bool value) async {
+    _keywordContainsEnabled = value;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_shortReplyEnabledKey, value);
+    await prefs.setBool(_keywordContainsEnabledKey, value);
   }
 
-  Future<void> setShortReplyMaxLength(int value) async {
-    _shortReplyMaxLength = value.clamp(1, 20).toInt();
+  Future<void> setFuzzyMatchingEnabled(bool value) {
+    return setKeywordContainsEnabled(value);
+  }
+
+  Future<void> setMatchLengthLimitEnabled(bool value) async {
+    _matchLengthLimitEnabled = value;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_shortReplyMaxLengthKey, _shortReplyMaxLength);
+    await prefs.setBool(_matchLengthLimitEnabledKey, value);
+  }
+
+  Future<void> setMaxMatchedContentLength(int value) async {
+    _maxMatchedContentLength = value.clamp(1, 500).toInt();
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      _maxMatchedContentLengthKey,
+      _maxMatchedContentLength,
+    );
   }
 
   Future<void> setKeywordsFromText(String value) async {
@@ -82,21 +106,23 @@ class CommentFilterService extends ChangeNotifier {
     await prefs.setStringList(_keywordsKey, _keywords);
   }
 
-  bool matches(String value) {
-    return matchesKeyword(value) || matchesShortReply(value);
-  }
+  bool matches(String value) => matchesKeyword(value);
 
   bool matchesKeyword(String value) {
     if (_keywords.isEmpty || value.trim().isEmpty) return false;
-    final normalized = value.toLowerCase();
-    return _keywords.any((keyword) => normalized.contains(keyword.toLowerCase()));
-  }
-
-  bool matchesShortReply(String value) {
-    if (!_shortReplyEnabled) return false;
-    final normalized = value.replaceAll(RegExp(r'\s+'), '');
-    if (normalized.isEmpty) return false;
-    return normalized.runes.length <= _shortReplyMaxLength;
+    final normalized = _normalizeMatchText(value);
+    final matched = _keywords.any(
+      (keyword) {
+        final normalizedKeyword = _normalizeMatchText(keyword);
+        return _keywordContainsEnabled
+            ? normalized.contains(normalizedKeyword)
+            : normalized == normalizedKeyword;
+      },
+    );
+    if (!matched) return false;
+    if (!_matchLengthLimitEnabled) return true;
+    final contentLength = value.replaceAll(RegExp(r'\s+'), '').runes.length;
+    return contentLength <= _maxMatchedContentLength;
   }
 
   List<String> _normalize(Iterable<String> values) {
@@ -108,5 +134,9 @@ class CommentFilterService extends ChangeNotifier {
       if (keyword.isNotEmpty && seen.add(key)) result.add(keyword);
     }
     return result;
+  }
+
+  String _normalizeMatchText(String value) {
+    return value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
   }
 }
