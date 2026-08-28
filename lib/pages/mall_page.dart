@@ -98,13 +98,17 @@ class _MallPageState extends State<MallPage> {
       }
 
       setState(() {
-        if (items.isEmpty) {
+        final seen = _items.map((item) => item.tid).toSet();
+        final fresh =
+            items.where((item) => !seen.contains(item.tid)).toList();
+        if (items.isEmpty || fresh.isEmpty) {
+          // 空页或整页都是重复数据：判定已到末尾，终止分页，
+          // 防止滚动监听反复触发加载导致底部加载圈频繁闪烁。
           _hasMore = false;
           return;
         }
 
-        final seen = _items.map((item) => item.tid).toSet();
-        _items.addAll(items.where((item) => !seen.contains(item.tid)));
+        _items.addAll(fresh);
         _page = next;
       });
     } finally {
@@ -210,7 +214,7 @@ class _MallPageState extends State<MallPage> {
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => MallDetailPage(tid: item.tid),
+                          builder: (_) => MallDetailPage(item: item),
                         ),
                       ),
                     );
@@ -258,6 +262,8 @@ class _MallCard extends StatelessWidget {
                     : CachedNetworkImage(
                         imageUrl: item.imageUrl!,
                         fit: BoxFit.cover,
+                        // 关闭淡入淡出：占位与正式图互换时不闪烁
+                        fadeInDuration: Duration.zero,
                         errorWidget: (_, __, ___) =>
                             const Icon(Icons.broken_image_outlined),
                       ),
@@ -323,11 +329,11 @@ class _MallCard extends StatelessWidget {
 }
 
 class MallDetailPage extends StatefulWidget {
-  final String tid;
+  final MallItem item;
 
   const MallDetailPage({
     super.key,
-    required this.tid,
+    required this.item,
   });
 
   @override
@@ -342,6 +348,17 @@ class _MallDetailPageState extends State<MallDetailPage> {
   bool _exchanging = false;
   String? _error;
 
+  String? get _imageUrl {
+    final detailImage = _detail?.imageUrl?.trim() ?? '';
+    if (detailImage.isNotEmpty) return detailImage;
+    final listImage = widget.item.imageUrl?.trim() ?? '';
+    return listImage.isEmpty ? null : listImage;
+  }
+
+  int? get _remaining => widget.item.remaining;
+  int? get _purchased => widget.item.purchased;
+  String? get _endTime => widget.item.endTime?.trim();
+
   @override
   void initState() {
     super.initState();
@@ -355,7 +372,7 @@ class _MallDetailPageState extends State<MallDetailPage> {
     });
 
     try {
-      final detail = await _api.getMallDetail(widget.tid);
+      final detail = await _api.getMallDetail(widget.item.tid);
       if (mounted) {
         setState(() => _detail = detail);
       }
@@ -382,6 +399,12 @@ class _MallDetailPageState extends State<MallDetailPage> {
     if (detail == null) {
       return;
     }
+    if (_remaining == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该商品已兑完')),
+      );
+      return;
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -389,8 +412,8 @@ class _MallDetailPageState extends State<MallDetailPage> {
         title: const Text('确认兑换'),
         content: Text(
           detail.priceGold == null
-              ? '确认兑换「${detail.title}」？'
-              : '确认使用 ${detail.priceGold} 金币兑换「${detail.title}」？',
+              ? '确认兑换「${detail.title}」？\n\n成功兑换后将不能取消或更改，不提供退换货服务'
+              : '确认使用 ${detail.priceGold} 金币兑换「${detail.title}」？\n\n成功兑换后将不能取消或更改，不提供退换货服务',
         ),
         actions: [
           TextButton(
@@ -412,7 +435,7 @@ class _MallDetailPageState extends State<MallDetailPage> {
     setState(() => _exchanging = true);
 
     try {
-      final result = await _api.exchangeMallItem(tid: widget.tid);
+      final result = await _api.exchangeMallItem(tid: widget.item.tid);
 
       if (!mounted) {
         return;
@@ -445,7 +468,7 @@ class _MallDetailPageState extends State<MallDetailPage> {
 
   Future<void> _showCardStatus() async {
     try {
-      final status = await _api.getMallCardStatus(widget.tid);
+      final status = await _api.getMallCardStatus(widget.item.tid);
       if (!mounted) {
         return;
       }
@@ -467,6 +490,13 @@ class _MallDetailPageState extends State<MallDetailPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final imageUrl = _imageUrl;
+    final remaining = _remaining;
+    final purchased = _purchased;
+    final total = (remaining ?? 0) + (purchased ?? 0);
+    final progress = total > 0 && purchased != null
+        ? (purchased / total).clamp(0.0, 1.0)
+        : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -481,15 +511,18 @@ class _MallDetailPageState extends State<MallDetailPage> {
                   : ListView(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                       children: [
-                        if (_detail!.imageUrl != null)
+                        if (imageUrl != null)
                           ClipRRect(
                             borderRadius: BorderRadius.circular(20),
                             child: AspectRatio(
                               aspectRatio: 16 / 10,
                               child: CachedNetworkImage(
-                                imageUrl: _detail!.imageUrl!,
+                                imageUrl: imageUrl!,
                                 fit: BoxFit.contain,
                                 color: null,
+                                // 关闭淡入淡出，避免图片加载过程中反复闪烁
+                                fadeInDuration: Duration.zero,
+                                placeholderFadeInDuration: Duration.zero,
                                 placeholder: (_, __) => ColoredBox(
                                   color: colors.surfaceContainerHighest,
                                   child: const Center(
@@ -541,15 +574,129 @@ class _MallDetailPageState extends State<MallDetailPage> {
                                     style:
                                         theme.textTheme.bodySmall?.copyWith(
                                       color: colors.outline,
+                                      decoration: TextDecoration.lineThrough,
                                     ),
                                   ),
                               ],
                             ),
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        if (remaining != null ||
+                            purchased != null ||
+                            _endTime?.isNotEmpty == true)
+                          Material(
+                            color: colors.surfaceContainerLow,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              side: BorderSide(
+                                color: colors.outlineVariant,
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '兑换信息',
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 16,
+                                    runSpacing: 8,
+                                    children: [
+                                      if (remaining != null)
+                                        _MallInfoItem(
+                                          icon: Icons.inventory_2_outlined,
+                                          text: '剩余 $remaining 件',
+                                        ),
+                                      if (purchased != null)
+                                        _MallInfoItem(
+                                          icon: Icons.shopping_bag_outlined,
+                                          text: '已兑换 $purchased 件',
+                                        ),
+                                    ],
+                                  ),
+                                  if (progress != null) ...[
+                                    const SizedBox(height: 12),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(999),
+                                      child: LinearProgressIndicator(
+                                        value: progress,
+                                        minHeight: 7,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      '已兑换 ${(progress * 100).toStringAsFixed(1)}%',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: colors.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                  if (_endTime?.isNotEmpty == true) ...[
+                                    const SizedBox(height: 10),
+                                    _MallInfoItem(
+                                      icon: Icons.schedule_rounded,
+                                      text: '截止 $_endTime',
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        Material(
+                          color: colors.tertiaryContainer,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  size: 20,
+                                  color: colors.onTertiaryContainer,
+                                ),
+                                const SizedBox(width: 9),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '兑换须知',
+                                        style:
+                                            theme.textTheme.titleSmall?.copyWith(
+                                          color: colors.onTertiaryContainer,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '成功兑换后将不能取消或更改，不提供退换货服务',
+                                        style:
+                                            theme.textTheme.bodyMedium?.copyWith(
+                                          color: colors.onTertiaryContainer,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                         const SizedBox(height: 18),
                         FilledButton.icon(
-                          onPressed: _exchanging ? null : _exchange,
+                          onPressed:
+                              _exchanging || remaining == 0 ? null : _exchange,
                           icon: _exchanging
                               ? const SizedBox(
                                   width: 17,
@@ -559,7 +706,7 @@ class _MallDetailPageState extends State<MallDetailPage> {
                                   ),
                                 )
                               : const Icon(Icons.shopping_bag_outlined),
-                          label: const Text('立即兑换'),
+                          label: Text(remaining == 0 ? '已兑完' : '立即兑换'),
                         ),
                         const SizedBox(height: 8),
                         OutlinedButton.icon(
@@ -570,6 +717,37 @@ class _MallDetailPageState extends State<MallDetailPage> {
                         ),
                       ],
                     ),
+    );
+  }
+}
+
+class _MallInfoItem extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _MallInfoItem({
+    required this.icon,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 17, color: colors.primary),
+        const SizedBox(width: 5),
+        Text(
+          text,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -920,4 +1098,3 @@ class _MallCardPurchaseTile extends StatelessWidget {
     );
   }
 }
-
