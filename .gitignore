@@ -22,6 +22,7 @@ windows/
 android/.gradle/
 android/local.properties
 android/key.properties
+key.properties
 **/google-services.json
 scripts/
 test/

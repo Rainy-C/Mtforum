@@ -86,6 +86,7 @@ class PortalParser {
 
     final image = _absoluteUrl(
       document.querySelector(
+            '#prodoct-img img, img.item-img, '
             '.listpic img, .item-pic img, .mall-pro-main img',
           )?.attributes['src'],
       baseUrl,

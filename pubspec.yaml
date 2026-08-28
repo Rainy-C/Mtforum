@@ -1,7 +1,7 @@
 name: mtforum
 description: MT论坛第三方客户端
 publish_to: 'none'
-version: 2.41.0+149
+version: 2.42.1+151
 
 environment:
   sdk: ^3.6.0
@@ -31,7 +31,6 @@ dependencies:
   image_picker: ^1.1.2
 
   image: ^4.3.0
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
