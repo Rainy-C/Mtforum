@@ -57,6 +57,7 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
   bool _submitting = false;
   bool _allowNoticeAuthor = true;
   bool _useSig = true;
+  String _selectedTypeId = '';
   String? _error;
   _EditorPanel _panel = _EditorPanel.none;
 
@@ -156,6 +157,7 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
       );
       _allowNoticeAuthor = form.allowNoticeAuthor != '0';
       _useSig = form.useSig != '0';
+      _selectedTypeId = form.selectedTypeId;
       setState(() => _loading = false);
     } catch (e) {
       if (!mounted) return;
@@ -512,6 +514,10 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
       _showMessage('请输入帖子正文');
       return;
     }
+    if (form.threadTypes.isNotEmpty && _selectedTypeId.isEmpty) {
+      _showMessage('请选择主题分类');
+      return;
+    }
 
     setState(() => _submitting = true);
     try {
@@ -522,6 +528,7 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
               message: message,
               allowNoticeAuthor: _allowNoticeAuthor,
               useSig: _useSig,
+              typeId: _selectedTypeId,
               uploadedAttachmentAids:
                   _uploadedAttachments.map((item) => item.aid),
             )
@@ -531,6 +538,7 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
               message: message,
               allowNoticeAuthor: _allowNoticeAuthor,
               useSig: _useSig,
+              typeId: _selectedTypeId,
               uploadedAttachmentAids:
                   _uploadedAttachments.map((item) => item.aid),
             );
@@ -669,6 +677,17 @@ class _ThreadEditorPageState extends State<ThreadEditorPage> {
                         _ForumHeader(
                           forumName: widget.forumName,
                           colors: colors,
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      if ((_form?.threadTypes.isNotEmpty ?? false) &&
+                          (!widget.editing || widget.editSubject)) ...[
+                        _ThreadTypeSelector(
+                          options: _form!.threadTypes,
+                          selectedId: _selectedTypeId,
+                          onSelected: (value) {
+                            setState(() => _selectedTypeId = value);
+                          },
                         ),
                         const SizedBox(height: 10),
                       ],
@@ -893,6 +912,71 @@ class _ForumHeader extends StatelessWidget {
                       color: colors.onPrimaryContainer,
                       fontWeight: FontWeight.w800,
                     ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThreadTypeSelector extends StatelessWidget {
+  final List<ThreadTypeOption> options;
+  final String selectedId;
+  final ValueChanged<String> onSelected;
+
+  const _ThreadTypeSelector({
+    required this.options,
+    required this.selectedId,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Material(
+      color: colors.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(Icons.sell_outlined, size: 18, color: colors.primary),
+            const SizedBox(width: 8),
+            Text(
+              '主题分类',
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 7,
+                  runSpacing: 6,
+                  children: [
+                    for (final option in options)
+                      ChoiceChip(
+                        label: Text(option.name),
+                        selected: option.id == selectedId,
+                        showCheckmark: false,
+                        avatar: option.id == '58'
+                            ? const Icon(Icons.check_circle_outline, size: 16)
+                            : option.id == '59'
+                                ? const Icon(Icons.help_outline_rounded, size: 16)
+                                : null,
+                        onSelected: (_) => onSelected(option.id),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                  ],
+                ),
               ),
             ),
           ],

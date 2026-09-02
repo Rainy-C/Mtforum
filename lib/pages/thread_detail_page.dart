@@ -988,7 +988,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
         child: _PostCard(
           post: post,
           replyParent: parent,
-          hideQuotedContext: parent != null,
+          compactFloor: true,
+          hideQuotedContext: parent != null || post.replyToName != null,
           highlighted: targeted || contextHighlighted,
           onReplyContextTap:
               parent == null ? null : () => _scrollToLoadedComment(parent.pid),
@@ -1422,7 +1423,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                   ],
                 ),
               ),
-              Divider(color: colors.outlineVariant, height: 1),
+              const SizedBox(height: 4),
               if (filteredCommentCount > 0)
                 Material(
                   color: colors.surfaceContainerLow,
@@ -1509,7 +1510,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         controller: _scrollController,
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+                        padding: const EdgeInsets.fromLTRB(10, 6, 10, 18),
                         itemCount: comments.length + (_targetMode ? 2 : 1),
                         itemBuilder: (context, index) {
                           if (_targetMode && index == 0) {
@@ -1749,6 +1750,7 @@ class _CommentComposer extends StatelessWidget {
 class _PostCard extends StatelessWidget {
   final Post post;
   final Post? replyParent;
+  final bool compactFloor;
   final bool highlighted;
   final bool hideQuotedContext;
   final VoidCallback? onReplyContextTap;
@@ -1759,6 +1761,7 @@ class _PostCard extends StatelessWidget {
   const _PostCard({
     required this.post,
     this.replyParent,
+    this.compactFloor = false,
     this.highlighted = false,
     this.hideQuotedContext = false,
     this.onReplyContextTap,
@@ -1812,28 +1815,42 @@ class _PostCard extends StatelessWidget {
         .toList(growable: false);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      color: highlighted
-          ? Color.alphaBlend(
-              colors.primary.withValues(alpha: 0.10),
-              colors.surfaceContainerLow,
-            )
-          : colors.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: highlighted ? colors.primary : colors.outlineVariant,
-          width: highlighted ? 1.5 : 1,
-        ),
-      ),
+      margin: compactFloor
+          ? EdgeInsets.zero
+          : const EdgeInsets.only(bottom: 8),
+      elevation: compactFloor ? 0 : null,
+      color: compactFloor
+          ? (highlighted
+              ? Color.alphaBlend(
+                  colors.primary.withValues(alpha: 0.065),
+                  colors.surface,
+                )
+              : colors.surface)
+          : (highlighted
+              ? Color.alphaBlend(
+                  colors.primary.withValues(alpha: 0.10),
+                  colors.surfaceContainerLow,
+                )
+              : colors.surfaceContainerLow),
+      shape: compactFloor
+          ? const RoundedRectangleBorder(borderRadius: BorderRadius.zero)
+          : RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: highlighted ? colors.primary : colors.outlineVariant,
+                width: highlighted ? 1.5 : 1,
+              ),
+            ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+        padding: compactFloor
+            ? const EdgeInsets.fromLTRB(4, 11, 4, 0)
+            : const EdgeInsets.fromLTRB(12, 10, 12, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                if (post.isOp) ...[
+                if (post.isOp && !compactFloor) ...[
                   Container(
                     width: 3,
                     height: 34,
@@ -1921,54 +1938,16 @@ class _PostCard extends StatelessWidget {
             ),
             if (replyParent != null) ...[
               const SizedBox(height: 9),
-              InkWell(
-                borderRadius: BorderRadius.circular(10),
+              _ReplyContextStrip(
+                label: '回复 $replyParentFloor '
+                    '@${replyParent!.authorName ?? post.replyToName ?? '用户'}',
+                preview: replyParent!.content,
                 onTap: onReplyContextTap,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colors.primaryContainer.withValues(alpha: 0.42),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.subdirectory_arrow_left_rounded,
-                        size: 16,
-                        color: colors.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          '回复 $replyParentFloor '
-                          '@${replyParent!.authorName ?? post.replyToName ?? '用户'}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: colors.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      Icon(
-                        Icons.my_location_rounded,
-                        size: 15,
-                        color: colors.primary,
-                      ),
-                    ],
-                  ),
-                ),
               ),
-            ] else if (post.replyToName != null) ...[
+            ] else if (post.replyToName?.trim().isNotEmpty == true) ...[
               const SizedBox(height: 9),
-              Text(
-                '回复 @${post.replyToName}',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: colors.primary,
-                ),
+              _ReplyContextStrip(
+                label: '回复 @${post.replyToName!.trim()}',
               ),
             ],
             if (visibleRichContent.isNotEmpty) ...[
@@ -2064,6 +2043,12 @@ class _PostCard extends StatelessWidget {
                 ),
               ),
             ],
+            if (compactFloor)
+              Divider(
+                height: 1,
+                thickness: 0.8,
+                color: colors.outlineVariant.withValues(alpha: 0.72),
+              ),
           ],
         ),
       ),
@@ -2091,6 +2076,93 @@ class _PostCard extends StatelessWidget {
     if (floor == null || floor.isEmpty) return '';
     if (floor == '1') return '楼主';
     return '$floor楼';
+  }
+}
+
+class _ReplyContextStrip extends StatelessWidget {
+  final String label;
+  final String? preview;
+  final VoidCallback? onTap;
+
+  const _ReplyContextStrip({
+    required this.label,
+    this.preview,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final previewText = (preview ?? '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(9, 7, 8, 7),
+          decoration: BoxDecoration(
+            color: colors.surfaceContainerHighest.withValues(alpha: 0.62),
+            borderRadius: BorderRadius.circular(8),
+            border: Border(
+              left: BorderSide(
+                color: colors.primary.withValues(alpha: 0.80),
+                width: 3,
+              ),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: colors.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (previewText.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        previewText,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (onTap != null) ...[
+                const SizedBox(width: 6),
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Icon(
+                    Icons.my_location_rounded,
+                    size: 14,
+                    color: colors.primary,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

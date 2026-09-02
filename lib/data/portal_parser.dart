@@ -1,3 +1,4 @@
+import 'package:html/dom.dart' as html_dom;
 import 'package:html/parser.dart' as html_parser;
 
 import '../models/models.dart';
@@ -251,7 +252,7 @@ class PortalParser {
               ?.group(1) ??
           RegExp(r'forum-(\d+)').firstMatch(href)?.group(1);
 
-      if (fid == null || discovered.containsKey(fid)) {
+      if (fid == null) {
         continue;
       }
 
@@ -270,10 +271,17 @@ class PortalParser {
         name = _clean(link.text);
       }
 
+      final existing = discovered[fid];
+      final iconUrl = _absoluteUrl(img?.attributes['src'], baseUrl);
+      final todayPosts = _forumTodayPosts(
+        link,
+        missingBadgeMeansZero: img != null,
+      );
       discovered[fid] = ForumBoard(
         fid: fid,
-        name: name,
-        iconUrl: _absoluteUrl(img?.attributes['src'], baseUrl),
+        name: name.isNotEmpty ? name : (existing?.name ?? ''),
+        iconUrl: iconUrl ?? existing?.iconUrl,
+        todayPosts: todayPosts ?? existing?.todayPosts,
       );
     }
 
@@ -357,12 +365,34 @@ class PortalParser {
                     fid: fallback.fid,
                     name: live.name.isEmpty ? fallback.name : live.name,
                     iconUrl: live.iconUrl,
+                    todayPosts: live.todayPosts,
                   );
                 })
                 .toList(growable: false),
           ),
         )
         .toList(growable: false);
+  }
+
+  int? _forumTodayPosts(
+    html_dom.Element link, {
+    required bool missingBadgeMeansZero,
+  }) {
+    html_dom.Element? node = link;
+    for (var depth = 0; node != null && depth < 6; depth++) {
+      final badge = node.querySelector('.bg_a.f_f');
+      if (badge != null) {
+        final value = _firstInt(_clean(badge.text));
+        if (value != null) return value;
+      }
+      if (node.localName == 'li') break;
+      node = node.parent;
+    }
+
+    // 当前 Comiis 模板今日为 0 时不渲染 bg_a f_f 徽标。
+    // 只有确认这是带版块图标的真实卡片时，才把“无徽标”判定为 0；
+    // 顶部导航等重复 forum 链接不会因此覆盖真实统计。
+    return missingBadgeMeansZero ? 0 : null;
   }
 
   int? _firstInt(String value) {

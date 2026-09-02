@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
@@ -74,6 +75,7 @@ class _NoticePageState extends State<NoticePage>
   String? _type = _sections.first.subtypes.first.type;
   List<NoticeItem> _items = const [];
   final Map<String, Post> _replyPreviews = {};
+  final Set<String> _ignoredNoticeKeys = <String>{};
   bool _loading = true;
   bool _loadingMore = false;
   bool _hasMore = false;
@@ -108,8 +110,33 @@ class _NoticePageState extends State<NoticePage>
 
   Future<void> _initialize() async {
     await _commentFilter.load();
+    await _loadIgnoredNoticeKeys();
     if (mounted) await _reload();
   }
+
+  static const String _ignoredNoticePrefsKey = 'notice_ignored_keys_v1';
+
+  Future<void> _loadIgnoredNoticeKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved =
+        prefs.getStringList(_ignoredNoticePrefsKey) ?? const <String>[];
+    _ignoredNoticeKeys
+      ..clear()
+      ..addAll(saved.where((key) => key.trim().isNotEmpty));
+  }
+
+  Future<void> _persistIgnoredNoticeKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = _ignoredNoticeKeys.toList(growable: false);
+    final start = keys.length > 1200 ? keys.length - 1200 : 0;
+    await prefs.setStringList(
+      _ignoredNoticePrefsKey,
+      keys.sublist(start),
+    );
+  }
+
+  bool _isLocallyIgnored(NoticeItem item) =>
+      _ignoredNoticeKeys.contains(_noticeKey(item));
 
   void _handleFilterChanged() {
     if (!mounted) return;
@@ -134,6 +161,7 @@ class _NoticePageState extends State<NoticePage>
   }
 
   List<NoticeItem> get _filteredOutItems => _items
+      .where((item) => !_isLocallyIgnored(item))
       .where(
         (item) => _shouldHideNotice(
           item,
@@ -146,6 +174,7 @@ class _NoticePageState extends State<NoticePage>
   List<NoticeItem> get _visibleItems {
     if (_showFilteredNotices) return _filteredOutItems;
     return _items
+        .where((item) => !_isLocallyIgnored(item))
         .where(
           (item) => !_shouldHideNotice(
             item,
@@ -247,15 +276,18 @@ class _NoticePageState extends State<NoticePage>
           _type != requestedType) {
         return;
       }
+      final visibleDataItems = data.items
+          .where((item) => !_isLocallyIgnored(item))
+          .toList(growable: false);
       setState(() {
-        _items = data.items;
+        _items = visibleDataItems;
         _page = 1;
         _totalPages = data.totalPages;
         _hasMore = data.hasMore || _page < _totalPages;
       });
       unawaited(MessageBadgeService.instance.markNoticesSeen(data.items));
       if (requestedView == 'mypost' && requestedType == 'post') {
-        unawaited(_loadReplyPreviews(data.items, generation));
+        unawaited(_loadReplyPreviews(visibleDataItems, generation));
       }
     } catch (e) {
       if (!mounted || generation != _generation) return;
@@ -291,10 +323,13 @@ class _NoticePageState extends State<NoticePage>
         return;
       }
 
+      final pageItems = data.items
+          .where((item) => !_isLocallyIgnored(item))
+          .toList(growable: false);
       final merged = <NoticeItem>[..._items];
       final keys = merged.map(_noticeKey).toSet();
       var addedCount = 0;
-      for (final item in data.items) {
+      for (final item in pageItems) {
         if (keys.add(_noticeKey(item))) {
           merged.add(item);
           addedCount++;
@@ -307,12 +342,12 @@ class _NoticePageState extends State<NoticePage>
         if (data.totalPages > _totalPages) {
           _totalPages = data.totalPages;
         }
-        _hasMore = addedCount > 0 &&
-            (data.hasMore || nextPage < _totalPages);
+        _hasMore = nextPage < _totalPages ||
+            (addedCount > 0 && data.hasMore);
       });
       unawaited(MessageBadgeService.instance.markNoticesSeen(data.items));
       if (requestedView == 'mypost' && requestedType == 'post') {
-        unawaited(_loadReplyPreviews(data.items, generation));
+        unawaited(_loadReplyPreviews(pageItems, generation));
       }
       loadSucceeded = true;
     } catch (e) {
@@ -448,9 +483,15 @@ class _NoticePageState extends State<NoticePage>
       SnackBar(content: Text(result.message)),
     );
     if (result.success) {
+      final ignoredKey = _noticeKey(item);
       setState(() {
-        _items = _items.where((notice) => _noticeKey(notice) != _noticeKey(item)).toList();
+        _ignoredNoticeKeys.add(ignoredKey);
+        _items = _items
+            .where((notice) => _noticeKey(notice) != ignoredKey)
+            .toList(growable: false);
+        _replyPreviews.remove(item.pid);
       });
+      await _persistIgnoredNoticeKeys();
     }
   }
 
@@ -880,15 +921,14 @@ class _NoticeReplyPreview extends StatelessWidget {
 
   const _NoticeReplyPreview({required this.post});
 
-  List<String> get _imageUrls {
-    final result = <String>[];
+  int get _imageCount {
     final seen = <String>{};
 
     void collect(Iterable<PostContent> contents) {
       for (final content in contents) {
         if (content.type == PostContentType.image) {
           final url = content.url?.trim() ?? '';
-          if (url.isNotEmpty && seen.add(url)) result.add(url);
+          if (url.isNotEmpty) seen.add(url);
         }
         if (content.children.isNotEmpty) collect(content.children);
       }
@@ -897,119 +937,84 @@ class _NoticeReplyPreview extends StatelessWidget {
     collect(post.richContent);
     for (final rawUrl in post.images) {
       final url = rawUrl.trim();
-      if (url.isNotEmpty && seen.add(url)) result.add(url);
+      if (url.isNotEmpty) seen.add(url);
     }
-    return result;
+    return seen.length;
   }
 
-  void _openImage(BuildContext context, String url) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        fullscreenDialog: true,
-        builder: (_) => _NoticeImagePage(url: url),
-      ),
-    );
+  String get _summary {
+    var value = ApiService.buildPostPreview(post).trim();
+    if (value.isEmpty) return '';
+
+    // 通知只做快速预览，不把图片占位符或大段换行带进卡片。
+    value = value
+        .replaceAll(RegExp(r'\[图片\]', caseSensitive: false), ' ')
+        .replaceAll(
+          RegExp(r'\[img\][\s\S]*?\[/img\]', caseSensitive: false),
+          ' ',
+        )
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return value;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final images = _imageUrls;
-    final text = ApiService.buildPostPreview(post).trim();
-    final showText = text.isNotEmpty && !(text == '[图片]' && images.isNotEmpty);
+    final text = _summary;
+    final imageCount = _imageCount;
 
-    if (!showText && images.isEmpty) return const SizedBox.shrink();
+    if (text.isEmpty && imageCount == 0) return const SizedBox.shrink();
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(10),
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(9),
+        border: Border(
+          left: BorderSide(
+            color: colors.primary.withValues(alpha: 0.72),
+            width: 3,
+          ),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (showText)
+          if (text.isNotEmpty)
             Text(
               text,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: colors.onSurfaceVariant,
-                height: 1.45,
+                height: 1.42,
               ),
             ),
-          for (var index = 0; index < images.length; index++) ...[
-            if (showText || index > 0) const SizedBox(height: 8),
-            GestureDetector(
-              onTap: () => _openImage(context, images[index]),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: double.infinity,
-                  height: 180,
-                  color: colors.surfaceContainerHigh,
-                  child: CachedNetworkImage(
-                    imageUrl: images[index],
-                    fit: BoxFit.contain,
-                    placeholder: (_, __) => const Center(
-                      child: SizedBox.square(
-                        dimension: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ),
-                    errorWidget: (_, __, ___) => Center(
-                      child: Icon(
-                        Icons.broken_image_outlined,
-                        color: colors.outline,
-                      ),
-                    ),
+          if (imageCount > 0) ...[
+            if (text.isNotEmpty) const SizedBox(height: 5),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.image_outlined,
+                  size: 14,
+                  color: colors.primary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  imageCount == 1 ? '含图片' : '含 $imageCount 张图片',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: colors.primary,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
+              ],
             ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-class _NoticeImagePage extends StatelessWidget {
-  final String url;
-
-  const _NoticeImagePage({required this.url});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: const Text('查看图片'),
-      ),
-      body: InteractiveViewer(
-        minScale: 1,
-        maxScale: 5,
-        child: Center(
-          child: CachedNetworkImage(
-            imageUrl: url,
-            width: double.infinity,
-            height: double.infinity,
-            fit: BoxFit.contain,
-            placeholder: (_, __) => const Center(
-              child: CircularProgressIndicator(color: Colors.white),
-            ),
-            errorWidget: (_, __, ___) => const Center(
-              child: Icon(
-                Icons.broken_image_outlined,
-                color: Colors.white70,
-                size: 48,
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }

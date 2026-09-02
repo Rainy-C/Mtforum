@@ -129,6 +129,8 @@ class _SearchPageState extends State<SearchPage> {
       excerpt: result.excerpt,
       thumbnails: result.thumbnails,
       hasHiddenContent: result.hasHiddenContent,
+      typeId: result.typeId,
+      typeName: result.typeName,
     );
   }
 

@@ -39,10 +39,33 @@ class ThreadCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(
-                      thread.title?.trim().isNotEmpty == true
-                          ? thread.title!.trim()
-                          : '未知标题',
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          if (thread.typeId == '58' || thread.typeId == '59') ...[
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.middle,
+                              child: _QuestionTypeBadge(
+                                typeId: thread.typeId!,
+                                label: thread.typeName?.trim().isNotEmpty == true
+                                    ? thread.typeName!.trim()
+                                    : thread.typeId == '58'
+                                        ? '已解决'
+                                        : '求助问答',
+                              ),
+                            ),
+                            const WidgetSpan(
+                              alignment: PlaceholderAlignment.middle,
+                              child: SizedBox(width: 7),
+                            ),
+                          ],
+                          TextSpan(
+                            text: thread.title?.trim().isNotEmpty == true
+                                ? thread.title!.trim()
+                                : '未知标题',
+                          ),
+                        ],
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleMedium?.copyWith(
@@ -258,6 +281,59 @@ class _ThumbnailStrip extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _QuestionTypeBadge extends StatelessWidget {
+  final String typeId;
+  final String label;
+
+  const _QuestionTypeBadge({
+    required this.typeId,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final solved = typeId == '58';
+
+    return Container(
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: solved
+            ? colors.secondaryContainer.withValues(alpha: 0.78)
+            : colors.primaryContainer.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(
+            solved ? Icons.check_circle_outline : Icons.help_outline_rounded,
+            size: 12,
+            color: solved
+                ? colors.onSecondaryContainer
+                : colors.onPrimaryContainer,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: solved
+                  ? colors.onSecondaryContainer
+                  : colors.onPrimaryContainer,
+              fontWeight: FontWeight.w700,
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -9,16 +10,22 @@ import 'install_identity_service.dart';
 import 'update_service.dart';
 
 class AppStats {
+  final int todayLaunches;
   final int totalLaunches;
   final int uniqueInstalls;
   final int active7d;
   final int active30d;
+  final int onlineUsers;
+  final int onlineConnections;
 
   const AppStats({
+    required this.todayLaunches,
     required this.totalLaunches,
     required this.uniqueInstalls,
     required this.active7d,
     required this.active30d,
+    required this.onlineUsers,
+    required this.onlineConnections,
   });
 }
 
@@ -39,6 +46,12 @@ class AnalyticsService {
     defaultValue: '',
   );
 
+  /// 可选。默认从反馈/统计服务地址推导为 wss://.../api/v1/app/online
+  static const _onlineEndpointOverride = String.fromEnvironment(
+    'MTFORUM_ONLINE_WS_URL',
+    defaultValue: '',
+  );
+
   final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 8),
@@ -56,6 +69,12 @@ class AnalyticsService {
   late final String _launchId = _generateOpaqueId();
   Future<AppStats?>? _reportFuture;
   AppStats? _latestStats;
+
+  WebSocket? _onlineSocket;
+  Timer? _onlineReconnectTimer;
+  bool _onlineWanted = false;
+  bool _onlineConnecting = false;
+  int _onlineRetry = 0;
 
   AppStats? get latestStats => _latestStats;
   bool get isConfigured => _launchEndpoints.isNotEmpty && _statsEndpoints.isNotEmpty;
@@ -83,6 +102,122 @@ class AnalyticsService {
       FeedbackService.endpointCandidates
           .map((endpoint) => _replaceFeedbackEndpoint(endpoint, 'app/stats')),
     );
+  }
+
+  List<String> get _onlineEndpoints {
+    if (_onlineEndpointOverride.isNotEmpty) {
+      return <String>[_toWebSocketEndpoint(_onlineEndpointOverride)];
+    }
+    if (_launchEndpointOverride.isNotEmpty) {
+      return <String>[
+        _toWebSocketEndpoint(
+          _replaceLastPathSegment(_launchEndpointOverride, 'online'),
+        ),
+      ];
+    }
+    return _dedupeEndpoints(
+      FeedbackService.endpointCandidates.map(
+        (endpoint) => _toWebSocketEndpoint(
+          _replaceFeedbackEndpoint(endpoint, 'app/online'),
+        ),
+      ),
+    );
+  }
+
+  /// 控制极轻量在线探针。前台保持一个 WS；进入后台立即关闭。
+  /// 连接只携带本 App 生成的匿名 installId，不使用论坛 UID/Cookie。
+  void setOnlineProbeEnabled(bool value) {
+    _onlineWanted = value;
+    if (!value) {
+      _onlineReconnectTimer?.cancel();
+      _onlineReconnectTimer = null;
+      _onlineRetry = 0;
+      final socket = _onlineSocket;
+      _onlineSocket = null;
+      if (socket != null) {
+        unawaited(socket.close(WebSocketStatus.goingAway));
+      }
+      return;
+    }
+    unawaited(_ensureOnlineSocket());
+  }
+
+  Future<void> _ensureOnlineSocket() async {
+    if (!_onlineWanted || _onlineConnecting || _onlineSocket != null) return;
+    if (_onlineEndpoints.isEmpty) return;
+
+    _onlineConnecting = true;
+    try {
+      final installId = await getInstallId();
+      final headers = <String, dynamic>{
+        'X-MTForum-Install-ID': installId,
+      };
+      if (FeedbackService.appToken.isNotEmpty) {
+        headers['X-MTForum-Token'] = FeedbackService.appToken;
+      }
+
+      for (final endpoint in _onlineEndpoints) {
+        if (!_onlineWanted || _onlineSocket != null) return;
+        try {
+          final socket = await WebSocket.connect(
+            endpoint,
+            headers: headers,
+            compression: CompressionOptions.compressionOff,
+          ).timeout(const Duration(seconds: 8));
+
+          if (!_onlineWanted) {
+            await socket.close(WebSocketStatus.goingAway);
+            return;
+          }
+
+          socket.pingInterval = const Duration(seconds: 25);
+          _onlineSocket = socket;
+          _onlineRetry = 0;
+          _onlineReconnectTimer?.cancel();
+          _onlineReconnectTimer = null;
+
+          socket.listen(
+            (_) {},
+            onError: (_) => _handleOnlineSocketClosed(socket),
+            onDone: () => _handleOnlineSocketClosed(socket),
+            cancelOnError: true,
+          );
+          return;
+        } catch (_) {
+          // 继续尝试下一个候选 WS 地址。
+        }
+      }
+    } catch (_) {
+      // 在线探针永远不能影响 App 正常运行。
+    } finally {
+      _onlineConnecting = false;
+      if (_onlineWanted && _onlineSocket == null) {
+        _scheduleOnlineReconnect();
+      }
+    }
+  }
+
+  void _handleOnlineSocketClosed(WebSocket socket) {
+    if (!identical(_onlineSocket, socket)) return;
+    _onlineSocket = null;
+    if (_onlineWanted) _scheduleOnlineReconnect();
+  }
+
+  void _scheduleOnlineReconnect() {
+    if (!_onlineWanted ||
+        _onlineSocket != null ||
+        _onlineConnecting ||
+        _onlineReconnectTimer?.isActive == true) {
+      return;
+    }
+    const delays = <int>[3, 8, 20, 45, 60];
+    final index = _onlineRetry.clamp(0, delays.length - 1).toInt();
+    final seconds = delays[index];
+    if (_onlineRetry < delays.length - 1) _onlineRetry++;
+    _onlineReconnectTimer = Timer(Duration(seconds: seconds), () {
+      _onlineReconnectTimer = null;
+      unawaited(_ensureOnlineSocket());
+    });
   }
 
   /// 每个 App 进程只会上报一次，同一进程重复调用会复用同一个 Future
@@ -195,10 +330,13 @@ class AnalyticsService {
       }
 
       return AppStats(
+        todayLaunches: readInt('todayLaunches'),
         totalLaunches: readInt('totalLaunches'),
         uniqueInstalls: readInt('uniqueInstalls'),
         active7d: readInt('active7d'),
         active30d: readInt('active30d'),
+        onlineUsers: readInt('onlineUsers'),
+        onlineConnections: readInt('onlineConnections'),
       );
     } catch (_) {
       return null;
@@ -242,6 +380,22 @@ class AnalyticsService {
       return uri
           .replace(pathSegments: segments, query: null, fragment: null)
           .toString();
+    } catch (_) {
+      return endpoint;
+    }
+  }
+
+  String _toWebSocketEndpoint(String endpoint) {
+    try {
+      final uri = Uri.parse(endpoint);
+      final scheme = switch (uri.scheme.toLowerCase()) {
+        'https' => 'wss',
+        'http' => 'ws',
+        'wss' => 'wss',
+        'ws' => 'ws',
+        _ => uri.scheme,
+      };
+      return uri.replace(scheme: scheme).toString();
     } catch (_) {
       return endpoint;
     }

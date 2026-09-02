@@ -10,6 +10,7 @@ import '../../services/api_service.dart';
 import '../../services/image_host_service.dart';
 import '../../services/message_badge_service.dart';
 import '../../widgets/app_state_view.dart';
+import 'user_profile_page.dart';
 
 class PrivateMessagesPage extends StatefulWidget {
   const PrivateMessagesPage({super.key});
@@ -507,10 +508,31 @@ class _PmConversationPageState extends State<PmConversationPage> {
         title: Row(
           children: [
             Flexible(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.touid.trim().isEmpty ||
+                        widget.touid.trim() == '0'
+                    ? null
+                    : () {
+                        final uid = widget.touid.trim();
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            settings: RouteSettings(name: '/user/$uid'),
+                            builder: (_) => UserProfilePage(uid: uid),
+                          ),
+                        );
+                      },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
               ),
             ),
             if (peerOnline != null) ...[

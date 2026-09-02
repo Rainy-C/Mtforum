@@ -377,6 +377,44 @@ class ApiService {
     }
   }
 
+  /// 解析论坛页面自身展示的在线人数（例如“总计 123 人在线”）。
+  ///
+  /// 官方客户端的 HomeParserUtils 使用：
+  /// `总计\s*(\d+)\s*人在线`。
+  /// 这里请求桌面版论坛首页并先取 DOM 文本，再使用同一规则解析；
+  /// 避免移动模板不输出在线会员区域，导致首页人数一直为空。
+  Future<int?> getForumOnlineCount() async {
+    final pattern = RegExp(r'总计(?:\s|<[^>]+>)*(\d+)(?:\s|<[^>]+>)*人在线');
+    final urls = <String>[
+      '$baseUrl/forum.php',
+      '$baseUrl/',
+    ];
+
+    for (final url in urls) {
+      try {
+        final response = await _desktopDio.get<String>(
+          url,
+          options: Options(
+            responseType: ResponseType.plain,
+            followRedirects: true,
+          ),
+        );
+        final html = response.data ?? '';
+        if (html.isEmpty) continue;
+
+        // 官方正则针对页面可见文本。先去掉 HTML 标签后匹配，
+        // 同时保留 raw HTML 回退，兼容模板直接输出纯文本的情况。
+        final visibleText = html_parser.parse(html).text ?? '';
+        final match = pattern.firstMatch(visibleText) ?? pattern.firstMatch(html);
+        final value = int.tryParse(match?.group(1) ?? '');
+        if (value != null) return value;
+      } catch (_) {
+        // 在线人数只用于标题展示，一个入口失败时继续尝试回退地址。
+      }
+    }
+    return null;
+  }
+
   Future<List<Thread>> getThreadList({
     int page = 1,
     String view = 'hot',
@@ -636,7 +674,7 @@ class ApiService {
               (!form.canUploadImages && retryForm.canUploadImages));
       if (shouldUseRetry) {
         body = retryBody;
-        form = retryForm;
+        form = _preserveThreadTypes(retryForm, fallback: form);
       }
     }
 
@@ -647,6 +685,35 @@ class ApiService {
     }
     _rememberFormhash(form.formhash);
     return form;
+  }
+
+  PostEditorForm _preserveThreadTypes(
+    PostEditorForm form, {
+    required PostEditorForm fallback,
+  }) {
+    if (form.threadTypes.isNotEmpty || fallback.threadTypes.isEmpty) {
+      return form;
+    }
+
+    return PostEditorForm(
+      formhash: form.formhash,
+      posttime: form.posttime,
+      fid: form.fid,
+      tid: form.tid,
+      pid: form.pid,
+      page: form.page,
+      subject: form.subject,
+      message: form.message,
+      deleteValue: form.deleteValue,
+      allowNoticeAuthor: form.allowNoticeAuthor,
+      useSig: form.useSig,
+      uploadUid: form.uploadUid,
+      uploadHash: form.uploadHash,
+      maxUploadSizeKb: form.maxUploadSizeKb,
+      attachmentAids: form.attachmentAids,
+      threadTypes: fallback.threadTypes,
+      selectedTypeId: fallback.selectedTypeId,
+    );
   }
 
   Future<PostAttachmentUploadResult> uploadPostImage({
@@ -776,6 +843,7 @@ class ApiService {
     required String message,
     bool? allowNoticeAuthor,
     bool? useSig,
+    String? typeId,
     Iterable<String> uploadedAttachmentAids = const [],
   }) async {
     if (!isLoggedIn) {
@@ -799,6 +867,7 @@ class ApiService {
       'htmlon': '0',
       'subject': title,
       'message': content,
+      if (typeId?.trim().isNotEmpty == true) 'typeid': typeId!.trim(),
       if (allowNoticeAuthor ?? (form.allowNoticeAuthor != '0'))
         'allownoticeauthor': '1',
       if (useSig ?? (form.useSig != '0')) 'usesig': '1',
@@ -1024,6 +1093,7 @@ class ApiService {
     required String message,
     bool? allowNoticeAuthor,
     bool? useSig,
+    String? typeId,
     Iterable<String> uploadedAttachmentAids = const [],
   }) async {
     if (!isLoggedIn) {
@@ -1047,6 +1117,7 @@ class ApiService {
       'editsubmit': 'yes',
       'subject': subject.trim(),
       'message': content,
+      if (typeId?.trim().isNotEmpty == true) 'typeid': typeId!.trim(),
       if (allowNoticeAuthor ?? (form.allowNoticeAuthor != '0'))
         'allownoticeauthor': '1',
       if (useSig ?? (form.useSig != '0')) 'usesig': '1',
@@ -1349,6 +1420,8 @@ class ApiService {
               likeCount: thread.likeCount,
               thumbnails: thread.thumbnails,
               hasHiddenContent: thread.hasHiddenContent,
+              typeId: thread.typeId,
+              typeName: thread.typeName,
             ))
         .toList();
   }

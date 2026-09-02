@@ -233,21 +233,56 @@ class _BoardTile extends StatelessWidget {
             ),
             const SizedBox(width: 11),
             Expanded(
-                child: Text(
-                  board.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              child: Text(
+                board.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
                 ),
+              ),
             ),
+            if (board.todayPosts != null) ...[
+              const SizedBox(width: 8),
+              _TodayPostsBadge(count: board.todayPosts!),
+              const SizedBox(width: 3),
+            ],
             Icon(
               Icons.chevron_right_rounded,
               size: 18,
               color: colors.outline,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayPostsBadge extends StatelessWidget {
+  final int count;
+
+  const _TodayPostsBadge({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final active = count > 0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: active
+            ? colors.primaryContainer.withValues(alpha: 0.72)
+            : colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '今日 $count',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: active ? colors.onPrimaryContainer : colors.outline,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );

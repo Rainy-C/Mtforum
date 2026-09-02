@@ -64,6 +64,18 @@ class ForumParser {
       final forumHref = forumEl?.attributes['href'] ?? '';
       final forumId = RegExp(r'forum-(\d+)').firstMatch(forumHref)?.group(1);
 
+      final typeEl = el.querySelector('a[href*="typeid="]');
+      final typeHref = typeEl?.attributes['href'] ?? '';
+      final typeId = RegExp(r'(?:[?&]|&amp;)typeid=(\d+)')
+          .firstMatch(typeHref)
+          ?.group(1);
+      String? typeName = _nullableText(typeEl?.text);
+      if (typeId == '59') {
+        typeName = '求助问答';
+      } else if (typeId == '58') {
+        typeName = '已解决';
+      }
+
       // Comiis 的完整统计区真实结构是
       // .comiis_xznalist_bottom .comiis_tm，通常顺序为：点赞 / 回复 / 浏览。
       // 部分页面会把点赞拆成 .num-all_{tid}，或只留下带中文标签的文本。
@@ -180,6 +192,8 @@ class ForumParser {
         excerpt: _cleanThreadExcerpt(el.querySelector('.list_body a')?.text),
         thumbnails: thumbnails,
         hasHiddenContent: hasHidden,
+        typeId: typeId,
+        typeName: typeName,
       ));
     }
 
@@ -308,6 +322,29 @@ class ForumParser {
           ).firstMatch(body)?.group(1) ?? '',
         ) ??
         1024;
+    final typeSelect = form?.querySelector('select[name="typeid"]') ??
+        document.querySelector('select[name="typeid"]');
+    final threadTypes = <ThreadTypeOption>[];
+    var selectedTypeId = '';
+    if (typeSelect != null) {
+      for (final option in typeSelect.querySelectorAll('option')) {
+        final id = (option.attributes['value'] ?? '').trim();
+        final name = _cleanInline(option.text);
+        if (option.attributes.containsKey('selected')) {
+          selectedTypeId = id;
+        }
+        if (id.isEmpty || id == '0' || name.isEmpty || name == '请选择') {
+          continue;
+        }
+        threadTypes.add(ThreadTypeOption(id: id, name: name));
+      }
+    }
+    if ((selectedTypeId.isEmpty || selectedTypeId == '0') &&
+        fid == '40' &&
+        threadTypes.any((item) => item.id == '59')) {
+      selectedTypeId = '59';
+    }
+
     final attachmentAids = <String>{};
     for (final input in document.querySelectorAll('input[name]')) {
       final name = input.attributes['name'] ?? '';
@@ -336,6 +373,8 @@ class ForumParser {
       uploadHash: uploadHash,
       maxUploadSizeKb: maxUploadSizeKb,
       attachmentAids: attachmentAids.toList(growable: false),
+      threadTypes: List<ThreadTypeOption>.unmodifiable(threadTypes),
+      selectedTypeId: selectedTypeId,
     );
   }
 
