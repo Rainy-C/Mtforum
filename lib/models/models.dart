@@ -14,6 +14,8 @@ class Thread {
   final String? excerpt;
   final List<String> thumbnails;
   final bool hasHiddenContent;
+  final String? typeId;
+  final String? typeName;
 
   const Thread({
     required this.tid,
@@ -30,6 +32,8 @@ class Thread {
     this.excerpt,
     this.thumbnails = const [],
     this.hasHiddenContent = false,
+    this.typeId,
+    this.typeName,
   });
 
   Thread copyWith({
@@ -47,6 +51,8 @@ class Thread {
     String? excerpt,
     List<String>? thumbnails,
     bool? hasHiddenContent,
+    String? typeId,
+    String? typeName,
   }) {
     return Thread(
       tid: tid ?? this.tid,
@@ -63,6 +69,8 @@ class Thread {
       excerpt: excerpt ?? this.excerpt,
       thumbnails: thumbnails ?? this.thumbnails,
       hasHiddenContent: hasHiddenContent ?? this.hasHiddenContent,
+      typeId: typeId ?? this.typeId,
+      typeName: typeName ?? this.typeName,
     );
   }
 
@@ -142,6 +150,16 @@ class ThreadDetail {
   });
 }
 
+class ThreadTypeOption {
+  final String id;
+  final String name;
+
+  const ThreadTypeOption({
+    required this.id,
+    required this.name,
+  });
+}
+
 class PostEditorForm {
   final String formhash;
   final String posttime;
@@ -158,6 +176,8 @@ class PostEditorForm {
   final String uploadHash;
   final int maxUploadSizeKb;
   final List<String> attachmentAids;
+  final List<ThreadTypeOption> threadTypes;
+  final String selectedTypeId;
 
   const PostEditorForm({
     required this.formhash,
@@ -175,6 +195,8 @@ class PostEditorForm {
     this.uploadHash = '',
     this.maxUploadSizeKb = 1024,
     this.attachmentAids = const [],
+    this.threadTypes = const [],
+    this.selectedTypeId = '',
   });
 
   bool get canUploadImages => uploadUid.isNotEmpty && uploadHash.isNotEmpty;
@@ -427,6 +449,8 @@ class SearchResult {
   final String? likeCount;
   final List<String> thumbnails;
   final bool hasHiddenContent;
+  final String? typeId;
+  final String? typeName;
 
   const SearchResult({
     required this.tid,
@@ -442,6 +466,8 @@ class SearchResult {
     this.likeCount,
     this.thumbnails = const [],
     this.hasHiddenContent = false,
+    this.typeId,
+    this.typeName,
   });
 }
 
@@ -665,11 +691,13 @@ class ForumBoard {
   final String fid;
   final String name;
   final String? iconUrl;
+  final int? todayPosts;
 
   const ForumBoard({
     required this.fid,
     required this.name,
     this.iconUrl,
+    this.todayPosts,
   });
 }
 

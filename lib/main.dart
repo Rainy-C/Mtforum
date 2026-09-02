@@ -96,6 +96,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    AnalyticsService.instance.setOnlineProbeEnabled(false);
     WidgetsBinding.instance.removeObserver(this);
     ApiService.instance.removeLoginListener(_onLoginChanged);
     super.dispose();
@@ -113,13 +114,21 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      AnalyticsService.instance.setOnlineProbeEnabled(true);
       MessageBadgeService.instance.refresh(force: true);
       unawaited(_checkFeedbackReplies());
+      return;
+    }
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      AnalyticsService.instance.setOnlineProbeEnabled(false);
     }
   }
 
   Future<void> _runStartupTasks() async {
-    // 匿名启动统计使用独立网络客户端，不携带论坛 Cookie，也不阻塞启动流程。
+    // 匿名启动统计和在线探针均使用独立网络客户端，不携带论坛 Cookie。
+    AnalyticsService.instance.setOnlineProbeEnabled(true);
     unawaited(AnalyticsService.instance.reportLaunch());
     await _runAutoSign();
     await MessageBadgeService.instance.refresh(force: true);

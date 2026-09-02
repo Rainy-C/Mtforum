@@ -236,6 +236,11 @@ class _AboutPageState extends State<AboutPage> {
           runSpacing: 8,
           children: [
             _GlobalStatChip(
+              icon: Icons.today_outlined,
+              label: '今日启动',
+              value: '${_formatCount(stats.todayLaunches)} 次',
+            ),
+            _GlobalStatChip(
               icon: Icons.rocket_launch_outlined,
               label: '全网启动',
               value: '${_formatCount(stats.totalLaunches)} 次',

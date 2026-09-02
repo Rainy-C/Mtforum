@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
+import '../services/analytics_service.dart';
 import '../services/api_service.dart';
 import '../widgets/app_state_view.dart';
 import '../widgets/thread_card.dart';
@@ -56,20 +59,87 @@ class _HomePageState extends State<HomePage> {
   bool _hasMore = true;
   String? _error;
   _HomeFeedSort _sort = _HomeFeedSort.hot;
+  Timer? _onlineStatsTimer;
+  int? _forumOnlineUsers;
+  bool _onlineStatsLoading = false;
 
   @override
   void initState() {
     super.initState();
     widget.controller?._scrollToTopCallback = _scrollToTop;
     _scrollController.addListener(_onScroll);
+    unawaited(_refreshForumOnlineUsers());
+    _onlineStatsTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_refreshForumOnlineUsers()),
+    );
     _initializeFeed();
   }
 
   @override
   void dispose() {
     widget.controller?._scrollToTopCallback = null;
+    _onlineStatsTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _refreshForumOnlineUsers() async {
+    if (_onlineStatsLoading) return;
+    _onlineStatsLoading = true;
+    try {
+      var onlineUsers = await _api.getForumOnlineCount();
+      if (onlineUsers == null) {
+        // 论坛页面抓取失败时，回退到自建统计服务的在线人数。
+        try {
+          onlineUsers = (await AnalyticsService.instance.fetchStats())?.onlineUsers;
+        } catch (_) {
+          // 保持 null，展示层继续显示上一次结果。
+        }
+      }
+      if (!mounted || onlineUsers == null) return;
+      if (_forumOnlineUsers != onlineUsers) {
+        setState(() => _forumOnlineUsers = onlineUsers);
+      }
+    } catch (_) {
+      // 论坛在线人数仅用于轻量展示，失败时保留上一次结果。
+    } finally {
+      _onlineStatsLoading = false;
+    }
+  }
+
+  Widget _buildOnlineBadge(BuildContext context) {
+    final onlineUsers = _forumOnlineUsers;
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.primaryContainer.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: colors.primary,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            onlineUsers == null ? '-- 在线' : '$onlineUsers 在线',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: colors.onPrimaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _scrollToTop() {
@@ -184,7 +254,13 @@ class _HomePageState extends State<HomePage> {
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverAppBar(
-              title: const Text('MT论坛'),
+              title: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('MT论坛'),
+                  _buildOnlineBadge(context),
+                ],
+              ),
               pinned: true,
               centerTitle: false,
               actions: [
