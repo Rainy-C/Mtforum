@@ -1,6 +1,6 @@
 part of '../forum_parser.dart';
 
-extension _ForumParserParserUtilsPart on ForumParser {
+extension ForumParserParserUtilsPart on ForumParser {
   String _cleanInline(String value) {
     return value
         .replaceAll('&nbsp;', ' ')

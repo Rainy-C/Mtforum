@@ -1,6 +1,6 @@
 part of '../forum_parser.dart';
 
-extension _ForumParserEditorParserPart on ForumParser {
+extension ForumParserEditorParserPart on ForumParser {
   PostEditorForm parsePostEditorForm(
     String body, {
     required String fallbackFid,

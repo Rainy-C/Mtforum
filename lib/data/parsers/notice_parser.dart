@@ -1,6 +1,6 @@
 part of '../user_center_parser.dart';
 
-extension _UserCenterParserNoticeParserPart on UserCenterParser {
+extension UserCenterParserNoticeParserPart on UserCenterParser {
   List<NoticeItem> parseNotices(
     String raw, {
     String baseUrl = 'https://bbs.binmt.cc',

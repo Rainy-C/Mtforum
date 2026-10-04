@@ -1,6 +1,6 @@
 part of '../../../services/api_service.dart';
 
-extension _ApiServiceMessagesPart on ApiService {
+extension ApiServiceMessagesPart on ApiService {
   Future<List<PmConversationSummary>> getPmConversations() async {
     if (!isLoggedIn) throw StateError('请先登录');
 
@@ -19,7 +19,7 @@ extension _ApiServiceMessagesPart on ApiService {
 
     return _userCenterParser.parsePmList(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<PmConversationData> getPmConversation(String touid) async {
@@ -53,7 +53,7 @@ extension _ApiServiceMessagesPart on ApiService {
     final data = _userCenterParser.parsePmConversation(
       response.data ?? '',
       touid: touid,
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
       myUid: _currentUid,
     );
 
@@ -102,7 +102,7 @@ extension _ApiServiceMessagesPart on ApiService {
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer':
-                '$baseUrl/home.php?mod=space&do=pm&subop=view&touid=$touid',
+                '${ApiService.baseUrl}/home.php?mod=space&do=pm&subop=view&touid=$touid',
           },
           contentType: Headers.formUrlEncodedContentType,
           responseType: ResponseType.plain,
@@ -156,7 +156,7 @@ extension _ApiServiceMessagesPart on ApiService {
       response.data ?? '',
       myUid: _currentUid,
       peerUid: touid,
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   /// 获取消息中心未读汇总。
@@ -275,7 +275,7 @@ extension _ApiServiceMessagesPart on ApiService {
       options: Options(
         headers: {
           if (safePage > 1) 'X-Requested-With': 'XMLHttpRequest',
-          'Referer': '$baseUrl/home.php?mod=space&do=notice'
+          'Referer': '${ApiService.baseUrl}/home.php?mod=space&do=notice'
               '&view=$view&mobile=2',
         },
         responseType: ResponseType.plain,
@@ -285,7 +285,7 @@ extension _ApiServiceMessagesPart on ApiService {
 
     return _userCenterParser.parseNoticePage(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
       currentPage: safePage,
     );
   }
@@ -308,7 +308,7 @@ extension _ApiServiceMessagesPart on ApiService {
         options: Options(
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
-            'Referer': '$baseUrl/home.php?mod=space&do=notice&mobile=2',
+            'Referer': '${ApiService.baseUrl}/home.php?mod=space&do=notice&mobile=2',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -357,7 +357,7 @@ extension _ApiServiceMessagesPart on ApiService {
 
       final actionRaw =
           (form.attributes['action'] ?? actionUrl).replaceAll('&amp;', '&');
-      final actionUri = Uri.parse(Uri.parse(baseUrl).resolve(actionRaw).toString());
+      final actionUri = Uri.parse(Uri.parse(ApiService.baseUrl).resolve(actionRaw).toString());
       final postQuery = Map<String, dynamic>.from(actionUri.queryParameters)
         ..['inajax'] = 1;
 

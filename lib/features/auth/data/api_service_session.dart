@@ -1,6 +1,6 @@
 part of '../../../services/api_service.dart';
 
-extension _ApiServiceSessionPart on ApiService {
+extension ApiServiceSessionPart on ApiService {
   Future<String> getFormhash() async {
     final currentAuth = _auth;
     final current = _formhash;
@@ -218,7 +218,7 @@ extension _ApiServiceSessionPart on ApiService {
     final value = _sessionCookieValueFromResponse(response, name);
     if (value == null || value.isEmpty) return;
 
-    final uri = Uri.parse(baseUrl);
+    final uri = Uri.parse(ApiService.baseUrl);
     final existing = await _cookieJar.loadForRequest(uri);
     for (final cookie in existing) {
       if (cookie.name == name && cookie.value.isNotEmpty) {

@@ -33,6 +33,95 @@ part 'widgets/smiley_picker.dart';
 part 'widgets/reply_sheet.dart';
 part 'comments/comment_sheet.dart';
 
+Future<({PostEditorForm form, PostAttachmentUploadResult attachment})?>
+    _pickAndUploadReplyImage({
+  required String tid,
+  required String fid,
+  String? repquotePid,
+  PostEditorForm? currentForm,
+}) async {
+  final file = await ImagePicker().pickImage(
+    source: ImageSource.gallery,
+    imageQuality: 88,
+    maxWidth: 2560,
+    maxHeight: 2560,
+  );
+  if (file == null) return null;
+
+  final api = ApiService.instance;
+  final form = currentForm ??
+      await api.getReplyPostForm(
+        tid: tid,
+        fid: fid,
+        repquotePid: repquotePid,
+      );
+  final attachment = await api.uploadPostImage(
+    form: form,
+    bytes: await file.readAsBytes(),
+    fileName: file.name,
+    referer: '${ApiService.baseUrl}/thread-$tid-1-1.html',
+  );
+  if (!attachment.success || attachment.aid.isEmpty) {
+    throw StateError(attachment.message);
+  }
+  return (form: form, attachment: attachment);
+}
+
+void _insertAtSelection(TextEditingController controller, String text) {
+  final value = controller.value;
+  final selection = value.selection;
+  final valid = selection.isValid && selection.start >= 0 && selection.end >= 0;
+  final start = valid ? selection.start : value.text.length;
+  final end = valid ? selection.end : start;
+  final next = value.text.replaceRange(start, end, text);
+  controller.value = TextEditingValue(
+    text: next,
+    selection: TextSelection.collapsed(offset: start + text.length),
+    composing: TextRange.empty,
+  );
+}
+
+String _replyError(Object error) => error.toString().replaceFirst(
+      RegExp(r'^(Bad state|StateError|Exception):\s*'),
+      '',
+    );
+
+Future<void> _openPostLink(BuildContext context, String rawUrl) async {
+  final target = resolveForumLink(rawUrl);
+
+  switch (target.kind) {
+    case ForumLinkKind.thread:
+      if (!context.mounted || target.id == null) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          settings: RouteSettings(name: '/thread/${target.id}'),
+          builder: (_) => ThreadDetailPage(
+            tid: target.id!,
+            targetPid: target.pid,
+            targetUrl: target.url,
+          ),
+        ),
+      );
+      return;
+
+    case ForumLinkKind.user:
+      if (!context.mounted || target.id == null) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          settings: RouteSettings(name: '/user/${target.id}'),
+          builder: (_) => UserProfilePage(uid: target.id!),
+        ),
+      );
+      return;
+
+    case ForumLinkKind.external:
+      final uri = Uri.tryParse(target.url);
+      if (uri == null) return;
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return;
+  }
+}
+
 class ThreadDetailPage extends StatefulWidget {
   final String tid;
   final String? targetPid;

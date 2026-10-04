@@ -1,6 +1,6 @@
 part of '../user_center_parser.dart';
 
-extension _UserCenterParserProfileParserPart on UserCenterParser {
+extension UserCenterParserProfileParserPart on UserCenterParser {
   BasicProfileForm parseBasicProfile(String raw) {
     final document = html_parser.parse(_unwrapCdata(raw));
 

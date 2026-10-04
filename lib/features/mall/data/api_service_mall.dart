@@ -1,6 +1,6 @@
 part of '../../../services/api_service.dart';
 
-extension _ApiServiceMallPart on ApiService {
+extension ApiServiceMallPart on ApiService {
   Future<List<MallItem>> getMallItems({
     int page = 1,
   }) async {
@@ -17,7 +17,7 @@ extension _ApiServiceMallPart on ApiService {
 
     return _portalParser.parseMallList(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<MallDetail> getMallDetail(String tid) async {
@@ -35,7 +35,7 @@ extension _ApiServiceMallPart on ApiService {
     return _portalParser.parseMallDetail(
       response.data ?? '',
       tid: tid,
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<String?> _getMallFormhash(String tid) async {
@@ -132,7 +132,7 @@ extension _ApiServiceMallPart on ApiService {
         options: Options(
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
-            'Referer': '$baseUrl$popupPath',
+            'Referer': '${ApiService.baseUrl}$popupPath',
           },
           contentType: Headers.formUrlEncodedContentType,
           responseType: ResponseType.plain,
@@ -228,7 +228,7 @@ extension _ApiServiceMallPart on ApiService {
           followRedirects: true,
           validateStatus: (status) => status != null && status < 400,
           headers: {
-            'Referer': '$baseUrl/keke_integralmall-keke_integralmall.html',
+            'Referer': '${ApiService.baseUrl}/keke_integralmall-keke_integralmall.html',
           },
         ),
       );

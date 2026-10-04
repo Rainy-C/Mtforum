@@ -1,6 +1,6 @@
 part of '../../../services/api_service.dart';
 
-extension _ApiServiceProfilePart on ApiService {
+extension ApiServiceProfilePart on ApiService {
   Future<UserProfile> getProfile() async {
     final response = await _dio.get<String>(
       '/home.php',
@@ -45,7 +45,7 @@ extension _ApiServiceProfilePart on ApiService {
     var parsed = _userCenterParser.parseCurrentProfile(
       body,
       uid: uid,
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
 
     // 某些 Comiis 模板在“不带 uid 的自己的资料页”会省略统计栏。只在三个
@@ -71,7 +71,7 @@ extension _ApiServiceProfilePart on ApiService {
         parsed = _userCenterParser.parseCurrentProfile(
           statsResponse.data ?? '',
           uid: uid,
-          baseUrl: baseUrl,
+          baseUrl: ApiService.baseUrl,
         );
       } catch (_) {
         // 统计补充失败不影响“我的”基础资料；UI 用“—”表示未知，而不是伪造 0。
@@ -114,7 +114,7 @@ extension _ApiServiceProfilePart on ApiService {
         options: Options(
           headers: {
             'Referer':
-                '$baseUrl/home.php?mod=space&do=profile&mycenter=1',
+                '${ApiService.baseUrl}/home.php?mod=space&do=profile&mycenter=1',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -167,7 +167,7 @@ extension _ApiServiceProfilePart on ApiService {
         options: Options(
           headers: {
             'Referer':
-                '$baseUrl/home.php?mod=space&do=profile&mycenter=1',
+                '${ApiService.baseUrl}/home.php?mod=space&do=profile&mycenter=1',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -228,7 +228,7 @@ extension _ApiServiceProfilePart on ApiService {
       options: Options(
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
-          'Referer': '$baseUrl/k_misign-sign.html',
+          'Referer': '${ApiService.baseUrl}/k_misign-sign.html',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -258,7 +258,7 @@ extension _ApiServiceProfilePart on ApiService {
 
     return _signParser.parseRank(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<BasicProfileForm> getBasicProfileForm() async {
@@ -325,7 +325,7 @@ extension _ApiServiceProfilePart on ApiService {
         options: Options(
           headers: {
             'Referer':
-                '$baseUrl/home.php?mod=spacecp&ac=profile&op=base',
+                '${ApiService.baseUrl}/home.php?mod=spacecp&ac=profile&op=base',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -421,7 +421,7 @@ extension _ApiServiceProfilePart on ApiService {
     return _userCenterParser.parseSpaceProfile(
       response.data ?? '',
       uid: uid,
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<SignatureProfileForm> getSignatureProfile() async {
@@ -471,7 +471,7 @@ extension _ApiServiceProfilePart on ApiService {
         options: Options(
           headers: {
             'Referer':
-                '$baseUrl/home.php?mod=spacecp&ac=profile&op=info',
+                '${ApiService.baseUrl}/home.php?mod=spacecp&ac=profile&op=info',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -534,7 +534,7 @@ extension _ApiServiceProfilePart on ApiService {
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer':
-                '$baseUrl/home.php?mod=spacecp&ac=profile&op=password&from=contact',
+                '${ApiService.baseUrl}/home.php?mod=spacecp&ac=profile&op=password&from=contact',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -595,7 +595,7 @@ extension _ApiServiceProfilePart on ApiService {
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer':
-                '$baseUrl/home.php?mod=spacecp&ac=profile&op=password&from=contact',
+                '${ApiService.baseUrl}/home.php?mod=spacecp&ac=profile&op=password&from=contact',
           },
           contentType: Headers.formUrlEncodedContentType,
           responseType: ResponseType.plain,
@@ -660,7 +660,7 @@ extension _ApiServiceProfilePart on ApiService {
         }),
         options: Options(
           headers: {
-            'Referer': '$baseUrl/home.php?mod=spacecp&ac=profile&op=contact',
+            'Referer': '${ApiService.baseUrl}/home.php?mod=spacecp&ac=profile&op=contact',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -716,7 +716,7 @@ extension _ApiServiceProfilePart on ApiService {
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer':
-                '$baseUrl/home.php?mod=spacecp&ac=plugin&id=comiis_sms:comiis_setup',
+                '${ApiService.baseUrl}/home.php?mod=spacecp&ac=plugin&id=comiis_sms:comiis_setup',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -749,11 +749,11 @@ extension _ApiServiceProfilePart on ApiService {
     try {
       final hash = await getFormhash();
       final headerReferer = normalizedAction == 'Unbundling'
-          ? '$baseUrl/home.php?mod=spacecp&ac=plugin&id=comiis_sms:comiis_setup'
-          : '$baseUrl/home.php?mod=spacecp&ac=plugin&id=comiis_sms:comiis_setup&mobile=2';
+          ? '${ApiService.baseUrl}/home.php?mod=spacecp&ac=plugin&id=comiis_sms:comiis_setup'
+          : '${ApiService.baseUrl}/home.php?mod=spacecp&ac=plugin&id=comiis_sms:comiis_setup&mobile=2';
       final bodyReferer = normalizedAction == 'Unbundling'
-          ? '$baseUrl/home.php?mod=spacecp&ac=plugin&id=comiis_sms:comiis_setup&mods=rename'
-          : '$baseUrl/plugin.php?id=comiis_sms:comiis_sms_post&action=Unbundling';
+          ? '${ApiService.baseUrl}/home.php?mod=spacecp&ac=plugin&id=comiis_sms:comiis_setup&mods=rename'
+          : '${ApiService.baseUrl}/plugin.php?id=comiis_sms:comiis_sms_post&action=Unbundling';
 
       final response = await _dio.post<String>(
         '/plugin.php',
@@ -818,7 +818,7 @@ extension _ApiServiceProfilePart on ApiService {
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer':
-                '$baseUrl/home.php?mod=space&do=profile&set=comiis&mycenter=1',
+                '${ApiService.baseUrl}/home.php?mod=space&do=profile&set=comiis&mycenter=1',
           },
           contentType: Headers.formUrlEncodedContentType,
           responseType: ResponseType.plain,
@@ -868,7 +868,7 @@ extension _ApiServiceProfilePart on ApiService {
 
     return _userCenterParser.parsePromotion(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<List<CreditRecord>> getCreditRecords(String op) async {
