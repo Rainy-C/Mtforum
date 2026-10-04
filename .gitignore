@@ -38,6 +38,15 @@ scripts/
 test/
 docs/
 
+# 发布产物（由 tools/publish.py 生成后上传，不入库）
+/update.json
+
+# 对象存储 / 发布凭证（绝不入库）
+.r2_credentials
+.r2_credentials.*
+*_r2_credentials
+mtforum-r2*
+
 # 本地环境
 .env
 .env.*
