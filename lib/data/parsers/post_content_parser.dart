@@ -48,9 +48,7 @@ extension ForumParserPostContentParserPart on ForumParser {
     }
 
     String? mediaUrl(html_dom.Element element) {
-      final direct = element.attributes['src'] ??
-          element.attributes['data'] ??
-          element.attributes['file'];
+      final direct = _imageSourceOf(element) ?? element.attributes['data'];
       if (direct != null && direct.trim().isNotEmpty) {
         return _absoluteUrl(direct, baseUrl);
       }
@@ -87,11 +85,7 @@ extension ForumParserPostContentParserPart on ForumParser {
     }
 
     bool isRenderableInlineImage(html_dom.Element image) {
-      final candidate = image.attributes['zoomfile'] ??
-          image.attributes['file'] ??
-          image.attributes['data-original'] ??
-          image.attributes['data-src'] ??
-          image.attributes['src'];
+      final candidate = _imageSourceOf(image);
       final url = _absoluteUrl(candidate, baseUrl);
       if (url == null) return false;
       final lower = url.toLowerCase();
@@ -739,11 +733,7 @@ extension ForumParserPostContentParserPart on ForumParser {
           return;
 
         case 'img':
-          final rawUrl = node.attributes['zoomfile'] ??
-              node.attributes['file'] ??
-              node.attributes['data-original'] ??
-              node.attributes['data-src'] ??
-              node.attributes['src'];
+          final rawUrl = _imageSourceOf(node);
           final url = _absoluteUrl(rawUrl, baseUrl);
           if (url == null || url.isEmpty) {
             return;
@@ -1345,6 +1335,8 @@ extension ForumParserPostContentParserPart on ForumParser {
         image.attributes['aid'] != null ||
         image.attributes['zoomfile'] != null ||
         image.attributes['file'] != null ||
+        // 克米懒加载：src 是占位图，真实地址在这个私有属性上
+        image.attributes['comiis_loadimages'] != null ||
         classes.contains('zoom');
   }
 
@@ -1353,11 +1345,7 @@ extension ForumParserPostContentParserPart on ForumParser {
     final result = <String>[];
 
     for (final image in fragment.querySelectorAll('img')) {
-      final candidate = image.attributes['zoomfile'] ??
-          image.attributes['file'] ??
-          image.attributes['data-original'] ??
-          image.attributes['data-src'] ??
-          image.attributes['src'];
+      final candidate = _imageSourceOf(image);
       final url = _absoluteUrl(candidate, baseUrl);
       if (url == null || !_isPostContentImage(url, image)) {
         continue;
@@ -1388,11 +1376,7 @@ extension ForumParserPostContentParserPart on ForumParser {
       if (!isAttachment) continue;
 
       final wrapsPostImage = anchor.querySelectorAll('img').any((image) {
-        final candidate = image.attributes['zoomfile'] ??
-            image.attributes['file'] ??
-            image.attributes['data-original'] ??
-            image.attributes['data-src'] ??
-            image.attributes['src'];
+        final candidate = _imageSourceOf(image);
         final imageUrl = _absoluteUrl(candidate, baseUrl);
         return imageUrl != null && _isPostContentImage(imageUrl, image);
       });
@@ -1416,13 +1400,18 @@ extension ForumParserPostContentParserPart on ForumParser {
 
   List<String> _extractImagesFromRaw(String raw, String baseUrl) {
     final result = <String>[];
+    // comiis_loadimages 是克米模板懒加载的真实地址（src 只是占位图），
+    // 必须参与匹配；顺序放在 src 之前，让模板把两者都写出来时优先取它。
     final pattern = RegExp(
-      r'''<img\b[^>]*(?:zoomfile|file|data-original|data-src|src)\s*=\s*['"]([^'"]+)['"][^>]*>''',
+      r'''<img\b[^>]*(?:comiis_loadimages|data-lazy-src|zoomfile|file|data-original|data-src|src)\s*=\s*['"]([^'"]+)['"][^>]*>''',
       caseSensitive: false,
     );
     for (final match in pattern.allMatches(raw)) {
-      final url = _absoluteUrl(match.group(1), baseUrl);
+      final rawCandidate = match.group(1) ?? '';
+      if (_isPlaceholderImage(rawCandidate)) continue;
+      final url = _absoluteUrl(rawCandidate, baseUrl);
       if (url == null ||
+          _isPlaceholderImage(url) ||
           SmileyCatalog.isForumSmileyUrl(url) ||
           url.contains('/static/image/') ||
           url.contains('avatar.php') ||

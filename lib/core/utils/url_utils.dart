@@ -23,8 +23,14 @@ abstract final class AppUrl {
     bool resolveRelative = false,
   }) {
     if (raw == null) return null;
-    final value = raw.trim();
+    var value = raw.trim();
     if (value.isEmpty) return null;
+
+    // 站点模板自身的 bug：og:image / 分享图会输出
+    //   https://bbs.binmt.cc/https://oos.binmt.cc/forum/xxx.jpg
+    // 这种"外层域名 + 内层完整 URL"的双重前缀。取内层那个真正的绝对地址，
+    // 否则无论怎么拼接都是 404（帖子图片会整片空白）。
+    value = _unwrapNestedScheme(value);
 
     if (value.startsWith('//')) return 'https:$value';
     if (_scheme.hasMatch(value)) return value;
@@ -44,6 +50,16 @@ abstract final class AppUrl {
 
     if (value.startsWith('/')) return '$baseUrl$value';
     return '$baseUrl/$value';
+  }
+
+  /// 去掉"外层域名 + 内层完整 URL"的双重前缀，返回内层地址；没有则原样返回。
+  static String _unwrapNestedScheme(String value) {
+    final first = value.indexOf('://');
+    if (first < 0) return value;
+    final rest = value.substring(first + 3);
+    final nested = RegExp(r'https?://', caseSensitive: false).firstMatch(rest);
+    if (nested == null) return value;
+    return rest.substring(nested.start);
   }
 
   /// 判断是否是可以直接用浏览器打开的绝对 http(s) 链接。
