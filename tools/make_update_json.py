@@ -29,6 +29,7 @@ import json
 import re
 import struct
 import sys
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -36,6 +37,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_APK = REPO_ROOT / "build/app/outputs/flutter-apk/app-release.apk"
 DOWNLOAD_URL_TEMPLATE = "https://loveqin.fun/Mt/MTForum-{version}-Release.apk"
 SIGNATURE_SCAN_BYTES = 262144
+UPDATE_SERVICE_PATH = REPO_ROOT / "lib/services/update_service.dart"
+
+
+def expected_update_host() -> str:
+    """从 update_service.dart 的 defaultValue 里取出更新地址的 host。
+
+    解析源码而不是写死常量，这样改地址时校验会跟着变。
+    """
+    try:
+        text = UPDATE_SERVICE_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(
+        r"String\.fromEnvironment\(\s*'MTFORUM_UPDATE_URL'\s*,\s*"
+        r"defaultValue:\s*'([^']*)'",
+        text,
+    )
+    if not match or not match.group(1):
+        return ""
+    host = urllib.parse.urlparse(match.group(1)).hostname or ""
+    return host
 
 
 def read_pubspec_version(repo_root: Path):
@@ -129,6 +151,22 @@ def inspect_apk(apk: Path, version: str):
 
     with zipfile.ZipFile(apk) as archive:
         manifest = archive.read("AndroidManifest.xml")
+        # 更新地址必须真的被编进包里，否则 App 的「检查更新」永远无反应
+        host = expected_update_host()
+        if host:
+            embedded = False
+            for name in archive.namelist():
+                if not name.startswith("lib/") or not name.endswith("libapp.so"):
+                    continue
+                if host.encode() in archive.read(name):
+                    embedded = True
+                    break
+            if not embedded:
+                warnings.append(
+                    "APK 里没有内置更新地址（未找到 %s）。这个包点「检查更新」"
+                    "不会有任何反应——构建时漏了 --dart-define，或 "
+                    "update_service.dart 的 defaultValue 被改空了。" % host
+                )
 
     strings = set(_read_axml_strings(manifest))
     if version not in strings:

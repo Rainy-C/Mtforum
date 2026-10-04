@@ -15,6 +15,14 @@ flutter run
 flutter build apk --release
 ```
 
+更新源地址已内置默认值（`lib/services/update_service.dart` 的
+`MTFORUM_UPDATE_URL` 默认指向 `https://loveqin.fun/Mt/update.json`），
+所以不带任何 `--dart-define` 构建也自带更新能力。只有要指向测试环境时才需要：
+
+```bash
+flutter build apk --release --dart-define=MTFORUM_UPDATE_URL=https://example.com/Mt/update.json
+```
+
 > Release 签名读取仓库根目录的 `key.properties`。该文件**不应提交到仓库**。
 > 构建环境没有正式 keystore 时，`android/app/build.gradle.kts` 会回落到
 > debug 签名并打印警告，构建不会失败——但这种包只能用于本地验证，
