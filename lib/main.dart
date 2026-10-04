@@ -15,7 +15,7 @@ import 'services/message_badge_service.dart';
 import 'services/theme_service.dart';
 import 'services/sign_service.dart';
 import 'services/update_service.dart';
-import 'theme/app_theme.dart';
+import 'core/theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

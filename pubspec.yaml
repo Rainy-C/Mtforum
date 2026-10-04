@@ -16,11 +16,7 @@ dependencies:
   dio_cookie_manager: ^3.1.1
   shared_preferences: ^2.3.3
   html: ^0.15.4
-  html_unescape: ^2.0.0
-  flutter_svg: ^2.0.16
   cached_network_image: ^3.4.1
-  pull_to_refresh: ^2.0.0
-  google_fonts: ^6.2.1
   url_launcher: ^6.3.1
   photo_view: ^0.15.0
   file_picker: ^8.1.7

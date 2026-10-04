@@ -21,6 +21,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val updateChannelName = "mtforum/update"
     private val notificationChannelName = "mtforum/notifications"
+    private val headlessVerificationChannelName = "com.binmt.mtforum/headless_verification"
     private val privateMessageChannelId = "mtforum_private_messages"
     private val privateMessageNotificationId = 2001
     private val notificationPrefsName = "mtforum_system_notifications"
@@ -30,6 +31,8 @@ class MainActivity : FlutterActivity() {
     private val peakRefreshRateSetting = "peak_refresh_rate"
     private val minimumValidRefreshRate = 30f
     private val refreshRateTolerance = 0.5f
+
+    private lateinit var headlessVerifier: HeadlessWebViewVerifier
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -183,6 +186,79 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        registerHeadlessVerificationChannel(flutterEngine)
+    }
+
+    /**
+     * 无感人机验证通道。
+     *
+     * Dart 侧只用它做三件事：启动一个不可见 WebView 跑 JS 挑战、
+     * 读取挑战写入的 Cookie、销毁 WebView。
+     * "是否通过验证"完全由 Dart 侧用「原 URL + 原 UA 重新请求能否拿到论坛页」
+     * 判定，原生侧不参与判定，也不弹任何界面。
+     */
+    private fun registerHeadlessVerificationChannel(flutterEngine: FlutterEngine) {
+        headlessVerifier = HeadlessWebViewVerifier(this)
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            headlessVerificationChannelName
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isAvailable" -> result.success(headlessVerifier.isAvailable())
+                "start" -> {
+                    val url = call.argument<String>("url")
+                    val userAgent = call.argument<String>("userAgent").orEmpty()
+                    val rawCookies = call.argument<Map<*, *>>("cookies")
+                    val rawStale = call.argument<List<*>>("staleCookieNames")
+                    val cookies = LinkedHashMap<String, String>()
+                    rawCookies?.forEach { (key, value) ->
+                        val name = key?.toString().orEmpty()
+                        if (name.isNotEmpty() && value != null) {
+                            cookies[name] = value.toString()
+                        }
+                    }
+                    val staleNames = rawStale
+                        ?.mapNotNull { it?.toString() }
+                        ?.filter { it.isNotEmpty() }
+                        ?: emptyList()
+
+                    if (url.isNullOrBlank()) {
+                        result.error("ARGUMENT", "url 不能为空", null)
+                    } else {
+                        val id = headlessVerifier.start(
+                            url, userAgent, cookies, staleNames
+                        )
+                        if (id == null) {
+                            result.error("WEBVIEW", "无法创建不可见 WebView", null)
+                        } else {
+                            result.success(mapOf("id" to id))
+                        }
+                    }
+                }
+                "cookies" -> {
+                    val id = call.argument<String>("id")
+                    if (id.isNullOrBlank()) {
+                        result.error("ARGUMENT", "id 不能为空", null)
+                    } else {
+                        result.success(headlessVerifier.cookies(id))
+                    }
+                }
+                "dispose" -> {
+                    val id = call.argument<String>("id")
+                    if (!id.isNullOrBlank()) headlessVerifier.dispose(id)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        if (::headlessVerifier.isInitialized) {
+            headlessVerifier.disposeAll()
+        }
+        super.onDestroy()
     }
 
 

@@ -1,6 +1,8 @@
 import 'package:html/dom.dart' as html_dom;
 import 'package:html/parser.dart' as html_parser;
 
+import '../core/utils/html_utils.dart';
+import '../core/utils/url_utils.dart';
 import '../models/models.dart';
 
 class AccountParser {
@@ -483,10 +485,7 @@ class AccountParser {
     return value.isEmpty ? null : value;
   }
 
-  String _clean(String value) => value
-      .replaceAll(RegExp(r'[\uE000-\uF8FF\uFFFD\u25A1]'), '')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
+  String _clean(String value) => HtmlText.sanitizeAvatar(value);
 
   String? _cleanThreadExcerpt(String? value) {
     if (value == null) {
@@ -518,24 +517,7 @@ class AccountParser {
     return clean.isEmpty ? null : clean;
   }
 
-  String? _absoluteUrl(String? raw, String baseUrl) {
-    if (raw == null) {
-      return null;
-    }
-    final value = raw.trim();
-    if (value.isEmpty) {
-      return null;
-    }
-    if (value.startsWith('//')) {
-      return 'https:$value';
-    }
-    if (value.startsWith('http://') ||
-        value.startsWith('https://')) {
-      return value;
-    }
-    if (value.startsWith('/')) {
-      return '$baseUrl$value';
-    }
-    return '$baseUrl/$value';
-  }
+  /// 统一走 [AppUrl.resolve]。
+  String? _absoluteUrl(String? raw, String baseUrl) =>
+      AppUrl.resolve(raw, baseUrl);
 }
