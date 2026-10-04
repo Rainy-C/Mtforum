@@ -1,6 +1,6 @@
 part of '../user_center_parser.dart';
 
-extension _UserCenterParserSocialParserPart on UserCenterParser {
+extension UserCenterParserSocialParserPart on UserCenterParser {
   List<SocialUser> parseSocialUsers(
     String raw, {
     required String baseUrl,

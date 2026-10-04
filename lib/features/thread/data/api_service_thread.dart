@@ -1,6 +1,6 @@
 part of '../../../services/api_service.dart';
 
-extension _ApiServiceThreadPart on ApiService {
+extension ApiServiceThreadPart on ApiService {
   Future<ThreadDetail> getThreadDetail(String tid, {int page = 1}) async {
     final response = await _dio.get<String>(
       '/thread-$tid-$page-1.html',
@@ -35,7 +35,7 @@ extension _ApiServiceThreadPart on ApiService {
       body,
       tid: tid,
       page: page,
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
 
     if (detail.formhash.isNotEmpty) {
@@ -64,7 +64,7 @@ extension _ApiServiceThreadPart on ApiService {
     );
     final redirectStatus = redirectResponse.statusCode ?? 0;
     final location = redirectResponse.headers.value('location');
-    final resolvedTarget = resolveFindPostLocation(uri, location);
+    final resolvedTarget = ApiService.resolveFindPostLocation(uri, location);
 
     if (redirectStatus >= 300 && redirectStatus < 400) {
       if (resolvedTarget == null) {
@@ -76,7 +76,7 @@ extension _ApiServiceThreadPart on ApiService {
       final cached = _findPostPageCache[cacheKey];
       if (cached != null &&
           cachedAt != null &&
-          DateTime.now().difference(cachedAt) < _findPostPageCacheTtl) {
+          DateTime.now().difference(cachedAt) < ApiService._findPostPageCacheTtl) {
         if (cached.posts.any((post) => post.pid == pid)) return cached;
         _findPostPageCache.remove(cacheKey);
         _findPostPageCacheTimes.remove(cacheKey);
@@ -108,7 +108,7 @@ extension _ApiServiceThreadPart on ApiService {
       redirectResponse.data ?? '',
       tid: tid,
       page: 1,
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
     if (!detail.posts.any((post) => post.pid == pid)) {
       throw StateError('论坛未返回 findpost 重定向，且当前页面找不到 PID $pid');
@@ -133,7 +133,7 @@ extension _ApiServiceThreadPart on ApiService {
       response.data ?? '',
       tid: tid,
       page: page,
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<Post?> getNoticeReplyPreview(NoticeItem item) async {
@@ -167,7 +167,7 @@ extension _ApiServiceThreadPart on ApiService {
         },
         options: Options(
           headers: {
-            'Referer': '$baseUrl/forum-$fid-1.html',
+            'Referer': '${ApiService.baseUrl}/forum-$fid-1.html',
             if (mobileFallback) 'Cache-Control': 'no-cache',
           },
           responseType: ResponseType.plain,
@@ -332,10 +332,10 @@ extension _ApiServiceThreadPart on ApiService {
   }
   String _postEditorReferer(PostEditorForm form) {
     if (form.tid.isNotEmpty && form.pid.isNotEmpty) {
-      return '$baseUrl/forum.php?mod=post&action=edit'
+      return '${ApiService.baseUrl}/forum.php?mod=post&action=edit'
           '&fid=${form.fid}&tid=${form.tid}&pid=${form.pid}&page=${form.page}';
     }
-    return '$baseUrl/forum.php?mod=post&action=newthread&fid=${form.fid}';
+    return '${ApiService.baseUrl}/forum.php?mod=post&action=newthread&fid=${form.fid}';
   }
   void _addAttachmentBindings(
     Map<String, dynamic> data,
@@ -408,7 +408,7 @@ extension _ApiServiceThreadPart on ApiService {
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
           'Referer':
-              '$baseUrl/forum.php?mod=post&action=newthread&fid=${form.fid}',
+              '${ApiService.baseUrl}/forum.php?mod=post&action=newthread&fid=${form.fid}',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -456,7 +456,7 @@ extension _ApiServiceThreadPart on ApiService {
     }
 
     final viewReferer =
-        '$baseUrl/forum.php?mod=viewthread&tid=$tid&page=$page&mobile=2';
+        '${ApiService.baseUrl}/forum.php?mod=viewthread&tid=$tid&page=$page&mobile=2';
 
     PostEditorForm parseForm(String body) {
       return _parser.parsePostEditorForm(
@@ -527,7 +527,7 @@ extension _ApiServiceThreadPart on ApiService {
             'page': page,
             'mobile': 2,
           },
-          referer: '$baseUrl/thread-$tid-$page-1.html',
+          referer: '${ApiService.baseUrl}/thread-$tid-$page-1.html',
         );
         final document = html_parser.parse(threadBody);
         Uri? actualEditUri;
@@ -540,7 +540,7 @@ extension _ApiServiceThreadPart on ApiService {
               .trim();
           if (rawHref.isEmpty) continue;
 
-          final resolved = Uri.parse(baseUrl).resolve(rawHref);
+          final resolved = Uri.parse(ApiService.baseUrl).resolve(rawHref);
           if (resolved.queryParameters['pid'] == pid) {
             actualEditUri = resolved;
             break;
@@ -659,7 +659,7 @@ extension _ApiServiceThreadPart on ApiService {
         contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
-          'Referer': '$baseUrl/forum.php?mod=post&action=edit'
+          'Referer': '${ApiService.baseUrl}/forum.php?mod=post&action=edit'
               '&fid=${form.fid}&tid=${form.tid}&pid=${form.pid}&page=${form.page}',
         },
         responseType: ResponseType.plain,
@@ -708,7 +708,7 @@ extension _ApiServiceThreadPart on ApiService {
         'mobile': 2,
       },
       options: Options(
-        headers: {'Referer': '$baseUrl/thread-$tid-1-1.html'},
+        headers: {'Referer': '${ApiService.baseUrl}/thread-$tid-1-1.html'},
         responseType: ResponseType.plain,
         followRedirects: true,
       ),
@@ -794,7 +794,7 @@ extension _ApiServiceThreadPart on ApiService {
         },
         options: Options(
           headers: {
-            'Referer': '$baseUrl/thread-$tid-1-1.html',
+            'Referer': '${ApiService.baseUrl}/thread-$tid-1-1.html',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -831,7 +831,7 @@ extension _ApiServiceThreadPart on ApiService {
           .replaceAll('&amp;', '&')
           .trim();
       if (action.isNotEmpty) {
-        final uri = Uri.parse(baseUrl).resolve(action);
+        final uri = Uri.parse(ApiService.baseUrl).resolve(action);
         postQuery = Map<String, dynamic>.from(uri.queryParameters);
         // 保持客户端 AJAX 提交方式，只改变 Discuz 表单要求的真实字段。
         postQuery.putIfAbsent('inajax', () => 1);
@@ -847,7 +847,7 @@ extension _ApiServiceThreadPart on ApiService {
         contentType: Headers.formUrlEncodedContentType,
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
-          'Referer': '$baseUrl/thread-$tid-1-1.html',
+          'Referer': '${ApiService.baseUrl}/thread-$tid-1-1.html',
         },
         responseType: ResponseType.plain,
         followRedirects: true,

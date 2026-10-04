@@ -1,6 +1,6 @@
 part of '../forum_parser.dart';
 
-extension _ForumParserThreadListParserPart on ForumParser {
+extension ForumParserThreadListParserPart on ForumParser {
   String unwrapAjax(String body) {
     final match = RegExp(r'<!\[CDATA\[(.*?)\]\]>', dotAll: true)
         .firstMatch(body);

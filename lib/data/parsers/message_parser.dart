@@ -1,6 +1,6 @@
 part of '../user_center_parser.dart';
 
-extension _UserCenterParserMessageParserPart on UserCenterParser {
+extension UserCenterParserMessageParserPart on UserCenterParser {
   PmConversationData parsePmConversation(
     String raw, {
     required String touid,

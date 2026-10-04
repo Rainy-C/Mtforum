@@ -1,6 +1,6 @@
 part of '../../../services/api_service.dart';
 
-extension _ApiServiceAuthPart on ApiService {
+extension ApiServiceAuthPart on ApiService {
   Future<LoginResult> login(
     String username,
     String password, {
@@ -62,7 +62,7 @@ extension _ApiServiceAuthPart on ApiService {
       },
       data: {
         'formhash': formhash,
-        'referer': '$baseUrl/forum.php',
+        'referer': '${ApiService.baseUrl}/forum.php',
         'fastloginfield': 'username',
         'cookietime': '31104000',
         'username': username,
@@ -74,7 +74,7 @@ extension _ApiServiceAuthPart on ApiService {
         contentType: Headers.formUrlEncodedContentType,
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
-          'Referer': '$baseUrl/member.php?mod=logging&action=login&mobile=2',
+          'Referer': '${ApiService.baseUrl}/member.php?mod=logging&action=login&mobile=2',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -109,7 +109,7 @@ extension _ApiServiceAuthPart on ApiService {
     // 回填只负责补足漏收的真实 Set-Cookie。最终仍统一从 CookieJar
     // 读取并保持 auth + saltkey 的原登录态约束。
     // 必须从 CookieJar 读取最终值，而不是只看最终响应头。
-    final cookies = await _cookieJar.loadForRequest(Uri.parse(baseUrl));
+    final cookies = await _cookieJar.loadForRequest(Uri.parse(ApiService.baseUrl));
     String? auth;
     String? saltkey;
     for (final cookie in cookies) {

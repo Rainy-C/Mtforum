@@ -1,6 +1,6 @@
 part of '../forum_parser.dart';
 
-extension _ForumParserThreadDetailParserPart on ForumParser {
+extension ForumParserThreadDetailParserPart on ForumParser {
   ThreadDetail parseThreadDetail(
     String body, {
     required String tid,

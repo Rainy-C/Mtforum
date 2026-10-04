@@ -1,6 +1,6 @@
 part of '../../../services/api_service.dart';
 
-extension _ApiServiceForumPart on ApiService {
+extension ApiServiceForumPart on ApiService {
   /// 解析论坛页面自身展示的在线人数（例如“总计 123 人在线”）。
   ///
   /// 官方客户端的 HomeParserUtils 使用：
@@ -10,8 +10,8 @@ extension _ApiServiceForumPart on ApiService {
   Future<int?> getForumOnlineCount() async {
     final pattern = RegExp(r'总计(?:\s|<[^>]+>)*(\d+)(?:\s|<[^>]+>)*人在线');
     final urls = <String>[
-      '$baseUrl/forum.php',
-      '$baseUrl/',
+      '${ApiService.baseUrl}/forum.php',
+      '${ApiService.baseUrl}/',
     ];
 
     for (final url in urls) {
@@ -62,7 +62,7 @@ extension _ApiServiceForumPart on ApiService {
 
     return _parser.parseThreadList(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<List<SearchResult>> search(String keyword, {int page = 1}) async {
@@ -111,7 +111,7 @@ extension _ApiServiceForumPart on ApiService {
 
     final threads = _parser.parseThreadList(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
     return threads
         .map((thread) => SearchResult(
@@ -156,7 +156,7 @@ extension _ApiServiceForumPart on ApiService {
 
     return _portalParser.parseRanklist(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<List<Thread>> getMyThreads({
@@ -179,7 +179,7 @@ extension _ApiServiceForumPart on ApiService {
       options: Options(
         headers: {
           'Referer':
-              '$baseUrl/home.php?mod=space&do=profile&mycenter=1',
+              '${ApiService.baseUrl}/home.php?mod=space&do=profile&mycenter=1',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -188,7 +188,7 @@ extension _ApiServiceForumPart on ApiService {
 
     return _accountParser.parseMyThreads(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<List<Thread>> getUserThreads({
@@ -209,7 +209,7 @@ extension _ApiServiceForumPart on ApiService {
       },
       options: Options(
         headers: {
-          'Referer': '$baseUrl/home.php?mod=space&uid=$uid&do=profile&mobile=2',
+          'Referer': '${ApiService.baseUrl}/home.php?mod=space&uid=$uid&do=profile&mobile=2',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -218,7 +218,7 @@ extension _ApiServiceForumPart on ApiService {
 
     return _accountParser.parseMyThreads(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<List<FavoriteItem>> getMyFavorites({
@@ -241,7 +241,7 @@ extension _ApiServiceForumPart on ApiService {
       options: Options(
         headers: {
           'Referer':
-              '$baseUrl/home.php?mod=space&do=profile&mycenter=1',
+              '${ApiService.baseUrl}/home.php?mod=space&do=profile&mycenter=1',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -250,7 +250,7 @@ extension _ApiServiceForumPart on ApiService {
 
     final items = _accountParser.parseFavorites(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
     return _enrichFavoriteAuthors(items);
   }
@@ -261,7 +261,7 @@ extension _ApiServiceForumPart on ApiService {
     if (!isLoggedIn) return false;
     final rawUrl = item.deleteUrl?.trim() ?? '';
     final uri = Uri.tryParse(rawUrl);
-    final forumHost = Uri.parse(baseUrl).host;
+    final forumHost = Uri.parse(ApiService.baseUrl).host;
     if (uri == null ||
         rawUrl.isEmpty ||
         (uri.hasAuthority && uri.host != forumHost)) {
@@ -271,7 +271,7 @@ extension _ApiServiceForumPart on ApiService {
     try {
       final target = uri.hasAuthority
           ? uri
-          : Uri.parse(baseUrl).resolveUri(uri);
+          : Uri.parse(ApiService.baseUrl).resolveUri(uri);
       final dialogUri = target.replace(
         queryParameters: {
           ...target.queryParameters,
@@ -281,7 +281,7 @@ extension _ApiServiceForumPart on ApiService {
         },
       );
       final referer =
-          '$baseUrl/home.php?mod=space&do=favorite&view=me&type=${item.type}';
+          '${ApiService.baseUrl}/home.php?mod=space&do=favorite&view=me&type=${item.type}';
       final dialog = await _dio.getUri<String>(
         dialogUri,
         options: Options(
@@ -310,7 +310,7 @@ extension _ApiServiceForumPart on ApiService {
       final response = await _dio.postUri<String>(
         submitUri,
         data: {
-          'referer': '$baseUrl/./',
+          'referer': '${ApiService.baseUrl}/./',
           'deletesubmit': 'true',
           'formhash': hash,
           'handlekey': 'comiis',
@@ -413,7 +413,7 @@ extension _ApiServiceForumPart on ApiService {
         if (_saltkey?.isNotEmpty == true) 'cQWy_2132_saltkey=$_saltkey',
       ].join('; ');
       final response = await _desktopDio.get<String>(
-        '$baseUrl/thread-$tid-1-1.html',
+        '${ApiService.baseUrl}/thread-$tid-1-1.html',
         options: Options(
           headers: {
             if (cookie.isNotEmpty) 'Cookie': cookie,
@@ -442,7 +442,7 @@ extension _ApiServiceForumPart on ApiService {
           body,
           tid: tid,
           page: 1,
-          baseUrl: baseUrl,
+          baseUrl: ApiService.baseUrl,
         ),
         replyCount:
             RegExp(r'^\d+$').hasMatch(reply ?? '') ? reply : null,
@@ -469,7 +469,7 @@ extension _ApiServiceForumPart on ApiService {
       options: Options(
         headers: {
           'Referer':
-              '$baseUrl/home.php?mod=space&do=profile&mycenter=1',
+              '${ApiService.baseUrl}/home.php?mod=space&do=profile&mycenter=1',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -478,7 +478,7 @@ extension _ApiServiceForumPart on ApiService {
 
     return _accountParser.parseFriends(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<List<ForumGroup>> getForumGroups() async {
@@ -496,7 +496,7 @@ extension _ApiServiceForumPart on ApiService {
 
       final groups = _portalParser.parseForumGroups(
         response.data ?? '',
-        baseUrl: baseUrl,
+        baseUrl: ApiService.baseUrl,
       );
 
       if (groups.isNotEmpty) {
@@ -523,7 +523,7 @@ extension _ApiServiceForumPart on ApiService {
 
     final items = _parser.parseThreadList(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
 
     // 板块列表页本身通常不会在每一条帖子里重复输出“来自 xx 板块”，
@@ -557,7 +557,7 @@ extension _ApiServiceForumPart on ApiService {
           'hash': hash,
         },
         options: Options(
-          headers: {'Referer': '$baseUrl/thread-$tid-1-1.html'},
+          headers: {'Referer': '${ApiService.baseUrl}/thread-$tid-1-1.html'},
           responseType: ResponseType.plain,
           followRedirects: true,
         ),
@@ -590,7 +590,7 @@ extension _ApiServiceForumPart on ApiService {
         options: Options(
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
-            'Referer': '$baseUrl/thread-$tid-1-1.html',
+            'Referer': '${ApiService.baseUrl}/thread-$tid-1-1.html',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -603,7 +603,7 @@ extension _ApiServiceForumPart on ApiService {
   }
   String? buildAvatarUrl(String? uid) {
     if (uid == null || uid.isEmpty) return null;
-    return '$baseUrl/uc_server/avatar.php?uid=$uid&size=middle';
+    return '${ApiService.baseUrl}/uc_server/avatar.php?uid=$uid&size=middle';
   }
   String? _absoluteUrl(String? raw) {
     if (raw == null) return null;
@@ -613,8 +613,8 @@ extension _ApiServiceForumPart on ApiService {
     if (value.startsWith('http://') || value.startsWith('https://')) {
       return value;
     }
-    if (value.startsWith('/')) return '$baseUrl$value';
-    return '$baseUrl/$value';
+    if (value.startsWith('/')) return '${ApiService.baseUrl}$value';
+    return '${ApiService.baseUrl}/$value';
   }
 }
 

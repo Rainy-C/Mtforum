@@ -128,9 +128,7 @@ class VerificationGate {
 
     // 2) 只注入论坛核心登录 Cookie（游客为空）。
     final coreCookieString = await manager.buildCoreCookieString();
-    final injected = <String, String>{
-      for (final e in _parseCookieHeader(coreCookieString)) e.key: e.value,
-    };
+    final injected = _parseCookieHeader(coreCookieString);
 
     AppLogger.i(
       'WAF',

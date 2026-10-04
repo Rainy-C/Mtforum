@@ -1,6 +1,6 @@
 part of '../../../services/api_service.dart';
 
-extension _ApiServiceSocialPart on ApiService {
+extension ApiServiceSocialPart on ApiService {
   Future<List<SocialUser>> getSocialUsers({
     required String type,
     required String uid,
@@ -79,7 +79,7 @@ extension _ApiServiceSocialPart on ApiService {
 
     return _userCenterParser.parseSocialUsers(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<bool> isUserBlocked(String uid) async {
@@ -120,7 +120,7 @@ extension _ApiServiceSocialPart on ApiService {
       options: Options(
         headers: {
           'Referer':
-              '$baseUrl/home.php?mod=space&do=friend&view=trace',
+              '${ApiService.baseUrl}/home.php?mod=space&do=friend&view=trace',
           'Cache-Control': 'no-cache',
         },
         responseType: ResponseType.plain,
@@ -130,7 +130,7 @@ extension _ApiServiceSocialPart on ApiService {
 
     final primary = _userCenterParser.parseFriendRequests(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
     if (primary.isNotEmpty) return primary;
 
@@ -150,7 +150,7 @@ extension _ApiServiceSocialPart on ApiService {
           'X-Requested-With': 'XMLHttpRequest',
           'Cache-Control': 'no-cache',
           'Referer':
-              '$baseUrl/home.php?mod=space&do=friend&view=trace',
+              '${ApiService.baseUrl}/home.php?mod=space&do=friend&view=trace',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -158,7 +158,7 @@ extension _ApiServiceSocialPart on ApiService {
     );
     return _userCenterParser.parseFriendRequests(
       fallback.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<OperationResult> followUser(String uid) async {
@@ -184,7 +184,7 @@ extension _ApiServiceSocialPart on ApiService {
         options: Options(
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
-            'Referer': '$baseUrl/home.php?mod=space&do=friend',
+            'Referer': '${ApiService.baseUrl}/home.php?mod=space&do=friend',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -234,7 +234,7 @@ extension _ApiServiceSocialPart on ApiService {
             'X-Requested-With': 'XMLHttpRequest',
             if (ownUid != null && ownUid.isNotEmpty)
               'Referer':
-                  '$baseUrl/home.php?mod=follow&do=following&uid=$ownUid',
+                  '${ApiService.baseUrl}/home.php?mod=follow&do=following&uid=$ownUid',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -277,7 +277,7 @@ extension _ApiServiceSocialPart on ApiService {
 
     final data = _userCenterParser.parsePokePage(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
     if (data.formhash.isNotEmpty) {
       _rememberFormhash(data.formhash);
@@ -296,7 +296,7 @@ extension _ApiServiceSocialPart on ApiService {
     try {
       final hash = await getFormhash();
       final referer =
-          '$baseUrl/home.php?mod=spacecp&ac=poke&op=send&uid=$uid&handlekey=propokehk_$uid';
+          '${ApiService.baseUrl}/home.php?mod=spacecp&ac=poke&op=send&uid=$uid&handlekey=propokehk_$uid';
 
       final response = await _dio.post<String>(
         '/home.php',
@@ -307,7 +307,7 @@ extension _ApiServiceSocialPart on ApiService {
           'uid': uid,
         },
         data: {
-          'referer': '$baseUrl/home.php?mod=space&uid=$uid&do=profile',
+          'referer': '${ApiService.baseUrl}/home.php?mod=space&uid=$uid&do=profile',
           'pokesubmit': 'true',
           'formhash': hash,
           'from': '',
@@ -376,7 +376,7 @@ extension _ApiServiceSocialPart on ApiService {
               'X-Requested-With': 'XMLHttpRequest',
               'Cache-Control': 'no-cache',
               'Referer':
-                  '$baseUrl/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
+                  '${ApiService.baseUrl}/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
             },
             responseType: ResponseType.plain,
             followRedirects: true,
@@ -411,7 +411,7 @@ extension _ApiServiceSocialPart on ApiService {
                 'X-Requested-With': 'XMLHttpRequest',
                 'Cache-Control': 'no-cache',
                 'Referer':
-                    '$baseUrl/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
+                    '${ApiService.baseUrl}/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
               },
               responseType: ResponseType.plain,
               followRedirects: true,
@@ -443,7 +443,7 @@ extension _ApiServiceSocialPart on ApiService {
         options: Options(
           headers: {
             'Referer':
-                '$baseUrl/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
+                '${ApiService.baseUrl}/home.php?mod=spacecp&ac=friend&op=request&mobile=2',
           },
           responseType: ResponseType.plain,
           followRedirects: true,
@@ -477,12 +477,12 @@ extension _ApiServiceSocialPart on ApiService {
       data['formhash'] = formhash.isNotEmpty ? formhash : await getFormhash();
       data['group'] = safeGroup;
       data['from'] = data['from'] ?? '';
-      data['referer'] = data['referer'] ?? '$baseUrl/./';
+      data['referer'] = data['referer'] ?? '${ApiService.baseUrl}/./';
       data['add2submit_btn'] = 'true';
 
       final actionRaw = (form.attributes['action'] ?? actionUrl)
           .replaceAll('&amp;', '&');
-      final actionUri = Uri.parse(baseUrl).resolve(actionRaw);
+      final actionUri = Uri.parse(ApiService.baseUrl).resolve(actionRaw);
       final response = await _dio.post<String>(
         actionUri.path.isEmpty ? '/home.php' : actionUri.path,
         queryParameters: actionUri.queryParameters,
@@ -490,7 +490,7 @@ extension _ApiServiceSocialPart on ApiService {
         options: Options(
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
-            'Referer': Uri.parse(baseUrl).resolveUri(uri).toString(),
+            'Referer': Uri.parse(ApiService.baseUrl).resolveUri(uri).toString(),
           },
           contentType: Headers.formUrlEncodedContentType,
           responseType: ResponseType.plain,
@@ -548,7 +548,7 @@ extension _ApiServiceSocialPart on ApiService {
         },
         data: {
           'formhash': formhash,
-          'referer': '$baseUrl/home.php?mod=space&uid=$uid&do=profile',
+          'referer': '${ApiService.baseUrl}/home.php?mod=space&uid=$uid&do=profile',
           'addsubmit': 'true',
           'note': note,
         },
@@ -557,7 +557,7 @@ extension _ApiServiceSocialPart on ApiService {
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer':
-                '$baseUrl/home.php?mod=spacecp&ac=friend&op=add&uid=$uid&mobile=2',
+                '${ApiService.baseUrl}/home.php?mod=spacecp&ac=friend&op=add&uid=$uid&mobile=2',
           },
           responseType: ResponseType.plain,
         ),
@@ -604,7 +604,7 @@ extension _ApiServiceSocialPart on ApiService {
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer':
-                '$baseUrl/home.php?mod=space&uid=$uid&do=profile&mobile=2',
+                '${ApiService.baseUrl}/home.php?mod=space&uid=$uid&do=profile&mobile=2',
           },
           responseType: ResponseType.plain,
         ),
@@ -641,7 +641,7 @@ extension _ApiServiceSocialPart on ApiService {
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Referer':
-                '$baseUrl/home.php?mod=space&do=friend&view=blacklist&mobile=2',
+                '${ApiService.baseUrl}/home.php?mod=space&do=friend&view=blacklist&mobile=2',
           },
           responseType: ResponseType.plain,
         ),
@@ -671,7 +671,7 @@ extension _ApiServiceSocialPart on ApiService {
       },
       options: Options(
         headers: {
-          'Referer': '$baseUrl/home.php?mod=space&uid=$targetUid&do=profile',
+          'Referer': '${ApiService.baseUrl}/home.php?mod=space&uid=$targetUid&do=profile',
         },
         responseType: ResponseType.plain,
         followRedirects: true,
@@ -680,7 +680,7 @@ extension _ApiServiceSocialPart on ApiService {
 
     return _userCenterParser.parseWallComments(
       response.data ?? '',
-      baseUrl: baseUrl,
+      baseUrl: ApiService.baseUrl,
     );
   }
   Future<OperationResult> postWallComment({
@@ -723,7 +723,7 @@ extension _ApiServiceSocialPart on ApiService {
         options: Options(
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
-            'Referer': '$baseUrl/$wallPath',
+            'Referer': '${ApiService.baseUrl}/$wallPath',
           },
           contentType: Headers.formUrlEncodedContentType,
           responseType: ResponseType.plain,
@@ -781,7 +781,7 @@ extension _ApiServiceSocialPart on ApiService {
         options: Options(
           headers: {
             'X-Requested-With': 'XMLHttpRequest',
-            'Referer': '$baseUrl/$wallPath',
+            'Referer': '${ApiService.baseUrl}/$wallPath',
           },
           contentType: Headers.formUrlEncodedContentType,
           responseType: ResponseType.plain,

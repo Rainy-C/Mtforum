@@ -1,6 +1,6 @@
 part of '../forum_parser.dart';
 
-extension _ForumParserPostContentParserPart on ForumParser {
+extension ForumParserPostContentParserPart on ForumParser {
   /// 将 Discuz / Comiis 已经渲染后的 HTML 转成 App 内富文本模型。
   ///
   /// 同一个解析器用于楼主和所有评论，所以评论中的代码、引用、链接、媒体
