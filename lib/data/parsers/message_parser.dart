@@ -322,11 +322,7 @@ extension UserCenterParserMessageParserPart on UserCenterParser {
           return;
         }
         if (tag == 'img') {
-          final rawUrl = node.attributes['zoomfile'] ??
-              node.attributes['file'] ??
-              node.attributes['data-original'] ??
-              node.attributes['data-src'] ??
-              node.attributes['src'];
+          final rawUrl = _imageSourceOf(node);
           final url = _absoluteUrl(rawUrl, baseUrl);
           final marker = url == null ? null : SmileyCatalog.markerForUrl(url);
           if (marker != null) {
