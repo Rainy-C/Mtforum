@@ -13,9 +13,11 @@
 配置默认值可用环境变量覆盖:
     R2_ENDPOINT / R2_BUCKET / R2_PREFIX / MTFORUM_UPDATE_BASE
 
-上传前会做两项校验（不通过直接终止，避免把错包推给用户）:
+上传前会做三项校验（不通过直接终止，避免把错包推给用户）:
     - APK 的 versionName 必须等于 pubspec.yaml 的版本号
     - APK 不能是 debug 签名
+    - versionCode 必须大于线上 update.json 里已有的值
+      （否则已经装过当前版本的用户永远不会收到更新提示）
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import argparse
 import datetime
 import hashlib
 import hmac
+import json
 import os
 import sys
 import urllib.error
@@ -191,6 +194,11 @@ def main() -> int:
     parser.add_argument("--prefix", default=DEFAULT_PREFIX)
     parser.add_argument("--update-base", default=os.environ.get("MTFORUM_UPDATE_BASE", ""))
     parser.add_argument("--dry-run", action="store_true", help="只生成 update.json，不上传")
+    parser.add_argument(
+        "--allow-same-version",
+        action="store_true",
+        help="允许 versionCode 不大于线上值（仅用于补传文件）",
+    )
     args = parser.parse_args()
 
     apk = Path(args.apk)
@@ -210,6 +218,35 @@ def main() -> int:
             print("  - %s" % item)
         print("=" * 60)
         return 1
+
+    # ---- 线上 versionCode 校验：比线上小/相等都不会触发更新 ----
+    json_url = args.update_base.rstrip("/") + "/%supdate.json" % (
+        args.prefix if args.prefix.endswith("/") else args.prefix + "/"
+    ) if args.update_base else ""
+    if json_url:
+        live_code = None
+        try:
+            # 带上正常 UA：部分 CDN（含本项目的 Cloudflare 域名）会直接 403 掉
+            # urllib 默认的 "Python-urllib/x.y"。
+            request = urllib.request.Request(
+                json_url, headers={"User-Agent": "mtforum-publish/1.0"}
+            )
+            with urllib.request.urlopen(request, timeout=20) as resp:
+                live = json.loads(resp.read().decode("utf-8"))
+            live_code = int(live.get("versionCode") or 0)
+            print("线上版本: %s (%s)  <- %s" % (live.get("version", "?"), live_code, json_url))
+        except Exception as error:  # 网络不可用时只提示，不阻断
+            print("!! 无法读取线上 update.json（%s），跳过 versionCode 校验" % error)
+
+        if live_code is not None and version_code <= live_code and not args.allow_same_version:
+            print("\n" + "=" * 60)
+            print("发布已终止：versionCode 没有增加")
+            print("  线上已有 versionCode = %d，本次 = %d。" % (live_code, version_code))
+            print("  更新判据是 info.versionCode > 当前版本，重复的 versionCode")
+            print("  不会给已经升级到该版本的用户推送更新。")
+            print("  请把 pubspec.yaml 的 version 改成更高的 build number 后重新构建。")
+            print("=" * 60)
+            return 1
 
     data = apk.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
@@ -232,9 +269,7 @@ def main() -> int:
         "size": len(data),
     }
 
-    import json as _json
-
-    text = _json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     out = REPO_ROOT / "update.json"
     out.write_text(text, encoding="utf-8")
     print("\n已生成 %s" % out)
