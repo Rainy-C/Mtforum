@@ -53,6 +53,48 @@ abstract final class HtmlText {
         .trim();
   }
 
+  /// 站点模板的懒加载占位图，不能当作正文图片。
+  static bool isPlaceholderImage(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('imageloading.gif') ||
+        lower.contains('comiis_loadimg.gif') ||
+        lower.endsWith('/none.png') ||
+        lower.endsWith('/none.gif') ||
+        lower.contains('/pic/none.');
+  }
+
+  /// 从 `<img>` 元素取出**真实**图片地址（未做绝对化）。
+  ///
+  /// 属性优先级：`zoomfile → file → comiis_loadimages → data-original →
+  /// data-src → data-lazy-src → src`。
+  ///
+  /// 为什么必须带 `comiis_loadimages`：克米移动模板（2026-10 起）把帖子图片
+  /// 改成懒加载 —— `src` 指向占位图 `none.png`，真实地址放在私有属性
+  /// `comiis_loadimages` 上，由站点 JS 回填到 `src`。HTML 解析器不执行 JS，
+  /// 只读 `src` 就会把占位图当成正文图片，表现为"帖子图片全都不显示"。
+  ///
+  /// 站点模板还会把 `og:image` 输出成
+  /// `https://bbs.binmt.cc/https://oos.binmt.cc/...` 这种双重前缀，
+  /// 这里不处理，交由 `AppUrl.resolve` 修复。
+  static String? imageSourceOf(dom.Element? element) {
+    if (element == null) return null;
+    for (final key in const [
+      'zoomfile',
+      'file',
+      'comiis_loadimages',
+      'data-original',
+      'data-src',
+      'data-lazy-src',
+      'src',
+    ]) {
+      final value = element.attributes[key]?.trim();
+      if (value == null || value.isEmpty) continue;
+      if (isPlaceholderImage(value)) continue;
+      return value;
+    }
+    return null;
+  }
+
   /// 提取元素纯净文本（先剔除 script/style）。
   static String textOf(dom.Element? el) {
     if (el == null) return '';

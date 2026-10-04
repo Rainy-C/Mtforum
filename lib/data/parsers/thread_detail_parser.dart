@@ -256,7 +256,7 @@ extension ForumParserThreadDetailParserPart on ForumParser {
 
     final images = <String>[];
     for (final image in message.querySelectorAll('.comiis_postimg img, img')) {
-      final candidate = _imageSourceOf(image);
+      final candidate = HtmlText.imageSourceOf(image);
       final normalized = _absoluteUrl(candidate, baseUrl);
       if (normalized == null ||
           SmileyCatalog.isForumSmileyUrl(normalized)) {
