@@ -48,7 +48,7 @@ extension ForumParserPostContentParserPart on ForumParser {
     }
 
     String? mediaUrl(html_dom.Element element) {
-      final direct = _imageSourceOf(element) ?? element.attributes['data'];
+      final direct = HtmlText.imageSourceOf(element) ?? element.attributes['data'];
       if (direct != null && direct.trim().isNotEmpty) {
         return _absoluteUrl(direct, baseUrl);
       }
@@ -85,7 +85,7 @@ extension ForumParserPostContentParserPart on ForumParser {
     }
 
     bool isRenderableInlineImage(html_dom.Element image) {
-      final candidate = _imageSourceOf(image);
+      final candidate = HtmlText.imageSourceOf(image);
       final url = _absoluteUrl(candidate, baseUrl);
       if (url == null) return false;
       final lower = url.toLowerCase();
@@ -733,7 +733,7 @@ extension ForumParserPostContentParserPart on ForumParser {
           return;
 
         case 'img':
-          final rawUrl = _imageSourceOf(node);
+          final rawUrl = HtmlText.imageSourceOf(node);
           final url = _absoluteUrl(rawUrl, baseUrl);
           if (url == null || url.isEmpty) {
             return;
@@ -1345,7 +1345,7 @@ extension ForumParserPostContentParserPart on ForumParser {
     final result = <String>[];
 
     for (final image in fragment.querySelectorAll('img')) {
-      final candidate = _imageSourceOf(image);
+      final candidate = HtmlText.imageSourceOf(image);
       final url = _absoluteUrl(candidate, baseUrl);
       if (url == null || !_isPostContentImage(url, image)) {
         continue;
@@ -1376,7 +1376,7 @@ extension ForumParserPostContentParserPart on ForumParser {
       if (!isAttachment) continue;
 
       final wrapsPostImage = anchor.querySelectorAll('img').any((image) {
-        final candidate = _imageSourceOf(image);
+        final candidate = HtmlText.imageSourceOf(image);
         final imageUrl = _absoluteUrl(candidate, baseUrl);
         return imageUrl != null && _isPostContentImage(imageUrl, image);
       });
@@ -1408,10 +1408,10 @@ extension ForumParserPostContentParserPart on ForumParser {
     );
     for (final match in pattern.allMatches(raw)) {
       final rawCandidate = match.group(1) ?? '';
-      if (_isPlaceholderImage(rawCandidate)) continue;
+      if (HtmlText.isPlaceholderImage(rawCandidate)) continue;
       final url = _absoluteUrl(rawCandidate, baseUrl);
       if (url == null ||
-          _isPlaceholderImage(url) ||
+          HtmlText.isPlaceholderImage(url) ||
           SmileyCatalog.isForumSmileyUrl(url) ||
           url.contains('/static/image/') ||
           url.contains('avatar.php') ||
