@@ -1285,6 +1285,13 @@ extension ForumParserPostContentParserPart on ForumParser {
   bool _isPostContentImage(String url, html_dom.Element image) {
     final lower = url.toLowerCase();
     final classes = image.classes.map((value) => value.toLowerCase()).toSet();
+
+    // 板块 / 推荐模块的图标固定放在 /data/attachment/common/ 下，
+    // 每个帖子页都会在楼层之间插入十来个（版本发布、插件交流、综合交流…），
+    // 它们同样带 comiis_loadimages（懒加载），所以必须在最前面直接排除，
+    // 否则会被当成正文图片混进评论区，表现为"每隔几楼出现一排板块图标"。
+    if (lower.contains('/data/attachment/common/')) return false;
+
     if (SmileyCatalog.isForumSmileyUrl(lower) ||
         lower.contains('/static/image/') ||
         lower.contains('avatar.php') ||
@@ -1414,6 +1421,7 @@ extension ForumParserPostContentParserPart on ForumParser {
           HtmlText.isPlaceholderImage(url) ||
           SmileyCatalog.isForumSmileyUrl(url) ||
           url.contains('/static/image/') ||
+          url.contains('/data/attachment/common/') ||
           url.contains('avatar.php') ||
           url.contains('/uc_server/avatar')) {
         continue;
