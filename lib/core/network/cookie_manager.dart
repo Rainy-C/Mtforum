@@ -226,6 +226,8 @@ class ForumCookieManager {
 
   /// 清掉持久化的防护 Cookie（登录态损坏、验证连续失败时调用）。
   Future<void> clearPersistedWafCookies() async {
-    await _prefs?.remove(_wafStoreKey);
+    final prefs = _prefs;
+    if (prefs == null) return;
+    await prefs.remove(_wafStoreKey);
   }
 }

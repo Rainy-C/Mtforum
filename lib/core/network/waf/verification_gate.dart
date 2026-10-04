@@ -40,9 +40,6 @@ class VerificationGate {
   // 运行状态
   // ------------------------------------------------------------------
 
-  /// 结论缓存有效期：验证通过后的一小段时间内不再重复验证。
-  static const Duration _successTtl = Duration(minutes: 3);
-
   /// 失败冷却：避免验证器不可用时每次都拉起 WebView。
   static const Duration _failureCooldown = Duration(seconds: 30);
 
@@ -59,9 +56,8 @@ class VerificationGate {
   DateTime _lastFailureAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastSuccessAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  /// 是否处于「刚验证过」的窗口内。
-  bool get recentlyVerified =>
-      DateTime.now().difference(_lastSuccessAt) < _successTtl;
+  /// 距离上次验证通过过了多久（仅用于诊断与日志）。
+  Duration get sinceLastSuccess => DateTime.now().difference(_lastSuccessAt);
 
   bool get _inCooldown =>
       DateTime.now().difference(_lastFailureAt) < _failureCooldown;
@@ -74,7 +70,11 @@ class VerificationGate {
   /// - [options]：触发拦截的请求（提供原 URL 与原始 UA）。
   Future<bool> verifyAndRecover(RequestOptions options) async {
     if (!isEnabled()) return false;
-    if (recentlyVerified) return true;
+
+    // 注意：这里**刻意不做"刚验证过就直接返回 true"的短路**。
+    // 若挑战 Cookie 已过期而短路放行，拦截页会被当作正常页面交给业务层，
+    // 用户会看到"帖子内容变成了验证页"。并发请求的正确性由下面的单飞
+    // 完成器保证：验证进行中时，后续失败请求共用同一次结果。
 
     // 单飞：并发失败请求共用同一次验证结果。
     final existing = _inFlight;
