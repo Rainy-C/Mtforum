@@ -124,9 +124,19 @@ class UpdateService {
 
   static const _channel = MethodChannel('mtforum/update');
   static const _startupKey = 'startup_auto_check_update';
+  /// 更新清单地址。
+  ///
+  /// **默认值就是生产地址**：直接 `flutter build apk --release` 构建也自带
+  /// 更新能力，不会因为漏掉 `--dart-define` 而变成一个"检查更新永远无反应"
+  /// 的包。需要指向测试环境时再显式覆盖：
+  ///
+  /// ```bash
+  /// flutter build apk --release \
+  ///   --dart-define=MTFORUM_UPDATE_URL=https://example.com/Mt/update.json
+  /// ```
   static const manifestUrl = String.fromEnvironment(
     'MTFORUM_UPDATE_URL',
-    defaultValue: '',
+    defaultValue: 'https://loveqin.fun/Mt/update.json',
   );
 
   final Dio _dio = Dio(
