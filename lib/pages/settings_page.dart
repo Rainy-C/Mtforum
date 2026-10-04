@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 
 import '../services/api_service.dart';
@@ -22,6 +23,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final _commentFilter = CommentFilterService.instance;
 
   bool _autoCheck = true;
+  bool _wafAutoVerify = true;
   bool _checking = false;
   bool _fontChanging = false;
   String _version = '';
@@ -50,6 +52,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _load() async {
     await _commentFilter.load();
     final auto = await _updates.getStartupCheckEnabled();
+    final prefs = await SharedPreferences.getInstance();
+    final wafAutoVerify =
+        prefs.getBool(ApiService.wafAutoVerifyPrefKey) ?? true;
     String version = '';
     try {
       final info = await _updates.getCurrentVersionInfo();
@@ -59,8 +64,17 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     setState(() {
       _autoCheck = auto;
+      _wafAutoVerify = wafAutoVerify;
       _version = version;
     });
+  }
+
+  /// 切换无感人机验证。
+  Future<void> _setWafAutoVerify(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(ApiService.wafAutoVerifyPrefKey, value);
+    if (!mounted) return;
+    setState(() => _wafAutoVerify = value);
   }
 
   Future<void> _editFilterKeywords() async {
@@ -491,6 +505,23 @@ class _SettingsPageState extends State<SettingsPage> {
                       subtitle: const Text('将过滤规则同步应用到回复提醒'),
                       value: _commentFilter.noticesEnabled,
                       onChanged: _commentFilter.setNoticesEnabled,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                const _SectionTitle('网络'),
+                const SizedBox(height: 6),
+                _Group(
+                  children: [
+                    SwitchListTile(
+                      secondary: const Icon(Icons.security_outlined),
+                      title: const Text('自动通过站点验证'),
+                      subtitle: const Text(
+                        '站点触发人机验证时，在后台用不可见 WebView 自动完成，'
+                        '全程不打断浏览。关闭后验证过的页面会直接报错。',
+                      ),
+                      value: _wafAutoVerify,
+                      onChanged: _setWafAutoVerify,
                     ),
                   ],
                 ),

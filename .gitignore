@@ -22,7 +22,23 @@ windows/
 android/.gradle/
 android/local.properties
 android/key.properties
+
+# 签名与凭证（仓库根目录的 key.properties 会被 android/app/build.gradle.kts
+# 读取，务必不要提交）
+key.properties
+**/key.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+credentials.json
 **/google-services.json
+**/GoogleService-Info.plist
 scripts/
 test/
 docs/
+
+# 本地环境
+.env
+.env.*
+*.local
