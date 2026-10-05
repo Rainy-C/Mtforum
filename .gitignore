@@ -40,13 +40,6 @@ docs/
 
 # 发布产物（由 tools/publish.py 生成后上传，不入库）
 /update.json
-
-# 构建产物（云端构建脚本会拉回本地，绝不入库）
-app-release.apk
-*.apk
-*.aab
-.cloud-build-last.log
-.remote-build-out/
 __pycache__/
 *.pyc
 

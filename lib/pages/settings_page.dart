@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 
-import '../core/widgets/app_dialogs.dart';
 import '../services/api_service.dart';
-import '../services/auto_reply_service.dart';
 import '../services/comment_filter_service.dart';
 import '../services/theme_service.dart';
 import '../services/update_service.dart';
@@ -23,7 +21,6 @@ class _SettingsPageState extends State<SettingsPage> {
   final _theme = ThemeService.instance;
   final _updates = UpdateService.instance;
   final _commentFilter = CommentFilterService.instance;
-  final _autoReply = AutoReplyService.instance;
 
   bool _autoCheck = true;
   bool _wafAutoVerify = true;
@@ -37,7 +34,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _api.addLoginListener(_refresh);
     _theme.addListener(_refresh);
     _commentFilter.addListener(_refresh);
-    _autoReply.addListener(_refresh);
     _load();
   }
 
@@ -46,7 +42,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _api.removeLoginListener(_refresh);
     _theme.removeListener(_refresh);
     _commentFilter.removeListener(_refresh);
-    _autoReply.removeListener(_refresh);
     super.dispose();
   }
 
@@ -72,39 +67,6 @@ class _SettingsPageState extends State<SettingsPage> {
       _wafAutoVerify = wafAutoVerify;
       _version = version;
     });
-  }
-
-  /// 修改自动回复内容。
-  Future<void> _editAutoReplyContent() async {
-    final value = await AppDialogs.prompt(
-      context,
-      title: '自动回复内容',
-      message: '进入「回复可见」的帖子时会自动发送这段内容',
-      initialValue: _autoReply.content,
-      hintText: AutoReplyService.defaultContent,
-      multiline: true,
-    );
-    if (value == null || !mounted) return;
-    final text = value.trim();
-    if (text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('回复内容不能为空')),
-      );
-      return;
-    }
-    await _autoReply.setContent(text);
-  }
-
-  /// 清除"已自动回复"记录，让老帖可以重新触发一次。
-  Future<void> _clearAutoReplyHistory() async {
-    final confirmed = await AppDialogs.confirm(
-      context,
-      title: '清除自动回复记录？',
-      message: '清除后再进入那些帖子会重新自动回复一次。',
-      confirmText: '清除',
-    );
-    if (!confirmed) return;
-    await _autoReply.clearRepliedHistory();
   }
 
   /// 切换无感人机验证。
@@ -543,45 +505,6 @@ class _SettingsPageState extends State<SettingsPage> {
                       subtitle: const Text('将过滤规则同步应用到回复提醒'),
                       value: _commentFilter.noticesEnabled,
                       onChanged: _commentFilter.setNoticesEnabled,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                const _SectionTitle('自动回复'),
-                const SizedBox(height: 6),
-                _Group(
-                  children: [
-                    SwitchListTile(
-                      secondary: const Icon(Icons.quickreply_outlined),
-                      title: const Text('自动回复隐藏帖'),
-                      subtitle: const Text(
-                        '进入「回复可见」的帖子时自动回复一次，随后刷新显示隐藏内容。'
-                        '「阅读权限不足」的帖子不会自动回复，回复了也看不到。',
-                      ),
-                      value: _autoReply.enabled,
-                      onChanged: _autoReply.setEnabled,
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const SizedBox(width: 24),
-                      title: const Text('回复内容'),
-                      subtitle: Text(
-                        _autoReply.content,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: _editAutoReplyContent,
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const SizedBox(width: 24),
-                      title: const Text('清除自动回复记录'),
-                      subtitle: Text(
-                        '已记录 ${_autoReply.repliedCount} 个帖子，'
-                        '清除后会重新自动回复一次',
-                      ),
-                      onTap: _clearAutoReplyHistory,
                     ),
                   ],
                 ),
