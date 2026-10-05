@@ -11,6 +11,40 @@ import 'system_notification_service.dart';
 ///
 /// App 内 Badge 和 Android 系统私信通知共用同一份真实未读快照，
 /// 避免 `checknewpm` 清零后两边状态互相矛盾。
+/// 「一键已读」的执行结果。
+class MarkAllReadResult {
+  /// 成功打开（服务端因此清零未读）的私信会话数
+  final int conversationsRead;
+
+  /// 论坛通知是否已全部标记为已见
+  final bool noticesCleared;
+
+  /// 失败项数量（网络异常等）
+  final int failed;
+
+  /// 未登录 / 参数错误时的直接提示
+  final String? error;
+
+  const MarkAllReadResult({
+    this.conversationsRead = 0,
+    this.noticesCleared = false,
+    this.failed = 0,
+    this.error,
+  });
+
+  String get message {
+    if (error != null) return error!;
+    if (conversationsRead == 0 && !noticesCleared) {
+      return failed > 0 ? '清除未读失败，请稍后重试' : '没有未读消息';
+    }
+    final parts = <String>[];
+    if (conversationsRead > 0) parts.add('已读 $conversationsRead 个会话');
+    if (noticesCleared) parts.add('通知已清空');
+    final text = parts.join(' · ');
+    return failed > 0 ? '$text（$failed 项失败）' : text;
+  }
+}
+
 class MessageBadgeService extends ChangeNotifier {
   MessageBadgeService._();
   static final MessageBadgeService instance = MessageBadgeService._();
@@ -230,6 +264,69 @@ class MessageBadgeService extends ChangeNotifier {
       friendRequests: _summary.friendRequests,
     );
     notifyListeners();
+  }
+
+  /// 一键已读：把论坛通知与私信红点一起清掉。
+  ///
+  /// 论坛**没有批量已读接口**，两类红点的机制完全不同：
+  ///
+  /// - **论坛通知**：服务端并不维护"通知未读"，红点是本服务用本地记录的
+  ///   `last_seen_notice_id` 与通知 ID 比较出来的。把当前通知全部记为已见即可。
+  /// - **私信**：未读来自私信列表里每个会话的 `span.kmnums`，服务端只有在
+  ///   "打开过该会话"时才把它清零，所以只能逐个拉一次未读会话。
+  ///   这里限制最多处理 [maxConversations] 个，避免一次点按打出一串请求。
+  ///
+  /// 另外顺带调一次 `checknewpm`，清掉服务端的"新私信"标记。
+  /// 好友申请属于待处理事项，只能接受/拒绝，不在这里清除。
+  Future<MarkAllReadResult> markAllRead({int maxConversations = 15}) async {
+    final api = ApiService.instance;
+    if (!api.isLoggedIn) {
+      return const MarkAllReadResult(error: '请先登录');
+    }
+
+    var read = 0;
+    var failed = 0;
+    var noticesCleared = false;
+
+    try {
+      final conversations = await api.getPmConversations();
+      final unread = conversations
+          .where((item) => item.hasUnread)
+          .take(maxConversations);
+      for (final item in unread) {
+        try {
+          await api.getPmConversation(item.touid);
+          read++;
+        } catch (_) {
+          failed++;
+        }
+      }
+    } catch (_) {
+      failed++;
+    }
+
+    try {
+      final page = await api.getNoticePage(view: 'mypost', page: 1);
+      if (page.items.isNotEmpty) {
+        await markNoticesSeen(page.items);
+        noticesCleared = true;
+      }
+    } catch (_) {
+      failed++;
+    }
+
+    try {
+      await api.checkNewPrivateMessage();
+    } catch (_) {
+      // 这个只是顺带清服务端标记，失败不影响红点结果。
+    }
+
+    await refresh(force: true);
+    return MarkAllReadResult(
+      conversationsRead: read,
+      noticesCleared: noticesCleared,
+      failed: failed,
+    );
   }
 
   Future<void> markNoticesSeen(Iterable<NoticeItem> items) async {

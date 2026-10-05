@@ -18,6 +18,9 @@ class _MessagesPageState extends State<MessagesPage> {
   final _api = ApiService.instance;
   final _badges = MessageBadgeService.instance;
 
+  /// 「一键已读」执行中（会连发多个请求，期间禁用按钮）
+  bool _markingAllRead = false;
+
   @override
   void initState() {
     super.initState();
@@ -40,6 +43,24 @@ class _MessagesPageState extends State<MessagesPage> {
   }
 
   Future<void> _refresh({bool force = true}) => _badges.refresh(force: force);
+
+  /// 一键已读：清掉通知与私信的红点。
+  ///
+  /// 论坛没有批量已读接口，通知是本地按 ID 记录的、私信要逐个"打开会话"
+  /// 才能让服务端清零，所以这里会有多个请求，执行期间按钮转圈并禁用重复点击。
+  Future<void> _markAllRead() async {
+    if (_markingAllRead) return;
+    setState(() => _markingAllRead = true);
+    try {
+      final result = await _badges.markAllRead();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.message)),
+      );
+    } finally {
+      if (mounted) setState(() => _markingAllRead = false);
+    }
+  }
 
   Future<void> _open(Widget page) async {
     await Navigator.push(
@@ -69,6 +90,19 @@ class _MessagesPageState extends State<MessagesPage> {
                   title: const Text('消息'),
                   pinned: true,
                   actions: [
+                    IconButton(
+                      tooltip: '一键已读',
+                      onPressed: (_markingAllRead || !_api.isLoggedIn)
+                          ? null
+                          : _markAllRead,
+                      icon: _markingAllRead
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.done_all_rounded),
+                    ),
                     IconButton(
                       tooltip: '刷新未读状态',
                       onPressed: _badges.refreshing
