@@ -195,6 +195,11 @@ def main() -> int:
     parser.add_argument("--update-base", default=os.environ.get("MTFORUM_UPDATE_BASE", ""))
     parser.add_argument("--dry-run", action="store_true", help="只生成 update.json，不上传")
     parser.add_argument(
+        "--allow-debug-signing",
+        action="store_true",
+        help="允许上传 debug 签名的包（只能内测/自测；正式发布不要加）",
+    )
+    parser.add_argument(
         "--allow-same-version",
         action="store_true",
         help="允许 versionCode 不大于线上值（仅用于补传文件）",
@@ -207,7 +212,11 @@ def main() -> int:
 
     version, version_code = read_pubspec_version(REPO_ROOT)
     changelog = read_changelog(REPO_ROOT, version)
-    warnings, _ = inspect_apk(apk, version)
+    warnings, is_debug = inspect_apk(apk, version)
+    if is_debug and args.allow_debug_signing:
+        # 显式放行：把 debug 签名从"阻断项"降级为提示，其余校验保持不变。
+        warnings = [w for w in warnings if "debug 签名" not in w]
+        print("!! --allow-debug-signing：本次上传的是 debug 签名产物")
 
     print("版本: %s+%d" % (version, version_code))
     print("APK : %s (%s)" % (apk, _human(apk.stat().st_size)))
