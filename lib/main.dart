@@ -9,6 +9,7 @@ import 'pages/community_page.dart';
 import 'pages/messages_page.dart';
 import 'pages/profile_page.dart';
 import 'services/analytics_service.dart';
+import 'services/auto_reply_service.dart';
 import 'services/api_service.dart';
 import 'services/feedback_service.dart';
 import 'services/message_badge_service.dart';
@@ -22,6 +23,7 @@ Future<void> main() async {
   await Future.wait([
     ApiService.instance.init(),
     ThemeService.instance.init(),
+    AutoReplyService.instance.init(),
   ]);
   runApp(const MTForumApp());
 }
