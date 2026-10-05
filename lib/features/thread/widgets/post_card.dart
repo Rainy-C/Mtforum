@@ -157,7 +157,9 @@ class _PostCard extends StatelessWidget {
                               ),
                             ),
                           ),
-                          if (post.isOp) ...[
+                          // 评论区里行尾的楼层 pill 已经会显示"楼主"，这里不再重复，
+                          // 否则一条评论同屏出现两个"楼主"，是评论区显得杂乱的主因之一。
+                          if (post.isOp && !compactFloor) ...[
                             const SizedBox(width: 6),
                             _Pill(text: '楼主', primary: true),
                           ],
@@ -180,6 +182,17 @@ class _PostCard extends StatelessWidget {
                                 ),
                               if (postTime.isNotEmpty)
                                 _PostTimeLabel(time: postTime),
+                              // 评论区把楼层号放进这一行，第一行才能腾出来只放
+                              // "是谁 + 操作"，信息不再三处散落。
+                              if (compactFloor &&
+                                  (post.floor?.trim().isNotEmpty ?? false))
+                                Text(
+                                  _floorText(post.floor),
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: colors.outline,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                               if (editLabel.isNotEmpty)
                                 _PostEditLabel(text: editLabel),
                             ],
@@ -189,7 +202,20 @@ class _PostCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                _Pill(text: _floorText(post.floor)),
+                if (compactFloor) ...[
+                  _CompactAction(
+                    icon: Icons.reply_rounded,
+                    tooltip: '回复',
+                    onPressed: onReply,
+                  ),
+                  if (onEdit != null)
+                    _CompactAction(
+                      icon: Icons.edit_outlined,
+                      tooltip: '编辑',
+                      onPressed: onEdit!,
+                    ),
+                ] else
+                  _Pill(text: _floorText(post.floor)),
               ],
             ),
             if (replyParent != null) ...[
@@ -199,11 +225,13 @@ class _PostCard extends StatelessWidget {
                     '@${replyParent!.authorName ?? post.replyToName ?? '用户'}',
                 preview: replyParent!.content,
                 onTap: onReplyContextTap,
+                compact: compactFloor,
               ),
             ] else if (post.replyToName?.trim().isNotEmpty == true) ...[
               const SizedBox(height: 9),
               _ReplyContextStrip(
                 label: '回复 @${post.replyToName!.trim()}',
+                compact: compactFloor,
               ),
             ],
             if (visibleRichContent.isNotEmpty) ...[
@@ -272,7 +300,9 @@ class _PostCard extends StatelessWidget {
                 },
               ),
             ],
-            if (!post.isOp || onEdit != null) ...[
+            // 评论区把回复/编辑挪到了第一行右侧，这里只保留帖子页（大卡片）的操作行，
+            // 否则每条评论都要多占一行，列表看起来又长又碎。
+            if (!compactFloor && (!post.isOp || onEdit != null)) ...[
               const SizedBox(height: 2),
               Align(
                 alignment: Alignment.centerRight,
@@ -327,7 +357,9 @@ class _PostCard extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border(
           left: BorderSide(
-            color: highlighted ? colors.primary : Colors.transparent,
+            // 未高亮时用卡片自身的底色，竖条位置不可见但宽度保留，
+            // 避免高亮切换时整条评论左右跳动。
+            color: highlighted ? colors.primary : colors.surface,
             width: 3,
           ),
         ),
@@ -365,10 +397,17 @@ class _ReplyContextStrip extends StatelessWidget {
   final String? preview;
   final VoidCallback? onTap;
 
+  /// 评论区用的轻量样式：单行、无底色、无左侧色条。
+  ///
+  /// 评论区已经有"父评论缩进 + 连接线"表达层级，引用条再画一条主色竖条、
+  /// 再重复一遍预览正文，就会和连接线打架，看起来又乱又挤。
+  final bool compact;
+
   const _ReplyContextStrip({
     required this.label,
     this.preview,
     this.onTap,
+    this.compact = false,
   });
 
   @override
@@ -378,6 +417,47 @@ class _ReplyContextStrip extends StatelessWidget {
     final previewText = (preview ?? '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+
+    if (compact) {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.subdirectory_arrow_right_rounded,
+                  size: 15,
+                  color: colors.outline,
+                ),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                if (onTap != null) ...[
+                  const SizedBox(width: 2),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 15,
+                    color: colors.outline,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     return Material(
       color: Colors.transparent,
@@ -649,6 +729,36 @@ class _CollapsibleCommentState extends State<_CollapsibleComment> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 评论区第一行右侧的轻量操作按钮（回复 / 编辑）。
+///
+/// 点击区域保持 36dp（拇指够得着），但视觉上只是一个 18dp 图标，
+/// 不再用一整行 TextButton 把列表撑高。
+class _CompactAction extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  const _CompactAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      color: colors.onSurfaceVariant,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
     );
   }
 }

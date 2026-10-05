@@ -1,11 +1,6 @@
 [36m›[0m Android SDK · API 36
 [36m›[0m Flutter: Flutter 3.47.6 • channel stable • https://github.com/flutter/flutter.git
 [36m›[0m Flutter 依赖
-[36m›[0m 增量构建 · 保留有效缓存
-   Woah! You appear to be trying to run flutter as root.
-   We strongly recommend running the flutter tool without superuser privileges.
-  /
-📎
 Resolving dependencies...
 Downloading packages...
   cached_network_image 3.4.1 (4.0.4 available)
@@ -22,7 +17,12 @@ Downloading packages...
 Got dependencies!
 11 packages have newer versions incompatible with dependency constraints.
 Try `flutter pub outdated` for more information.
-Running Gradle task 'assembleRelease'...                        
+Running Gradle task 'assembleRelease'...                        [36m›[0m 增量构建 · 保留有效缓存
+   Woah! You appear to be trying to run flutter as root.
+   We strongly recommend running the flutter tool without superuser privileges.
+  /
+📎
+
 Warning: Flutter support for your project's Gradle version (8.14.3) will soon be dropped. Please upgrade your Gradle version to a version of at least 9.1.0 soon.
 Alternatively, use the flag "--android-skip-build-dependency-validation" to bypass this check.
 
@@ -45,5 +45,9 @@ If you don't see a plugins block, your project was likely created with an older 
    We strongly recommend running the flutter tool without superuser privileges.
   /
 📎
-Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 29984 bytes (98.2% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
-client_loop: send disconnect: Broken pipe
+Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 30276 bytes (98.2% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
+Running Gradle task 'assembleRelease'...                           93.8s
+✓ Built build/app/outputs/flutter-apk/app-release.apk (23.7MB)
+[36m›[0m 产物 · app-release.apk
+
+[32m✓[0m 编译完成 · 1m 36s · 23MiB
