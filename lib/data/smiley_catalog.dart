@@ -13,8 +13,16 @@ class SmileyPack {
 class SmileyCatalog {
   const SmileyCatalog._();
 
+  /// 表情资源的根地址。
+  ///
+  /// 曾经是 `https://cdn-bbs.mt2.cn/static/image/smiley`，但该域名已整体
+  /// 下线（根路径与所有图片都返回 HTTP 504）。表情面板的画图、以及发帖时
+  /// 拼出的 `[img]...[/img]` 都依赖它，域名一挂就"表情全部无法显示"。
+  ///
+  /// 改用站点自身域名：只要论坛还在，这个路径就一定在，不再受第三方 CDN
+  /// 迁移影响（`cdn-bbs.mt2.cn` 与现在的 `cdn.binmt.cc` 都是同一个路径结构）。
   static const String baseUrl =
-      'https://cdn-bbs.mt2.cn/static/image/smiley';
+      'https://bbs.binmt.cc/static/image/smiley';
 
   static const Set<int> qqMissing = {
     62,

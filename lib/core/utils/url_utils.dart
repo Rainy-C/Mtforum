@@ -31,6 +31,7 @@ abstract final class AppUrl {
     // 这种"外层域名 + 内层完整 URL"的双重前缀。取内层那个真正的绝对地址，
     // 否则无论怎么拼接都是 404（帖子图片会整片空白）。
     value = _unwrapNestedScheme(value);
+    value = _migrateRetiredHosts(value, baseUrl);
 
     if (value.startsWith('//')) return 'https:$value';
     if (_scheme.hasMatch(value)) return value;
@@ -60,6 +61,25 @@ abstract final class AppUrl {
     final nested = RegExp(r'https?://', caseSensitive: false).firstMatch(rest);
     if (nested == null) return value;
     return rest.substring(nested.start);
+  }
+
+  /// 已下线的历史 CDN 域名 -> 改写回站点自身域名。
+  ///
+  /// `cdn-bbs.mt2.cn` 已经整体 504，但论坛里**历史帖子**中大量表情/图片
+  /// 仍然写死指向它。只靠新发帖换域名救不回老帖，所以在这里做统一迁移：
+  /// `https://cdn-bbs.mt2.cn/static/image/smiley/qq/qq001.gif`
+  ///   -> `https://bbs.binmt.cc/static/image/smiley/qq/qq001.gif`
+  /// 路径结构一致（Discuz 的 static 目录），直接换域名即可。
+  static final List<String> _retiredHosts = const ['cdn-bbs.mt2.cn'];
+
+  static String _migrateRetiredHosts(String value, String baseUrl) {
+    final lower = value.toLowerCase();
+    for (final host in _retiredHosts) {
+      if (lower.startsWith('https://$host/') || lower.startsWith('http://$host/')) {
+        return baseUrl + value.substring(value.indexOf('/', value.indexOf('://') + 3));
+      }
+    }
+    return value;
   }
 
   /// 判断是否是可以直接用浏览器打开的绝对 http(s) 链接。
