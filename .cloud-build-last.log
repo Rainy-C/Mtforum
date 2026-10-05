@@ -41,14 +41,9 @@ Alternatively, use the flag "--android-skip-build-dependency-validation" to bypa
 Potential fix: Your project's KGP version is typically defined in the plugins block of the `settings.gradle` file (/opt/remote-build/Mtforum-04ba716edb/android/settings.gradle), by a plugin with the id of org.jetbrains.kotlin.android. 
 If you don't see a plugins block, your project was likely created with an older template version, in which case it is most likely defined in the top-level build.gradle file (/opt/remote-build/Mtforum-04ba716edb/android/build.gradle) by the ext.kotlin_version property.
 
-Warning: SDK processing. This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.
    Woah! You appear to be trying to run flutter as root.
    We strongly recommend running the flutter tool without superuser privileges.
   /
 📎
 Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 29984 bytes (98.2% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
-Running Gradle task 'assembleRelease'...                          180.1s
-✓ Built build/app/outputs/flutter-apk/app-release.apk (23.7MB)
-[36m›[0m 产物 · app-release.apk
-
-[32m✓[0m 编译完成 · 3m 02s · 23MiB
+client_loop: send disconnect: Broken pipe

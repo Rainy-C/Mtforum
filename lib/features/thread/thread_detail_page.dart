@@ -190,6 +190,23 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
 
   Future<void> _loadMore() => _controller.loadMore();
 
+  /// 长按顶栏标题复制完整标题。
+  ///
+  /// 顶栏受宽度限制只能省略号显示，而 `detail.title` 是解析出来的完整标题，
+  /// 所以复制到剪贴板的是完整文本。
+  Future<void> _copyTitle(String? title) async {
+    final value = (title ?? '').trim();
+    if (value.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('已复制标题'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
   Future<void> _showComments({
     ThreadDetail? detailOverride,
     String? targetPid,
@@ -332,10 +349,16 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         slivers: [
           SliverAppBar(
             pinned: true,
-            title: Text(
-              detail?.title ?? '帖子详情',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            // 长按标题复制。顶栏标题是省略号显示的，复制的是完整标题原文。
+            title: GestureDetector(
+              onLongPress: detail == null
+                  ? null
+                  : () => _copyTitle(detail.title),
+              child: Text(
+                detail?.title ?? '帖子详情',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
             actions: [
               if (detail != null)
