@@ -478,8 +478,23 @@ class _CommentsSheetState extends State<_CommentsSheet> {
         ? _targetCommentKey
         : _commentKeys.putIfAbsent(post.pid, () => GlobalKey());
 
+    // 楼中楼：有父评论时缩进并在左侧画一条连接线。
+    // 之前只有"回复 @xxx"文字条，父子关系得点进去才知道；加一条细线后
+    // 层级扫一眼就能看出来，且不需要展开/折叠状态。
+    final isChild = parent != null;
     return Container(
       key: itemKey,
+      padding: isChild ? const EdgeInsets.only(left: 14) : EdgeInsets.zero,
+      decoration: isChild
+          ? BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  width: 2,
+                ),
+              ),
+            )
+          : null,
       child: RepaintBoundary(
         child: _PostCard(
           post: post,
@@ -883,8 +898,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                         ? '已过滤 $rawCommentCount 条评论'
                                         : '暂无评论')
                                     : _targetMode
-                                        ? '已加载 ${comments.length} 条 · '
-                                            '第 $_minLoadedPage-$_maxLoadedPage 页'
+                                        ? '已定位 · 已加载 ${comments.length} 条'
                                         : '${comments.length} 条评论 · '
                                             '${_reverseOrder ? '倒序' : '正序'}',
                             style: theme.textTheme.bodySmall?.copyWith(
@@ -894,6 +908,12 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         ],
                       ),
                     ),
+                    if (_targetMode)
+                      IconButton(
+                        tooltip: '回到定位的回复',
+                        onPressed: _scrollToTargetComment,
+                        icon: const Icon(Icons.my_location_rounded),
+                      ),
                     IconButton(
                       tooltip: _targetMode
                           ? '定位模式按楼层正序显示'

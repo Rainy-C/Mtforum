@@ -1,5 +1,8 @@
 part of '../thread_detail_page.dart';
 
+/// 评论超过这个字数就默认折叠（并保留"展开全文"）。
+const int _collapseThreshold = 600;
+
 class _PostCard extends StatelessWidget {
   final Post post;
   final Post? replyParent;
@@ -67,7 +70,7 @@ class _PostCard extends StatelessWidget {
         )
         .toList(growable: false);
 
-    return Card(
+    final card = Card(
       margin: compactFloor
           ? EdgeInsets.zero
           : const EdgeInsets.only(bottom: 8),
@@ -75,7 +78,7 @@ class _PostCard extends StatelessWidget {
       color: compactFloor
           ? (highlighted
               ? Color.alphaBlend(
-                  colors.primary.withValues(alpha: 0.065),
+                  colors.primary.withValues(alpha: 0.14),
                   colors.surface,
                 )
               : colors.surface)
@@ -205,20 +208,26 @@ class _PostCard extends StatelessWidget {
             ],
             if (visibleRichContent.isNotEmpty) ...[
               const SizedBox(height: 10),
-              _RichContentView(
-                contents: visibleRichContent,
-                onImageTap: (url) {
-                  final index = post.images.indexOf(url);
-                  if (index >= 0) {
-                    onImageTap(index);
-                  }
-                },
+              _CollapsibleComment(
+                enabled: compactFloor && content.length > _collapseThreshold,
+                child: _RichContentView(
+                  contents: visibleRichContent,
+                  onImageTap: (url) {
+                    final index = post.images.indexOf(url);
+                    if (index >= 0) {
+                      onImageTap(index);
+                    }
+                  },
+                ),
               ),
             ] else if (content.isNotEmpty) ...[
               const SizedBox(height: 10),
-              SelectableText(
-                content,
-                style: theme.textTheme.bodyMedium?.copyWith(height: 1.55),
+              _CollapsibleComment(
+                enabled: compactFloor && content.length > _collapseThreshold,
+                child: SelectableText(
+                  content,
+                  style: theme.textTheme.bodyMedium?.copyWith(height: 1.55),
+                ),
               ),
             ],
             if (post.hiddenHint != null && post.hiddenHint!.trim().isNotEmpty) ...[
@@ -305,6 +314,25 @@ class _PostCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+
+    if (!compactFloor) return card;
+
+    // 评论区：被定位/高亮的楼层左侧加一条主色竖条。用 AnimatedContainer
+    // 而不是普通 Container，竖条会随 highlighted 变化淡入，跳转时能一眼看到
+    // "跳到哪了"（纯横竖条变化，没有位移，不干扰阅读）。
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(
+            color: highlighted ? colors.primary : Colors.transparent,
+            width: 3,
+          ),
+        ),
+      ),
+      child: card,
     );
   }
 
@@ -516,6 +544,111 @@ class _Pill extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
       ),
+    );
+  }
+}
+
+/// 长评论折叠。
+///
+/// 评论区长评论会把整屏吃掉，滚动时很难跳过。这里超过阈值就先裁到固定高度，
+/// 底部压一层同底色渐隐表示"还有内容"，并给出「展开全文」。
+/// 只用 AnimatedSize 做高度过渡（200ms），没有位移或缩放。
+class _CollapsibleComment extends StatefulWidget {
+  final Widget child;
+  final bool enabled;
+
+  const _CollapsibleComment({required this.child, required this.enabled});
+
+  @override
+  State<_CollapsibleComment> createState() => _CollapsibleCommentState();
+}
+
+class _CollapsibleCommentState extends State<_CollapsibleComment> {
+  /// 折叠后的最大高度：大约一屏的三分之一，能看出内容又不占满。
+  static const double _collapsedHeight = 300;
+
+  bool _expanded = false;
+
+  void _toggle() => setState(() => _expanded = !_expanded);
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) return widget.child;
+
+    final colors = Theme.of(context).colorScheme;
+    if (_expanded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          widget.child,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _toggle,
+              icon: const Icon(Icons.unfold_less_rounded, size: 16),
+              label: const Text('收起'),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: Stack(
+            children: [
+              ConstrainedBox(
+                constraints:
+                    const BoxConstraints(maxHeight: _collapsedHeight),
+                child: ClipRect(child: widget.child),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    height: 44,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          colors.surface.withValues(alpha: 0),
+                          colors.surface,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _toggle,
+            icon: const Icon(Icons.expand_more_rounded, size: 16),
+            label: const Text('展开全文'),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 32),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
