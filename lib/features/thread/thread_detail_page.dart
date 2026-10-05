@@ -13,7 +13,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../data/smiley_catalog.dart';
 import '../../models/models.dart';
 import '../../services/api_service.dart';
-import '../../services/auto_reply_service.dart';
 import '../../services/comment_thread_service.dart';
 import '../../services/comment_filter_service.dart';
 import '../../widgets/app_state_view.dart';
@@ -151,9 +150,6 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   bool _liked = false;
   bool _favorited = false;
 
-  /// 本次进入页面是否已经尝试过自动回复（失败也不在同一次进入里重试）。
-  bool _autoReplyChecked = false;
-
   @override
   void initState() {
     super.initState();
@@ -172,59 +168,11 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     super.dispose();
   }
 
-  /// 首屏加载 + 自动回复隐藏帖 + 定位楼层自动展开评论区。
+  /// 首屏加载 + 定位楼层自动展开评论区。
   Future<void> _loadData() async {
     await _controller.load();
     if (!mounted) return;
-    if (await _maybeAutoReplyHiddenThread()) {
-      // 回复成功后重新拉一次，服务端才会把隐藏内容吐出来。
-      await _controller.load();
-      if (!mounted) return;
-    }
     _openLocatedCommentsIfNeeded();
-  }
-
-  /// 自动回复「回复可见」的帖子，返回是否真的回复成功。
-  ///
-  /// 只处理"回复能解锁"的提示：解析器把"没有权限查看 / 阅读权限不足"也放进了
-  /// `hiddenHint`，那种帖子回复了照样看不到，自动回复只会平白打扰楼主。
-  /// 同一个帖子只自动回复一次（记录在本地），失败则本次进入不再重试。
-  Future<bool> _maybeAutoReplyHiddenThread() async {
-    if (_autoReplyChecked) return false;
-    _autoReplyChecked = true;
-
-    final auto = AutoReplyService.instance;
-    if (!auto.active || !_api.isLoggedIn) return false;
-
-    final detail = _controller.state.detail;
-    if (detail == null || auto.hasReplied(detail.tid)) return false;
-
-    final gated = detail.posts.any(
-      (post) => AutoReplyService.isReplyGatedHint(post.hiddenHint),
-    );
-    if (!gated) return false;
-
-    final result = await _api.replyThread(
-      tid: detail.tid,
-      fid: detail.fid,
-      noticeauthor: detail.noticeauthor,
-      message: auto.content,
-    );
-    if (!mounted) return false;
-
-    if (!result.success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('自动回复失败：${result.message}')),
-      );
-      return false;
-    }
-
-    await auto.markReplied(detail.tid);
-    if (!mounted) return false;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已自动回复，正在显示隐藏内容')),
-    );
-    return true;
   }
 
   /// 外部分享链接进入时，自动弹出评论区并定位到目标楼层。
