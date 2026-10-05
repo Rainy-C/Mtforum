@@ -171,17 +171,27 @@ class _PostImages extends StatelessWidget {
         onTap: () => onTap(0),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: CachedNetworkImage(
+          child: ConstrainedBox(
+            // 单图限高：一张长截图不再霸占整屏，点开看图库里的原图。
+            constraints: const BoxConstraints(maxHeight: 280),
+            child: CachedNetworkImage(
+            width: double.infinity,
             imageUrl: images.first, fit: BoxFit.cover,
             placeholder: (_, __) => Container(height: 200, color: Theme.of(context).colorScheme.surfaceContainerHighest,
               child: const Center(child: CircularProgressIndicator())),
             errorWidget: (_, __, ___) => const SizedBox.shrink()),
+          ),
         ),
       );
     }
     return GridView.builder(
       shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, crossAxisSpacing: 6, mainAxisSpacing: 6),
+      // 2~4 张走两列（单张更大、更像相册预览），5 张及以上才排三列九宫格。
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: images.length <= 4 ? 2 : 3,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+      ),
       itemCount: images.length,
       itemBuilder: (context, index) => GestureDetector(
         onTap: () => onTap(index),
