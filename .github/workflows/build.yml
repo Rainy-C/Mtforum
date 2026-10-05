@@ -1,4 +1,4 @@
-name: Build APK
+name: Build Release APK
 
 on:
   push:
@@ -8,11 +8,14 @@ on:
 
 env:
   FLUTTER_VERSION: "3.47.1"
+  UPDATE_URL: "https://loveqin.fun/Mt/update.json"
 
 jobs:
   build:
     name: Build Release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -31,23 +34,64 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Show version
+        run: grep '^version:' pubspec.yaml
+
       - name: Install dependencies
         run: flutter pub get
 
+      # 配了签名 secrets 就用正式密钥签名；没配就交给 android/app/build.gradle.kts
+      # 回落到 debug 签名（构建不会失败，但产物只能自测、不能发布）。
+      # 需要的 secrets：
+      #   ANDROID_KEYSTORE_BASE64    —— base64 -w0 release.jks 的结果
+      #   ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::未配置 ANDROID_KEYSTORE_BASE64，本次产物为 debug 签名，只能自测"
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > key.properties
+          echo "已配置正式签名密钥"
+
       - name: Build release APK (arm64)
-        run: flutter build apk --release --target-platform android-arm64 --dart-define=MTFORUM_UPDATE_URL=https://loveqin.fun/Mt/update.json
+        run: >
+          flutter build apk --release
+          --target-platform android-arm64
+          --dart-define=MTFORUM_UPDATE_URL=${{ env.UPDATE_URL }}
+
+      - name: Checksum
+        run: |
+          cd build/app/outputs/flutter-apk
+          sha256sum *.apk | tee sha256.txt
+          grep '^version:' ../../../../pubspec.yaml || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mtforum-release-apk
-          path: build/app/outputs/flutter-apk/*.apk
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/flutter-apk/sha256.txt
           if-no-files-found: error
           retention-days: 30
 
       - name: Upload to Release
-        if: startsWith(github.ref, "refs/tags/")
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/app/outputs/flutter-apk/*.apk
+          files: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/flutter-apk/sha256.txt
           generate_release_notes: true
