@@ -1,0 +1,28 @@
+MtForum includes adapted portions of HyperCeiler and the user-owned reference project.
+
+Reference: https://github.com/yuchenfan78-cyber/HyperCeilerMotionDemo
+Original project: https://github.com/ReChronoRain/HyperCeiler
+Pinned render-engine commit: 861be0473847d5c020102191f2c2891acda5d628
+Copyright (C) 2023-2026 HyperCeiler Contributions
+License: GNU Affero General Public License v3.0 (AGPL-3.0); see LICENSE.
+
+Vendored: glow.agsl, GlowPainter.java, RenderViewLayout.java,
+GlowController.java and provision_service_state.xml. The welcome layout,
+MotionAnimator and NativeBlur are adapted from the reference project.
+
+Modifications on 2026-10-17: Kotlin/Compose host, lifecycle management,
+MT Forum wordmark, Compose permission page and circular reveal,
+agreement flow and local initialization persistence. No card-key validation.
+All renderer sources and resources are included; builds do not fetch source.
+
+Official Miuix navigation icons (Regular weight): Home, Community, Messages,
+and ContactsCircle (displayed as Profile). Copyright 2025-2026,
+compose-miuix-ui contributors. Apache-2.0; see licenses/miuix-Apache-2.0.txt.
+Only the package and property receiver/name are adapted for the pinned Miuix
+component version; the original vector geometry is retained unchanged.
+
+Authentication, Comiis profile parsing and same-UA WebView verification are
+ported by reference from the user-owned project https://github.com/Rainy-C/Mtforum.
+
+Additional Miuix Regular Show, Hide, Lock, Favorites, BankCards, Months and Contacts icons retain their original vector geometry,
+from compose-miuix-ui/miuix commit 8972f941c194bd3c4e14c34543d5ebc7b39e40da, Apache-2.0.

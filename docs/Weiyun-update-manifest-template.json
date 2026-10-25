@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "app_id": "me.rain.mtforum",
+  "channel": "stable",
+  "enabled": true,
+  "latest": {
+    "version_name": "0.3.1",
+    "version_code": 7,
+    "release_date": "2026-10-26",
+    "title": "MTForum 0.3.1 更新",
+    "changelog": [
+      "优化启动流程，减少重复初始化",
+      "新增设置中的检查更新入口",
+      "修复已知问题"
+    ],
+    "download_url": "https://example.com/MtForum-0.3.1.apk",
+    "download_page_url": "https://example.com/releases",
+    "file_size_bytes": 0,
+    "sha256": "",
+    "force_update": false,
+    "min_supported_version_code": 6
+  },
+  "check": {
+    "check_on_launch": true,
+    "interval_hours": 24,
+    "allow_skip_version": true,
+    "remind_later_hours": 24
+  }
+}

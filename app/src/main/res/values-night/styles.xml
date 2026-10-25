@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.MtForum" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#101010</item>
+        <item name="android:windowSplashScreenBackground">#101010</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_empty</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+</resources>

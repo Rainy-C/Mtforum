@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MT Forum</string>
+    <string name="next_step">开始初始化</string>
+    <string name="back">返回</string>
+    <string name="continue_action">继续</string>
+    <string name="retry">重试</string>
+    <string name="permission_title">权限设置</string>
+    <string name="permission_subtitle">在开始之前，了解应用需要的权限。</string>
+    <string name="network_title">网络访问</string>
+    <string name="network_summary">用于浏览论坛、收发消息以及加载图片和附件。</string>
+    <string name="declared">系统授予</string>
+    <string name="optional_permission">以下权限可稍后设置，不影响本次初始化。</string>
+    <string name="notification_title">通知权限</string>
+    <string name="notification_summary">可在系统设置中管理应用通知的显示权限。</string>
+    <string name="granted">已授权</string>
+    <string name="optional">可选</string>
+    <string name="settings_unavailable">无法打开系统设置，可在手机设置中管理通知权限。</string>
+    <string name="agreement_title">阅读协议</string>
+    <string name="agreement_subtitle">请阅读使用与隐私说明，了解账号信息的处理方式。</string>
+
+    <string name="agreement_source_remote">微云协议 · 已同步</string>
+    <string name="agreement_source_cached">微云协议 · 离线缓存</string>
+    <string name="agreement_source_bundled">微云协议 · 内置离线副本</string>
+    <string name="agreement_check">我已阅读并同意以上说明</string>
+    <string name="agreement_scroll_hint">请先阅读至协议末尾</string>
+    <string name="agree_continue">同意并继续</string>
+    <string name="saving">正在初始化…</string>
+    <string name="save_error">初始化状态保存失败，请重试。</string>
+    <string name="storage_error">无法读取初始化状态，请检查存储空间后重试。</string>
+    <string name="tab_home">首页</string>
+    <string name="tab_community">社区</string>
+    <string name="tab_messages">消息</string>
+    <string name="tab_profile">我的</string>
+</resources>

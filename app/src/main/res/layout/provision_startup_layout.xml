@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adapted from HyperCeiler's AGPL-3.0 welcome layout; see NOTICE. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <com.sevtinge.hyperceiler.provision.renderengine.RenderViewLayout
+        android:id="@+id/render_view_layout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no" />
+
+    <ImageView
+        android:id="@+id/background_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@null"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:id="@+id/miui_enter_layout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="30" />
+
+        <ImageView
+            android:id="@+id/logo_image"
+            android:layout_width="90dp"
+            android:layout_height="90dp"
+            android:layout_gravity="center"
+            android:contentDescription="@null"
+            android:importantForAccessibility="no" />
+
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="40">
+
+            <FrameLayout
+                android:id="@+id/logo_image_wrapper"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentTop="true"
+                android:layout_centerHorizontal="true">
+
+                <TextView
+                    android:id="@+id/text_logo_image"
+                    android:layout_width="wrap_content"
+                    android:paddingHorizontal="24dp"
+                    android:layout_height="wrap_content"
+                    android:text="@string/app_name"
+                    android:textColor="#1C1C1E"
+                    android:textSize="40sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:layout_marginTop="20dp"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/next_layout"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:layout_alignParentBottom="true"
+                android:layout_centerHorizontal="true"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="@string/next_step"
+                android:background="@drawable/rainkernel_next_circle"
+                android:elevation="0dp"
+                android:translationZ="0dp"
+                android:stateListAnimator="@null"
+                android:clipToOutline="true"
+                android:foreground="?android:attr/selectableItemBackground">
+
+                <ImageView
+                    android:layout_width="31dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/rainkernel_next_arrow" />
+            </FrameLayout>
+        </RelativeLayout>
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="20" />
+    </LinearLayout>
+</FrameLayout>
+

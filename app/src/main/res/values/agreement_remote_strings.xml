@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Remote agreement labels are intentionally in a dedicated resource file.
+         This avoids replacing unrelated strings.xml definitions in existing projects. -->
+    <string name="agreement_source_remote">微云协议 · 已同步</string>
+    <string name="agreement_source_cached">微云协议 · 离线缓存</string>
+    <string name="agreement_source_bundled">微云协议 · 内置离线副本</string>
+</resources>

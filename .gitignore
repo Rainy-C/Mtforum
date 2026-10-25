@@ -1,55 +1,6 @@
-# Flutter
-build/
-.dart_tool/
-.packages
-.flutter-plugins
-.flutter-plugins-dependencies
-*.lock
-.pub-cache/
-.pub/
-ios/
-linux/
-macos/
-web/
-windows/
-
-# IDE
+.gradle/
 .idea/
-*.iml
-.vscode/
-
-# Android
-android/.gradle/
-android/local.properties
-android/key.properties
-
-# 签名与凭证（仓库根目录的 key.properties 会被 android/app/build.gradle.kts
-# 读取，务必不要提交）
-key.properties
-**/key.properties
+**/build/
+local.properties
 *.jks
 *.keystore
-*.p12
-*.pem
-credentials.json
-**/google-services.json
-**/GoogleService-Info.plist
-scripts/
-test/
-docs/
-
-# 发布产物（由 tools/publish.py 生成后上传，不入库）
-/update.json
-__pycache__/
-*.pyc
-
-# 对象存储 / 发布凭证（绝不入库）
-.r2_credentials
-.r2_credentials.*
-*_r2_credentials
-mtforum-r2*
-
-# 本地环境
-.env
-.env.*
-*.local

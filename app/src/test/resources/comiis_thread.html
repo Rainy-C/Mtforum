@@ -1,0 +1,1310 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta http-equiv="Cache-control" content="no-cache" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimal-ui, minimum-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-touch-fullscreen" content="yes">
+<meta name="apple-mobile-web-app-title" content="MT论坛">
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<meta name="format-detection" content="telephone=no" />
+<meta name="format-detection" content="email=no" />
+<link rel="apple-touch-icon-precomposed" sizes="57x57" href="https://cdn.binmt.cc/template/comiis_app/pic/icon57.png">
+<link rel="apple-touch-icon-precomposed" sizes="114x114" href="https://cdn.binmt.cc/template/comiis_app/pic/icon114.png">
+<link rel="apple-touch-icon-precomposed" sizes="152x152" href="https://cdn.binmt.cc/template/comiis_app/pic/icon152.png">
+<link rel="icon" sizes="114x114" href="https://cdn.binmt.cc/template/comiis_app/pic/icon114.png" /> 
+<meta property="og:image" content="https://bbs.binmt.cc/https://oos.binmt.cc/forum/202610/18/121503wi9h99d30mx66old.jpg">
+<meta itemprop="image" content="https://bbs.binmt.cc/https://oos.binmt.cc/forum/202610/18/121503wi9h99d30mx66old.jpg"><base href="https://bbs.binmt.cc/" />
+<title>MultiTTS 开源版本出来了 修复了bug  以后应该会有微软的hd语音吧 - MT论坛</title>
+<meta name="keywords" content="MultiTTS 开源版本出来了 修复了bug  以后应该会有微软的hd语音吧,综合交流,MT论坛,MT官网,MT管理器论坛,MT管理器,MT管理器教程,MT最新版本" />
+<meta name="description" content="众所周知  multitts  已经一年多没更新了  作者也已经失联了  微软最近也出了hd的离线语音包  但是apk的so里面还没跟进 体现不出hd语音的效果  今天发现 有位老哥居然逆向 ..., MT论坛" />
+<link rel="shortcut icon" href="https://cdn.binmt.cc/template/comiis_app/comiis/img/favicon.ico">
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/jquery.min.js?R19" type="text/javascript"></script>
+<script type="text/javascript">var comiis_avatar_urls = {"small":"https:\/\/cdn.binmt.cc\/uc_server\/data\/avatar\/000\/15\/42\/05_avatar_small.jpg?v=amryWhtSLR1f","middle":"https:\/\/cdn.binmt.cc\/uc_server\/data\/avatar\/000\/15\/42\/05_avatar_middle.jpg?v=Gp5MEsikVsTv"}; var STYLEID = '3', STATICURL = 'https://cdn.binmt.cc/static/', IMGDIR = 'https://cdn.binmt.cc/template/comiis_app/comiis/img', VERHASH = 'R19', charset = 'utf-8', discuz_uid = '154205', cookiepre = 'cQWy_2132_', cookiedomain = '', comiis_leftnv_id = '0', cookiepath = '/', showusercard = '1', comiis_isapp = 0, attackevasive = '0', disallowfloat = 'newthread', creditnotice = '', defaultstyle = '', REPORTURL = 'aHR0cHM6Ly9iYnMuYmlubXQuY2MvdGhyZWFkLTE3NDk2MC0xLTEuaHRtbA==', SITEURL = 'https://bbs.binmt.cc/', JSPATH = 'https://cdn.binmt.cc/static/js/', comiis_pageid = 'fcea1', comiis_page_start = 0, comiis_rlmenu = 0, comiis_lrshow = 0, comiis_post_btnwz = 1, comiis_footer = 1, comiis_open_wblink = 0, comiis_open_wblink_txt = '即将打开站外连接, 是否继续? ', comiis_open_wblink_tip = 1;
+var comiis_all_https = new Array('baidu.com', 'qq.com', 'mt2.cn', window.location.host);
+</script>
+<link rel="stylesheet" href="https://cdn.binmt.cc/template/comiis_app/comiis/css/comiis.css?R19" type="text/css" media="all">
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/common_u.js?R19" type="text/javascript" charset="utf-8"></script>
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/jquery.lazyload.min.js" type="text/javascript"></script><script>
+var comiis_nvscroll = 1;
+var comiis_isweixin = '0';
+</script>
+<style type="text/css">.attjg.comiis_flex {visibility: hidden;}</style><link rel="stylesheet" href="https://cdn.binmt.cc/source/plugin/comiis_app/cache/comiis_12_style.css?R19" type="text/css" media="all" id="comiis_app_addclass" />
+			<script>
+			var comiis_app_color_modes = 0;
+			function comiis_app_setcolor_mode(){
+				$('#comiis_app_addclass').remove();
+				if(comiis_app_color_modes == 1){
+					comiis_app_color_modes = 0;
+					setcookie('comiis_coloruid_154205_mode', '16s', -99999, '', '', '');
+					$(".comiis_app_color_modeicon").html("&#xe69d");
+					$("<link>").attr({id:"comiis_app_addclass", rel:"stylesheet", type: "text/css", href: 'https://cdn.binmt.cc/source/plugin/comiis_app/cache/comiis_12_style.css'}).appendTo("head");
+				}else{
+					comiis_app_color_modes = 1;
+					setcookie('comiis_coloruid_154205_mode', '16s', 8640000, '', '', '');
+					$(".comiis_app_color_modeicon").html("&#xe731");
+					$("<link>").attr({id:"comiis_app_addclass", rel:"stylesheet", type: "text/css", href: 'https://cdn.binmt.cc/source/plugin/comiis_app/cache/comiis_16_style.css'}).appendTo("head");
+				}
+			}	
+			</script><style>.comiis_sidenv_box .comiis_sidenv_top, .comiis_space_box, .comiis_gobtn_user .comiis_sidenv_top {background:url("./source/plugin/comiis_app_homestyle/image/home_bg/home_bg.jpg") no-repeat 0 0 / cover;}</style></head><body id="forum" class="comiis_bodybg pg_viewthread cfuq comiis_leftnv0">
+<div class="comiis_loadings" style="display: none;">
+<div class="comiis_loadings_icon">
+<i class="weui-loading weui-icon_toast"></i>
+<p class="comiis_loadings_content">数据加载中</p>
+</div>
+</div>
+<div class="comiis_body">
+                <div class="comiis_leftmenubg" style="display:none"></div>
+            <div class="comiis_sidenv_box" style="display:none;">
+            <div class="comiis_sidenv_top f_f">
+<div class="sidenv_exit">
+             
+<a href="member.php?mod=logging&amp;action=logout&amp;formhash=479fb68e&amp;mobile=2"><span><i class="comiis_font">&#xe61c;</i></span></a>
+<a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=154205&amp;do=profile&amp;mycenter=1"><span><i class="comiis_font">&#xe63e;</i></span></a> 
+</div>
+                                              <div class="sidenv_edit">                
+                    <a href="https://bbs.binmt.cc/home.php?mod=spacecp&amp;ac=promotion"><span><i class="comiis_font fyy">&#xe6f6;</i></span></a>
+                </div>       
+                         
+                <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=154205&amp;do=profile&amp;mycenter=1" class="sidenv_user">
+                  <span class="sidenv_num bg_del f_f">3</span>				
+                  <em><img src="https://cdn.binmt.cc/uc_server/data/avatar/000/15/42/05_avatar_middle.jpg?v=Gp5MEsikVsTv"></em>
+                                    <p><span class="user_tit fyy">Cynnie</span><span class="user_lev bg_0">Lv.4</span></p>
+                  <p class="f13 comiis_tm mt5"><span class="fyy">高中生</span><span class="fyy">积分: 1143</span></p>
+                                  </a>
+                                            </div>
+                        <div class="sidenv_li">			
+                <ul class="comiis_left_Touch bdew">
+                                            <li class="comiis_left_Touch"><a href="https://bbs.binmt.cc/forum.php?mod=guide&view=hot" class="comiis_left_Touch">
+                                                                                                <i class="comiis_font comiis_left_Touch" style="color:#3EBBFD;">&#xe604;</i>
+                                                                                                            首页</a></li>
+                                            <li class="comiis_left_Touch"><a href="https://bbs.binmt.cc/forum.php?forumlist=1" class="comiis_left_Touch">
+                                                                                                <i class="comiis_font comiis_left_Touch" style="color:#FFB300;">&#xe606;</i>
+                                                                                                            社区</a></li>
+                                            <li class="comiis_left_Touch"><a href="https://bbs.binmt.cc/forum.php?mod=guide&view=newthread&index=1" class="comiis_left_Touch">
+                                                                                                <i class="comiis_font comiis_left_Touch" style="color:#9DCA08;">&#xe8b4;</i>
+                                                                                                            导读</a></li>
+                                            <li class="comiis_left_Touch"><a href="k_misign-sign.html" class="comiis_left_Touch">
+                                                                                                <i class="comiis_font comiis_left_Touch" style="color:#F37D7D;">&#xe983;</i>
+                                                                                                            签到</a></li>
+                                            <li class="comiis_left_Touch"><a href="misc.php?mod=ranklist&type=member&view=credit&amp;mobile=2" class="comiis_left_Touch">
+                                                                                                <i class="comiis_font comiis_left_Touch" style="color:#DA99DB;">&#xe6f1;</i>
+                                                                                                            排行</a></li>
+                                            <li class="comiis_left_Touch"><a href="misc.php?mod=tag&amp;mobile=2" class="comiis_left_Touch">
+                                                                                                <i class="comiis_font comiis_left_Touch" style="color:#9DCA08;">&#xe62c;</i>
+                                                                                                            标签</a></li>
+                                            <li class="comiis_left_Touch"><a href="search.php?mod=forum&amp;mobile=2" class="comiis_left_Touch">
+                                                                                                <i class="comiis_font comiis_left_Touch" style="color:#3EBBFD;">&#xe622;</i>
+                                                                                                            搜索</a></li>
+                                            <li class="comiis_left_Touch"><a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=promotion" class="comiis_left_Touch">
+                                                                                                <i class="comiis_font comiis_left_Touch" style="color:#FF9900;">&#xe632;</i>
+                                                                                                            访问推广</a></li>
+                                        <li class="comiis_left_Touch styli_h10"></li>
+                </ul>
+            </div>
+        </div>
+    <div id="comiis_head">		
+<div class="comiis_head f_top cl">
+<div class="header_z">
+<a href="javascript:history.back();"><i class="comiis_font">&#xe60d;</i></a>
+</div>
+<h2 class="flex">
+                    <a href="https://bbs.binmt.cc/forum-44-1.html" class="kmtit">综合交流</a>                    <div class="comiis_view_topuser comiis_view_topuserbg">
+                                                                                                    <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=5666&amp;do=profile" class="kmimg"><em><img src="https://cdn.binmt.cc/uc_server/data/avatar/000/00/56/66_avatar_middle.jpg?v=TxjgBQUU-3CC"></em>kjkuang</a>
+                    </div>
+			
+</h2>
+<div class="header_y">
+
+<a href="javascript:;" class="comiis_share_key"><i class="comiis_font">&#xe62b;</i></a>
+</div>
+</div>
+</div>
+<div style="height:48px;"></div>	
+<div class="comiis_bodybox">
+<script>
+if(history.length < 1 || history.length == 1 || document.referrer === ''){
+$('.header_z').html('<a href="javascript:;" onclick="comiis_leftnv();"><i class="comiis_font">&#xe63c;</i></a>');
+}
+</script>
+<script>var replyreload, tid = '174960', authorid = '5666', formhash = '479fb68e', uid = '154205', username = 'Cynnie', allowrecommend = '1',isgroup = '0';</script>
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/comiis_viewthread.js?R19&v=avatar1" type="text/javascript" type="text/javascript"></script>
+<form method="post" autocomplete="off" name="modactions" id="modactions">
+<input type="hidden" name="formhash" value="479fb68e" />
+<input type="hidden" name="optgroup" />
+<input type="hidden" name="operation" />
+<input type="hidden" name="listextra" value="page%3D1" />
+<input type="hidden" name="page" value="1" />
+</form>
+<script>
+var fid = parseInt('44'), tid = parseInt('174960');
+function modthreads(optgroup, operation) {
+var operation = !operation ? '' : operation;
+document.getElementById('modactions').action = 'forum.php?mod=topicadmin&action=moderate&fid=' + fid + '&moderate[]=' + tid + '&handlekey=mods&infloat=yes&nopost=yes' + (optgroup != 3 && optgroup != 2 ? '&from=' + tid : '');
+document.getElementById('modactions').optgroup.value = optgroup;
+document.getElementById('modactions').operation.value = operation;
+var obj = $('#modactions');
+$.ajax({
+type:'POST',
+url:obj.attr('action') + '&inajax=1',
+data:obj.serialize(),
+dataType:'xml'
+})
+.success(function(s) {
+popup.open(s.lastChild.firstChild.nodeValue);
+evalscript(s.lastChild.firstChild.nodeValue);
+})
+.error(function() {
+window.location.href = obj.attr('href');
+popup.close();
+});
+}
+function modaction(action, pid, extra, mod) {
+if(!action) {
+return;
+}
+var mod = mod ? mod : 'forum.php?mod=topicadmin';
+var extra = !extra ? '' : '&' + extra;
+document.getElementById('modactions').action = mod + '&action='+ action +'&fid=' + fid + '&tid=' + tid + '&handlekey=mods&infloat=yes&nopost=yes' + (!pid ? '' : '&topiclist[]=' + pid) + extra + '&r' + Math.random();
+var obj = $('#modactions');
+$.ajax({
+type:'POST',
+url:obj.attr('action') + '&inajax=1',
+data:obj.serialize(),
+dataType:'xml'
+})
+.success(function(s) {
+popup.open(s.lastChild.firstChild.nodeValue);
+evalscript(s.lastChild.firstChild.nodeValue);
+})
+.error(function() {
+window.location.href = obj.attr('href');
+popup.close();
+});
+}
+</script>
+                        <div class="comiis_viewtit bg_f cl">
+                        <h2>
+                                <div class="km_tits">
+                                MultiTTS 开源版本出来了 修复了bug  以后应该会有微软的hd语音吧                </div>
+            </h2>
+                </div>
+                                                                                                                        <div class="comiis_postlist kqide"><div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983524">
+<a name="pid11983524"></a>
+<style>.comiis_flxx_stamp {display:none;}</style>
+    <div class="comiis_postli_top comiis_postli_topv1 bg_f">
+      		<div class="comiis_top_nums2">
+                                                              </div>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=5666&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/data/avatar/000/00/56/66_avatar_middle.jpg?v=TxjgBQUU-3CC" class="top_tximg"></a>
+<h2>	
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=5666&do=profile" class="top_user f_b">kjkuang</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=14" class="top_lev bg_a f_f">Lv.5 大学生</a><span class="comiis_verify">
+</span></h2>			
+<div class="comiis_postli_time">
+<span class="f_d">
+                <span class="kmtime">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 四川</font></code></span>
+                                                                        </span>
+</div>    </div>
+<div class="comiis_message bg_f view_one b_b cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+<div class="comiis_a comiis_message_table cl"><script type="text/javascript">replyreload += ',' + 11983524;</script><i class="pstatus"> 本帖最后由 kjkuang 于 2026-10-18 12:45 编辑 </i><br />
+<br />
+众所周知&nbsp;&nbsp;multitts&nbsp;&nbsp;已经一年多没更新了&nbsp;&nbsp;作者也已经失联了&nbsp;&nbsp;微软最近也出了hd的离线语音包&nbsp;&nbsp;但是apk的so里面还没跟进 体现不出hd语音的效果&nbsp;&nbsp;今天发现 有位老哥居然逆向出来了新包 并修复了bug <br />
+
+
+<span onclick="window.location.href='forum.php?mod=viewthread&tid=174960&aid=379836&from=album&page=1'" class="comiis_postimg vm"><img id="aimg_379836" src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://oos.binmt.cc/forum/202610/18/121503wi9h99d30mx66old.jpg" alt="Screenshot_2026-10-18-12-12-42-536_org.nobody.multitts.jpg" title="Screenshot_2026-10-18-12-12-42-536_org.nobody.multitts.jpg" class="comiis_loadimages" /></span>			
+				
+
+<br />
+<br />
+<div class="comiis_quote bg_h f_c">Cynnie，如果您要查看本帖隐藏内容请<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960" onclick="showWindow('reply', this.href)">回复</a></div></div>
+</div>
+                			                <div class="comiis_rate cl">
+                                        <h2 class="rate_btn"><a href="https://bbs.binmt.cc/forum.php?mod=misc&action=rate&tid=174960&pid=11983524" class="bg_a f_f cl dialog">赞赏</a></h2>
+                                    </div>
+                            
+                    <div class="comiis_tags pb10 b_b cl">	
+		
+</div>        			<div class="comiis_dzhan_img comiis_dzhan_mt5 cl">
+                    <ul class="comiis_recommend_list_a comiis_recommend_list_on">
+<li style="float:right;margin-right:0;"><a href="misc.php?op=recommend&amp;tid=174960&amp;mod=faq&amp;mobile=2"><span class="bg_b f_c"><i class="comiis_font">&#xe63b</i> <em class="comiis_recommend_num">2</em>赞</span></a></li><li id="comiis_recommend_list_a109929"><a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=109929&amp;do=profile" class="bg_e"><img src="https://cdn.binmt.cc/uc_server/data/avatar/000/10/99/29_avatar_middle.jpg?v=BgeK56CGO2oD"></a></li>
+<li id="comiis_recommend_list_a129252"><a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=129252&amp;do=profile" class="bg_e"><img src="https://cdn.binmt.cc/uc_server/images/noavatar_middle.gif"></a></li>
+</ul>
+</div>
+        
+        </div>
+<a name="comiis_allreplies" id="comiis_allreplies"></a>
+<div class="comiis_pltit bg_f b_t cl">		
+<span class="comiis_ordertype y">
+                              <a href="https://bbs.binmt.cc/forum.php?mod=viewthread&amp;tid=174960&amp;page=1&amp;authorid=5666#comiis_allreplies"><i class="comiis_font f_e vm">&#xe67b;</i><span class="f_c">楼主</span></a>
+              	
+                                              <a href="https://bbs.binmt.cc/forum.php?mod=viewthread&amp;tid=174960&amp;extra=page%3D1&amp;ordertype=1&amp;mobile=2#comiis_allreplies"><i class="comiis_font f_d kmgo vm">&#xe63d;</i><span class="f_c">倒序</span></a>
+              </span>
+<h2>全部评论<span class="f_d">40</span></h2>
+</div>
+	
+<div id="moption_11983524" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983524&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983524&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983548">
+<a name="pid11983548"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=129252&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/images/noavatar_middle.gif" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+沙发<span href="#moption_11983548" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=129252&do=profile" class="top_user f_b">抽刀断水水更流</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=15" class="top_lev bg_a f_f">Lv.6 硕士生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    瞅瞅				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983548&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 广西</font></code></span>
+        </div>
+	
+<div id="moption_11983548" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983548" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983548&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983548&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983548" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983548&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983643">
+<a name="pid11983643"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=45817&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/data/avatar/000/04/58/17_avatar_middle.jpg?v=6HcLKqIiUR61" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+椅子<span href="#moption_11983643" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=45817&do=profile" class="top_user f_b">lcy0429</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=14" class="top_lev bg_a f_f">Lv.5 大学生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    大神还是多啊				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983643&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 吉林</font></code></span>
+        </div>
+	
+<div id="moption_11983643" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983643" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983643&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983643&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983643" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983643&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983650">
+<a name="pid11983650"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=143951&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/data/avatar/000/14/39/51_avatar_middle.jpg?v=vI_f_eV6j2FP" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+板凳<span href="#moption_11983650" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=143951&do=profile" class="top_user f_b">ZEROXZX</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=15" class="top_lev bg_a f_f">Lv.6 硕士生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    感谢分享				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983650&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 山东</font></code></span>
+        </div>
+	
+<div id="moption_11983650" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983650" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983650&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983650&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983650" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983650&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983657">
+<a name="pid11983657"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=135782&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/images/noavatar_middle.gif" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+地毯<span href="#moption_11983657" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=135782&do=profile" class="top_user f_b">chzhb050</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=13" class="top_lev bg_a f_f">Lv.4 高中生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    看看隐藏				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983657&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 福建</font></code></span>
+        </div>
+	
+<div id="moption_11983657" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983657" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983657&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983657&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983657" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983657&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983658">
+<a name="pid11983658"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=105934&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/data/avatar/000/10/59/34_avatar_middle.jpg?v=cXdyp5jMBrwx" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+凉席<span href="#moption_11983658" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=105934&do=profile" class="top_user f_b">darou0</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=21" class="top_lev bg_a f_f">Lv.7 博士生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    非常厉害<img src="https://cdn.binmt.cc/static/image/smiley/comiis_tb/tb_10.png" smilieid="250" border="0" alt="" />				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983658&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 江苏</font></code></span>
+        </div>
+	
+<div id="moption_11983658" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983658" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983658&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983658&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983658" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983658&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983674">
+<a name="pid11983674"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=47906&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/images/noavatar_middle.gif" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+报纸<span href="#moption_11983674" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=47906&do=profile" class="top_user f_b">wam777</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=13" class="top_lev bg_a f_f">Lv.4 高中生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    支持一下				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983674&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 河南</font></code></span>
+        </div>
+	
+<div id="moption_11983674" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983674" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983674&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983674&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983674" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983674&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983686">
+<a name="pid11983686"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=118317&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/data/avatar/000/11/83/17_avatar_middle.jpg?v=K3j1rKgYHSa-" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+地板<span href="#moption_11983686" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=118317&do=profile" class="top_user f_b">太阳686</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=15" class="top_lev bg_a f_f">Lv.6 硕士生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    看看				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983686&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 重庆</font></code></span>
+        </div>
+	
+<div id="moption_11983686" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983686" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983686&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983686&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983686" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983686&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983692">
+<a name="pid11983692"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=160082&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/images/noavatar_middle.gif" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+地下室<span href="#moption_11983692" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=160082&do=profile" class="top_user f_b">linken001</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=12" class="top_lev bg_a f_f">Lv.3 初中生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    谢谢分享				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983692&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 上海</font></code></span>
+        </div>
+	
+<div id="moption_11983692" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983692" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983692&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983692&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983692" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983692&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    <div class="comiis_postli comiis_list_readimgs nfqsqi" id="pid11983703">
+<a name="pid11983703"></a>
+	<div class="comiis_postli_top bg_f b_t">
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=153694&do=profile" class="postli_top_tximg bg_e"><img src="https://cdn.binmt.cc/uc_server/images/noavatar_middle.gif" class="top_tximg"></a>
+<h2>
+<span class="f_d y">
+下水道<span href="#moption_11983703" class="popup top_guanli"><i class="comiis_font">&#xe620</i></span>
+</span>
+<a href="https://bbs.binmt.cc/home.php?mod=space&uid=153694&do=profile" class="top_user f_b">小黑点</a>
+<a href="https://bbs.binmt.cc/home.php?mod=spacecp&ac=usergroup&gid=13" class="top_lev bg_a f_f">Lv.4 高中生</a><span class="comiis_verify">
+</span></h2> 
+</div><div class="comiis_message bg_f view_all cl message">
+<div class="comiis_messages comiis_aimg_show cl">
+                				                      
+    
+                     
+                                
+                <div class="comiis_a comiis_message_table cl">
+                    看看隐藏				
+</div>
+</div>
+                
+                            </div>
+<div class="comiis_postli_times bg_f">
+<span class="bottom_zhan y">
+                                            <a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983703&page=1" class="f_c dialog"><i class="comiis_font">&#xe679;</i></a>
+</span>			
+<span class="f_d comiis_tm">6&nbsp;小时前<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 广东</font></code></span>
+        </div>
+	
+<div id="moption_11983703" popup="true" class="comiis_manage comiis_bodybg comiis_popup" style="display:none;" comiis_popup="comiis">	
+<ul>
+                                    		
+                                                <li><a href="https://bbs.binmt.cc/forum.php?mod=misc&amp;action=rate&amp;tid=174960&amp;pid=11983703" class="dialog bg_f b_b">打赏</a></li>
+                                                                                                                                                                            <li><a href="https://bbs.binmt.cc/forum.php?mod=post&action=reply&fid=44&tid=174960&repquote=11983703&page=1" class="bg_f b_b dialog">回复</a></li>
+                                    <li><a href="misc.php?mod=report&amp;rtype=post&amp;rid=11983703&amp;tid=174960&amp;fid=44&amp;mobile=2" class="dialog bg_f b_b">举报</a></li>
+<li><a href="javascript:;" class="comiis_glclose mt10 bg_f b_t f_g">取消</a></li>
+</ul>
+</div>
+<div id="replybtn_11983703" display="true" style="display:none;">
+<input type="button" href="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;repquote=11983703&amp;extra=page%3D1&amp;page=1&amp;mobile=2" value="回复">
+</div>
+    	
+</div>    </div>
+<div id="post_new" class="comiis_postli"></div>
+<div class="comiis_multi_box bg_f b_t b_b mb10">
+<div class="pg"><strong>1</strong><a href="https://bbs.binmt.cc/thread-174960-2-1.html">2</a><a href="https://bbs.binmt.cc/thread-174960-3-1.html">3</a><a href="https://bbs.binmt.cc/thread-174960-4-1.html">4</a><a href="https://bbs.binmt.cc/thread-174960-5-1.html" class="last">.. 5</a><label><input type="text" name="custompage" class="px" size="2" title="输入页码，按回车快速跳转" value="1" onkeydown="if(event.keyCode==13) {window.location='forum.php?mod=viewthread&tid=174960&amp;extra=page%3D1&amp;page='+this.value;; doane(event);}" /><span title="共 5 页"> / 5 页</span></label><a href="https://bbs.binmt.cc/thread-174960-2-1.html" class="nxt">下一页</a></div></div>
+<script>$(".comiis_view_header3 .comiis_view_header1").append('<code class="comiis_iplocality f_d">&nbsp;<font style="font-family: auto;">来自 四川</font></code>');</script><div id="comiis_followmod" style="display:none;">
+<div class="comiis_tip bg_f cl">
+<dt class="f_b">
+<p>确定要取消关注吗?</p>
+</dt>	
+<dd class="b_t cl">		
+                    <a href="javascript:popup.close();" class="tip_btn bg_f f_b">取消</a>
+            <a href="javascript:comiis_followmod();" class="tip_btn bg_f f_0"><span class="tip_lx">确定</span></a>
+        </dd>
+</div>
+</div>
+</div>
+<div class="comiis_fastpostbox comiis_showleftbox bg_e"><script>var action = '';</script>
+<script src="https://cdn.binmt.cc/data/cache/common_smilies_var.js?R19" type="text/javascript" charset="utf-8"></script>
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/comiis_swiper.min.js?R19" type="text/javascript"></script>
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/comiis_post.js?R19" type="text/javascript" charset="utf-8"></script>
+<div class="comiis_postbox nfqsqi">
+<div class="bg_e b_t cl">
+<form method="post" autocomplete="off" id="fastpostform" action="forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960&amp;extra=page%3D1&amp;replysubmit=yes&amp;mobile=2">
+<input type="hidden" name="formhash" value="479fb68e" />
+<input type="hidden" name="noticeauthor" value="2b22S0sp43uKpVwCfirgLXHCvkxIBalKOdMiJQaE5UGQCHU">    <div class="comiis_head bg_e b_b">
+        <div class="header_z"><a onclick="comiis_openrebox(0);"><i class="comiis_font f_d">&#xe639</i></a></div>
+        <h2>回复</h2>
+        <div class="header_y"><a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=reply&amp;fid=44&amp;tid=174960"><i class="comiis_font f_d">&#xe658</i></a></div>
+    </div>
+    <div class="comiis_styli bg_f b_b cl">
+        <textarea name="message" id="needmessage" placeholder="说点什么吧......" class="comiis_pt bg_f comiis_mini_pt"></textarea>
+    </div>	
+<div class="comiis_post_ico comiis_minipost_icot f_c cl">
+<a href="javascript:;"><i class="comiis_font">&#xe62e<em>表情</em></i></a>
+<a href="javascript:;" class="comiis_pictitle"><i class="comiis_font">&#xe627<em>图片</em></i><span>0</span></a>
+<span id="fastpostsubmitline" class="y">
+<input type="button" value="回复" class="bg_0 f_f" name="replysubmit" id="fastpostsubmit" comiis='handle'>
+</span>
+</div>
+<div id="comiis_post_tab">
+<div class="comiis_bqbox bg_f b_b cl" style="display:none;">
+<div class="bqbox_t b_t cl">
+<ul id="comiis_smilies_key"></ul>
+</div>
+<div class="comiis_smiley_box b_t">
+<div class="swiper-wrapper bqbox_c comiis_optimization"></div>
+<div class="bqbox_b cl"></div>
+</div>
+</div>
+<div class="comiis_upbox bg_f b_t b_b cl" style="display:none;">
+<ul id="imglist" class="comiis_post_imglist cl">
+<li class="up_btn"><a href="javascript:;" class="bg_e b_ok f_d"><i class="comiis_font">&#xe610</i><input type="file" name="Filedata" id="filedata" accept="image/*" /></a></li>				
+</ul>
+</div>
+</div>
+<script src="https://cdn.binmt.cc/static/js/mobile/ajaxfileupload.js?R19" type="text/javascript"></script>
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/buildfileupload.js?R19" type="text/javascript"></script>
+<script type="text/javascript">
+var imgexts = typeof imgexts == 'undefined' ? 'jpg, jpeg, gif, png' : imgexts;
+var STATUSMSG = {'-1' : '内部服务器错误', '0' : '上传成功', '1' : '不支持此类扩展名', '2' : '服务器限制无法上传那么大的附件', '3' : '用户组限制无法上传那么大的附件', '4' : '不支持此类扩展名', '5' : '文件类型限制无法上传那么大的附件', '6' : '今日您已无法上传更多的附件', '7' : '请选择图片文件(' + imgexts + ')', '8' : '附件文件无法保存', '9' : '没有合法的文件被上传', '10' : '非法操作', '11' : '今日您已无法上传那么大的附件'};
+$(document).on('change', '#filedata', function(){
+var comiis_file = new Array(); 
+var comiis_fileon = 0;
+var comiis_filelength = this.files.length;
+if(comiis_filelength == 0){
+return;
+}
+popup.open('<img src="' + IMGDIR + '/imageloading.gif" class="comiis_loading comiis_noloadimage">');	
+uploadsuccess = function(data) {
+comiis_fileon++;
+var err = comiis_upload_success(data);
+if(err == false){
+return false;
+}
+if(comiis_fileon == comiis_filelength){
+popup.close();
+popup.open('上传完成!', 'alert');
+}		
+};
+uploaderror = function() {
+comiis_fileon++;
+popup.open('上传失败，请稍后再试', 'alert');
+};
+if(!(this.files[0].type == 'image/gif' && comiis_filelength == 1) && typeof FileReader != 'undefined' && this.files[0]) {
+for (var i = 0; i < this.files.length; i++){
+comiis_file[0] = this.files[i];
+$.buildfileupload({
+uploadurl:'misc.php?mod=swfupload&operation=upload&type=image&inajax=yes&infloat=yes&simple=2',
+files:comiis_file,
+uploadformdata:{uid:"154205", hash:"78a0256929eaf954325a7e0446e65e7f"},
+uploadinputname:'Filedata',
+maxfilesize:"1024",
+success:uploadsuccess,
+error:uploaderror
+});
+}
+} else {
+$.ajaxfileupload({
+url:'misc.php?mod=swfupload&operation=upload&type=image&inajax=yes&infloat=yes&simple=2',
+data:{uid:"154205", hash:"78a0256929eaf954325a7e0446e65e7f"},
+dataType:'text',
+fileElementId:'filedata',
+success:uploadsuccess,
+error:uploaderror
+});
+}
+});
+</script><script type="text/javascript">
+function comiis_upload_success(data){
+if(data == '') {
+popup.open('上传失败，请稍后再试', 'alert');
+}
+var dataarr = data.split('|');
+if(dataarr[0] == 'DISCUZUPLOAD' && dataarr[2] == 0) {
+popup.close();
+$('#imglist').append('<li><span aid="'+dataarr[3]+'" class="del"><a href="javascript:;"><i class="comiis_font f_g">&#xe648</i></a></span><span class="charu f_f">插入</span><span class="p_img"><a href="javascript:;" onclick="comiis_addsmilies(\'[attachimg]'+dataarr[3]+'[/attachimg]\')"><img style="height:54px;width:54px;" id="aimg_'+dataarr[3]+'" title="'+dataarr[6]+'" src="https://cdn.binmt.cc/data/attachment/forum/'+dataarr[5]+'" class="vm b_ok comiis_noloadimage" /></a></span><input type="hidden" name="attachnew['+dataarr[3]+'][description]" /></li>');
+comiis_picnum();
+} else {
+var sizelimit = '';
+if(dataarr[7] == 'ban') {
+sizelimit = '(附件类型被禁止)';
+} else if(dataarr[7] == 'perday') {
+sizelimit = '(不能超过'+Math.ceil(dataarr[8]/1024)+'K)';
+} else if(dataarr[7] > 0) {
+sizelimit = '(不能超过'+Math.ceil(dataarr[7]/1024)+'K)';
+}
+popup.open(STATUSMSG[dataarr[2]] + sizelimit, 'alert');
+return false;
+}
+}
+	
+var form = $('#postform');
+$('.comiis_postbtn').on('click', function() {
+var obj = $(this);
+if(obj.attr('disable') == 'true') {
+return false;
+}
+$('.comiis_postbtn').attr('disable', 'true').removeClass('bg_c f_f').addClass('bg_0 f_f');
+$('.comiis_btn_pn').removeClass('bg_f f_0').addClass('bg_0 f_f');
+popup.open('<img src="' + IMGDIR + '/imageloading.gif" class="comiis_loading">');
+var postlocation = '';
+if(geo.errmsg === '' && geo.loc) {
+postlocation = geo.longitude + '|' + geo.latitude + '|' + geo.loc;
+}
+$.ajax({
+type:'POST',
+url:form.attr('action') + '&geoloc=' + postlocation + '&handlekey='+form.attr('id')+'&inajax=1',
+data:form.serialize(),
+dataType:'xml'
+})
+.success(function(s) {
+popup.open(s.lastChild.firstChild.nodeValue);
+})
+.error(function() {
+popup.open('网络出现问题，请稍后再试', 'alert');
+});
+return false;
+});
+$(document).on('click', '.del', function() {
+var obj = $(this);
+$.ajax({
+type:'GET',
+url:'forum.php?mod=ajax&action=deleteattach&inajax=yes&formhash=479fb68e&aids[]=' + obj.attr('aid') + (obj.attr('up') == 1 ? '&tid=&pid=' : ''),
+})
+.success(function(s) {
+obj.parent().remove();
+comiis_picnum();
+})
+.error(function() {
+popup.open('网络出现问题，请稍后再试', 'alert');
+});
+return false;
+});
+</script></form>
+</div>
+</div><script type="text/javascript">
+(function() {
+var form = $('#fastpostform');
+$('#needmessage').on('focus', function() {
+var obj = $(this);
+if(obj.attr('color') == 'gray') {
+obj.removeClass('grey');
+obj.attr('color', 'black');
+$('#fastpostsubmitline').css('display', 'block');
+}
+})
+.on('blur', function() {
+var obj = $(this);
+if(obj.attr('value') == '') {
+obj.addClass('grey');
+obj.attr('color', 'gray');
+}
+});
+$('#fastpostsubmit').on('click', function() {
+if(typeof comiis_prevent_post === "function") {
+comiis_prevent_post('#fastpostsubmit', 1);
+}
+popup.open('<img src="' + IMGDIR + '/imageloading.gif" class="comiis_loading">');
+var msgobj = $('#needmessage');
+$.ajax({
+type:'POST',
+url:form.attr('action') + '&handlekey=fastpost&loc=1&inajax=1',
+data:form.serialize(),
+dataType:'xml'
+})
+.success(function(s) {
+evalscript(s.lastChild.firstChild.nodeValue);
+})
+.error(function() {
+window.location.href = form.attr('action');
+popup.close();
+});
+return false;
+});
+$('#replyid').on('click', function() {
+$(document).scrollTop($(document).height());
+$('#needmessage')[0].focus();
+});
+})();
+function succeedhandle_fastpost(locationhref, message, param) {
+var pid = param['pid'];
+var tid = param['tid'];
+if(pid) {
+$.ajax({
+type:'POST',
+url:'forum.php?mod=viewthread&tid=' + tid + '&viewpid=' + pid + '&mobile=2',
+dataType:'xml'
+})
+.success(function(s) {
+$('.comiis_notip').css('display', 'none');
+$('#post_new').append(s.lastChild.firstChild.nodeValue);
+popup.open('回复成功', 'alert');
+$('.sec_code_img').click();
+comiis_openrebox(0);
+popup.init();
+if(typeof comiis_prevent_post === "function") {
+comiis_prevent_post('#fastpostsubmit', 0);
+}
+if(replyreload) {
+var reloadpids = replyreload.split(',');
+for(var i = 1;i < reloadpids.length;i++) {
+$.ajax({
+type:'POST',
+url:'forum.php?mod=viewthread&tid=' + tid + '&viewpid=' + reloadpids[i] + '&mobile=2',
+dataType:'xml'
+})
+.success(function(s) {
+if(s.lastChild.firstChild.nodeValue.indexOf('id="pid') > 0){
+var repidss = s.lastChild.firstChild.nodeValue.match(/id="pid(\S*)">/)[1];
+$('#pid' + repidss)[0].innerHTML = s.lastChild.firstChild.nodeValue;
+}
+});	
+}
+}
+})
+.error(function() {
+window.location.href = 'forum.php?mod=viewthread&tid=' + tid;
+popup.close();
+});
+} else {
+if(!message) {
+message = '本版回帖需要审核，您的帖子将在通过审核后显示';
+}
+comiis_openrebox(0);
+if(typeof comiis_prevent_post === "function") {
+comiis_prevent_post('#fastpostsubmit', 0);
+}	
+popup.open(message, 'alert');
+if(typeof comiis_prevent_post === "function") {
+comiis_prevent_post('#fastpostsubmit_btn', 0);
+}
+}
+$('#needmessage').attr('value', '');
+$("#imglist li[class!='up_btn']").remove();
+comiis_picnum();
+if(param['sechash']) {
+$('.sec_code_img').click();
+}
+}
+function errorhandle_fastpost(message, param) {
+popup.open(message, 'alert');
+if(typeof comiis_prevent_post === "function") {
+comiis_prevent_post('#fastpostsubmit', 0);
+}
+}
+</script></div>
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/comiis_swiper.min.js?R19" type="text/javascript"></script>
+<div id="comiis_foot_more" class="comiis_share_box comiis_bodybg" style="display: block;">
+<div id="comiis_foot_fxbtn" class="bdsharebuttonbox"><ul id="comiis_share" class="comiis_shareul swiper-wrapper"></ul></div>
+    <div id="comiis_foot_gobtn" class="b_t cl">
+        <ul class="comiis_shareul swiper-wrapper">
+        <li class="swiper-slide kmfanhui"><a href="https://bbs.binmt.cc/forum-44-1.html"><span class="kmico bg_f f_c"><i class="comiis_font">&#xe657</i></span><em class="f_b">返回本版</em></a></li>
+                                                              							
+                                        
+            <li class="swiper-slide kmfatie"><a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=44"><span class="kmico bg_f f_c"><i class="comiis_font">&#xe655;</i></span><em class="f_b">本版发帖</em></a></li>                        
+            <li class="swiper-slide kmfuzhi"><a href="javascript:;" onclick="comiis_mob_copyurl_key()" id="comiis_mob_copy_btn" data-clipboard-text="https://bbs.binmt.cc/forum.php?mod=viewthread&tid=174960"><span class="kmico bg_f f_c"><i class="comiis_font">&#xe717;</i></span><em class="f_b">复制链接</em></a></li>                
+            <li class="swiper-slide kmjubao"><a href="misc.php?mod=report&url=aHR0cHM6Ly9iYnMuYmlubXQuY2MvdGhyZWFkLTE3NDk2MC0xLTEuaHRtbA==&amp;mobile=2" class="dialog"><span class="kmico bg_f f_c"><i class="comiis_font">&#xe636;</i></span><em class="f_b">举报</em></a></li>	
+                                                                                                                                                                                    		
+        </ul>
+    </div>
+<script>
+var comiis_fxbtn = new Swiper('#comiis_foot_fxbtn', {
+freeMode : true,
+slidesPerView : 'auto',
+onTouchMove: function(swiper){
+Comiis_Touch_on = 0;
+},
+onTouchEnd: function(swiper){
+Comiis_Touch_on = 1;
+},
+});
+new Swiper('#comiis_foot_gobtn', {
+freeMode : true,
+slidesPerView : 'auto',
+onTouchMove: function(swiper){
+Comiis_Touch_on = 0;
+},
+onTouchEnd: function(swiper){
+Comiis_Touch_on = 1;
+},
+});
+</script>
+<h2 class="bg_f f_g b_t comiis_share_box_close"><a href="javascript:;">取消</a></h2>
+</div>
+<div class="comiis_share_tip"></div>
+<script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/comiis_nativeShare.js" type="text/javascript"></script> <script src="https://cdn.binmt.cc/template/comiis_app/comiis/js/clipboard.min.js" type="text/javascript"></script>
+<script>
+    var share_obj = new nativeShare('comiis_share', {
+        img:'https://bbs.binmt.cc/https://oos.binmt.cc/forum/202610/18/121503wi9h99d30mx66old.jpg',
+        url:'https://bbs.binmt.cc/forum.php?mod=viewthread&tid=174960',
+        title:$('#comiis_wx_title_box').html(),
+        desc:'本帖最后由 kjkuang 于 2026-10-18 12:45 编辑 众所周知&nbsp;&nbsp;multitts&nbsp;&nbsp;已经一年多没更 ...',
+        from:'MT论坛'
+    });
+    function comiis_mob_copyurl(){
+        var btn = document.getElementById('comiis_mob_copy_btn');
+        var clipboard = new ClipboardJS(btn);
+        clipboard.on('success', function(e) {
+            popup.open('<span class="comiis_copytip cl"><i class="comiis_font f_0">&#xe67d</i><br>连接已复制<br><em class="f_d">快去粘帖给您的好友吧</em></span>', 'alerts');
+        });
+        clipboard.on('error', function(e) {
+            popup.open('复制失败', 'alerts');
+        });
+    }
+    function comiis_mob_copyurl_key(){
+        if(typeof(ClipboardJS) == 'undefined') {
+            $.getScript("https://cdn.binmt.cc/template/comiis_app/comiis/js/clipboard.min.js").done(function(){
+                comiis_mob_copyurl();
+            });
+        }else{
+            comiis_mob_copyurl();
+        }
+    }
+    comiis_mob_copyurl_key();
+    function comiis_postre() {
+        comiis_prevent_post('#fastpostsubmit_btn', 1);
+        $.ajax({
+            type:'POST',
+            url:$('#postforms').attr('action') + '&handlekey=fastposts&loc=1&inajax=1',
+            data:$('#postforms').serialize(),
+            dataType:'xml'
+        })
+        .success(function(s) {
+            evalscript(s.lastChild.firstChild.nodeValue);
+        })
+        .error(function() {
+            window.location.href = obj.attr('action');
+            popup.close();
+        });
+        return false;
+    }
+    function succeedhandle_fastposts(locationhref, message, param) {
+        var pid = param['pid'];
+        var tid = param['tid'];
+        if(pid) {
+            $.ajax({
+                type:'POST',
+                url:'forum.php?mod=viewthread&tid=' + tid + '&viewpid=' + pid + '&mobile=2',
+                dataType:'xml'
+            })
+            .success(function(s) {
+                $('.comiis_notip').css('display', 'none');
+                $('#post_new').append(s.lastChild.firstChild.nodeValue);
+                popup.open('回复成功', 'alert');
+                popup.init();
+                comiis_prevent_post('#fastpostsubmit_btn', 0);
+                if(replyreload) {
+                    var reloadpids = replyreload.split(',');
+                    $.ajax({
+                        type:'POST',
+                        url:'forum.php?mod=viewthread&tid=' + tid + '&viewpid=' + reloadpids[i] + '&mobile=2',
+                        dataType:'xml'
+                    })
+                    .success(function(s) {
+                        if(s.lastChild.firstChild.nodeValue.indexOf('id="pid') > 0){
+                            var repidss = s.lastChild.firstChild.nodeValue.match(/id="pid(\S*)">/)[1];
+                            $('#pid' + repidss)[0].innerHTML = s.lastChild.firstChild.nodeValue;
+                        }
+                    });	
+                }
+            })
+            .error(function() {
+                window.location.href = 'forum.php?mod=viewthread&tid=' + tid;
+                popup.close();
+            });
+        } else {
+            if(!message) {
+                message = '本版回帖需要审核，您的帖子将在通过审核后显示';
+            }
+            popup.open(message, 'alert');
+            comiis_prevent_post('#fastpostsubmit_btn', 0);
+        }
+    }
+    function errorhandle_fastposts(message, param) {
+        popup.open(message, 'alert');
+        $('#fastpostsubmit_btn').attr("disabled", false);
+    }
+</script>
+    		  	  		  	  		     	  	 			    		   		     		       	   	 		    		   		     		       	   	 		    		   		     		       	   				    		   		     		       	   		      		   		     		       	   	 	    		   		     		       	 	        		   		     		       	 	        		   		     		       	  			 	    		   		     		       	  			 	    		   		     		       	   		      		   		     		       	 	   	    		   		     		       	  			 	    		   		     		       	  	 		     		   		     		       	  	   	    		   		     		       	  	  	     		   		     		       	   	 		    		   		     		       	 	   	    		   		     		       	  			      		   		     		       	  			      		   		     		       	 	        		 	      	  		  	  		     <div id="mask" style="display:none;"></div>
+<div id="comiis_menu_bg" style="display:none;"></div>
+<div id="comiis_alert" style="display:none;"></div></div>
+                    <div class="comiis_foot_height"></div>
+    <div id="comiis_foot_memu" class="comiis_view_foot bg_f b_t"> 
+<ul class="comiis_flex">
+            <li class="hf_box flex"><a href="javascript:;" class="bg_e f_c comiis_openrebox"><i class="comiis_font">&#xe655</i><em>说点什么吧...</em></a></li>
+<li><a href="javascript:;" class="comiis_position_key"><i class="comiis_font f_b">&#xe680</i><span class="bg_del f_f comiis_kmvnum">40</span></a></li>
+<li><a href="https://bbs.binmt.cc/forum.php?mod=misc&action=recommend&handlekey=recommend_add&do=add&tid=174960&hash=479fb68e" class="comiis_recommend_addkey comiis_recommend_new"><i class="comiis_font comiis_recommend_color f_b">&#xe63b</i><span class="bg_del f_f comiis_kmvnum comiis_recommend_num" id="comiis_recommend_num">2</span></a></li>
+<li><a href="https://bbs.binmt.cc/home.php?m
+od=spacecp&ac=favorite&type=thread&id=174960&handlekey=favorite_thread" class="dialog" comiis="handle" id="comiis_favorite_a"><i class="comiis_favorite_a_color comiis_font f_b">&#xe617</i><span class="bg_del f_f comiis_kmvnum comiis_favorite_a_num">4</span></a></li>	
+<li><a href="javascript:;" class="comiis_share_key"><i class="comiis_font f_b">&#xe61f</i></a></li>
+</ul>
+</div>
+<script>
+function comiis_openrebox(a){
+if(a == 1){
+$('.comiis_fastpostbox').css('display', 'block');
+setTimeout(function() {
+$('.comiis_fastpostbox').addClass("comiis_showrebox");
+}, 20);
+var smilies_show_id = 0;
+if(smilies_show_id == 0){
+var smilies_type_box = '';
+if(typeof smilies_type == 'object') {
+for(i in smilies_type) {
+key = i.substring(1);
+smilies_type_box += '<li><a href="javascript:;" onclick="comiis_smilies_tab(\''+ key+ '\')" id="comiis_smilies_tab'+ key+ '"' + (smilies_show_id == 0 ? ' class="bg_f"' : '') + '><img src="' + STATICURL + 'image/smiley/' + smilies_type['_' + key][1] + '/' + smilies_array[key][1][0][2] + '" class="vm"></a></li>';
+if(smilies_show_id == 0){
+smilies_show_id = key;
+}
+}
+$('#comiis_smilies_key').html(smilies_type_box);
+comiis_smilies_tab(smilies_show_id)
+}
+}		
+}else{
+$('#comiis_bgbox').off().css({'display':'none'});
+$('.comiis_fastpostbox').removeClass("comiis_showrebox").on('webkitTransitionEnd transitionend', function() {
+$(this).off().css('display', 'none');
+$('#comiis_foot_memu .hf_box em').text($('#needmessage').val().length > 0 ? $('#needmessage').val() : '说点什么吧...');
+$('#comiis_foot_memu').css('display', 'block');
+});
+}
+}
+</script>    <div class="comiis_fmenu" id="comiis_fpostmore" style="display:none;z-index:200;">
+<div class="comiis_fmenubox bg_f">
+<div class="comiis_gosx_title bg_e b_b cl"><span class="y"><i class="comiis_font f_d" onclick="comiis_fmenu('#comiis_fpostmore');">&#xe639</i></span>选择发帖版块</div>
+<div class="comiis_over_box comiis_wzpost">
+<div class="comiis_bbslists bg_f cl" style="height:100%;">
+        <div class="comiis_bbslists_gid bg_e cl" style="height:100%;">
+            <ul>                                                <li class="comiis_fxpostlistkey bg_f b_b comiis_fxpostlist_1" fid="1"><span class="bg_0"></span><a href="javascript:;">MT专区</a></li>
+                                                <li class="comiis_fxpostlistkey b_b comiis_fxpostlist_36" fid="36"><span class="bg_0"></span><a href="javascript:;">交流与讨论</a></li>
+                                                                                                <li class="comiis_fxpostlistkey b_b comiis_fxpostlist_45" fid="45"><span class="bg_0"></span><a href="javascript:;">论坛事务</a></li>
+                                                                                                </ul>
+        </div>
+        <div class="comiis_bbslists_fid cl" style="height:100%;">                                        <ul class="comiis_fxpostlistbox_1"><li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=2" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/c8/common_2_icon.png" class=" comiis_loadimages" alt="版本发布">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=2" class="post_tit"><em>版本发布</em></a>
+</li>
+<li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=37" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/a5/common_37_icon.png" class=" comiis_loadimages" alt="插件交流">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=37" class="post_tit"><em>插件交流</em></a>
+</li>
+<li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=38" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/a5/common_38_icon.png" class=" comiis_loadimages" alt="建议反馈">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=38" class="post_tit"><em>建议反馈</em></a>
+</li>
+</ul>
+                                <ul class="comiis_fxpostlistbox_36" style="display:none"><li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=41" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/34/common_41_icon.png" class=" comiis_loadimages" alt="逆向交流">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=41" class="post_tit"><em>逆向交流</em></a>
+</li>
+<li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=39" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/d6/common_39_icon.png" class=" comiis_loadimages" alt="玩机交流">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=39" class="post_tit"><em>玩机交流</em></a>
+</li>
+<li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=42" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/a1/common_42_icon.png" class=" comiis_loadimages" alt="编程开发">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=42" class="post_tit"><em>编程开发</em></a>
+</li>
+<li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=40" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/d6/common_40_icon.png" class=" comiis_loadimages" alt="求助问答">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=40" class="post_tit"><em>求助问答</em></a>
+</li>
+<li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=44" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/f7/common_44_icon.png" class=" comiis_loadimages" alt="综合交流">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=44" class="post_tit"><em>综合交流</em></a>
+</li>
+<li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=50" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/c0/common_50_icon.png" class=" comiis_loadimages" alt="休闲灌水">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=50" class="post_tit"><em>休闲灌水</em></a>
+</li>
+</ul>
+                                                                <ul class="comiis_fxpostlistbox_45" style="display:none"><li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=46" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/d9/common_46_icon.png" class=" comiis_loadimages" alt="官方公告">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=46" class="post_tit"><em>官方公告</em></a>
+</li>
+<li class="b_b">
+                  <i class="comiis_font f_e y">&#xe60c</i>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=53" class="bbslist_ico"><img src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/common/d8/common_53_icon.png" class=" comiis_loadimages" alt="申诉举报">	</a>
+<a href="https://bbs.binmt.cc/forum.php?mod=post&amp;action=newthread&amp;fid=53" class="post_tit"><em>申诉举报</em></a>
+</li>
+</ul>
+                                                                </div>
+      </div>
+      <script>
+        $('.comiis_fxpostlistkey').on('click', function() {
+var key_fid = $(this).attr('fid');
+$('.comiis_fxpostlistkey').removeClass('bg_f');
+$(this).addClass('bg_f');
+$('.comiis_bbslists_fid ul').css('display','none');
+$('.comiis_bbslists_fid ul.comiis_fxpostlistbox_'+key_fid).css('display','block');
+        });
+       </script>
+</div>
+</div>
+</div>
+<div id="comiis_bgbox" style="display:none;"></div>
+</div><div id="comiis_wx_title_box" style="display:none;">MultiTTS 开源版本出来了 修复了bug  以后应该会有微软的hd语音吧</div>
+<div id="comiis_wx_description_box" style="display:none;">本帖最后由 kjkuang 于 2026-10-18 12:45 编辑 众所周知multitts已经一年多没更 ...</div>
+<script>
+$(document).ready(function() {
+$("img.comiis_loadimages").lazyload();
+});
+$(document).on('click', '.comiis_openrebox', function() {
+comiis_openrebox(1);
+return false;
+});
+var comiis_wx_title, comiis_wx_description, comiis_wx_imgUrl, comiis_wx_url;
+$(document).ready(function(){
+comiis_wx_title = $('#comiis_wx_title_box').html();
+comiis_wx_description = $('#comiis_wx_description_box').html();
+var comiis_wx_img_objs;
+var comiis_wx_img_obj = $(".comiis_flxx_style img[comiis_loadimages*='/attachment/'],.comiis_flxx_style img[comiis_loadimages*='forum.php?mod=image'],.comiis_flxx_style img[src*='/attachment/'],.comiis_flxx_style img[src*='forum.php?mod=image'],.comiis_messages img[comiis_loadimages*='/attachment/'],.comiis_messages img[comiis_loadimages*='forum.php?mod=image'],.comiis_messages img[src*='/attachment/'],.comiis_messages img[src*='forum.php?mod=image']");
+for(var i = 0; i < comiis_wx_img_obj.length; i++){
+if(comiis_wx_img_obj[i].width >= 48 && comiis_wx_img_obj[i].height >= 48){
+if(comiis_wx_img_obj[i].src.indexOf("none.png") > 0 && !$(comiis_wx_img_obj[i]).attr('comiis_loadimages')){
+}else{
+comiis_wx_img_objs = comiis_wx_img_obj[i];
+break;
+}
+}
+}
+var comiis_wx_img = $(comiis_wx_img_objs).attr('comiis_loadimages');
+if(typeof(comiis_wx_img)=="undefined"){
+comiis_wx_img = $(comiis_wx_img_objs).attr('src');
+if(typeof(comiis_wx_img)=="undefined"){
+comiis_wx_img = 'https://cdn.binmt.cc/template/comiis_app/pic/icon152.png';
+}
+}
+comiis_wx_imgUrl = ((comiis_wx_img.indexOf("ttp://") > 0 || comiis_wx_img.indexOf("ttps://") > 0) ? '' : "https://bbs.binmt.cc/") + comiis_wx_img;
+comiis_wx_url = window.location.href.replace('&mobile=2', '');
+});
+</script>
+<script>
+				$(".comiis_rate h2.rate_btn").append('<a href="./plugin.php?id=bin_post_report&tid=174960&m=c9e16" id="postreport" class="bg_del f_f cl dialog" style="width:70px;margin-left:20px;">踢帖(0/5)</a>');
+				</script>
+<style>
+.comiis_showCredit,.comiis_showCredit_v1gubja{background:rgba(252,173,48,0.95);color:#FFFFFF;}
+.comiis_showCreditn{background:rgba(85,85,85,0.95);color:#ffffff;}
+.comiis_showCredit{position:fixed;top:0;left:0;bottom:0;right:0;width:140px;height:120px;z-index:9999;text-align:center;margin:auto;box-shadow:0 0 6px rgba(0, 0, 0, 0.2);border-radius:4px;}
+.comiis_showCredit img {margin:15px auto 3px;height:44px;overflow:hidden;}
+.comiis_showCredit span {display:block;line-height:20px;height:20px;overflow:hidden;}
+.comiis_showCredit p {display:block;line-height:20px;font-size:16px;height:20px;overflow:hidden;}
+.comiis_showCredit_v1gubja {position:fixed;top:-200px;left:0;bottom:0;right:0;width:68%;height:24px;line-height:24px;padding:11px 0;z-index:9999;text-align:center;margin:auto;box-shadow:0 0 6px rgba(0, 0, 0, 0.2);border-radius:4px;}
+.comiis_showCredit_v1gubja img {height:24px;padding-right:5px;vertical-align:top;font-size:0;overflow:hidden;}
+.comiis_showCredit_v1gubja span {font-size:14px;}
+.comiis_showCredit{opacity:0;transform:scale(0.5);-webkit-transform:scale(0.5);}
+.comiis_showCredit_ashow{-webkit-animation:comiis_showCredit_ashow 2900ms forwards;animation:comiis_showCredit_ashow 2900ms forwards;}
+@keyframes comiis_showCredit_ashow{0%{opacity:0;transform:scale(0.5);-webkit-transform:scale(0.5);}3.45%{opacity:1;transform:scale(1.05);-webkit-transform:scale(1.05);}6.9%{transform:scale(1);-webkit-transform:scale(1);}93.1%{opacity:1;transform:scale(1);-webkit-transform:scale(1);}100%{transform:scale(1.2);-webkit-transform:scale(1.2);opacity:0;}}
+@-webkit-keyframes comiis_showCredit_ashow{0%{opacity:0;transform:scale(0.5);-webkit-transform:scale(0.5);}3.45%{opacity:1;transform:scale(1.05);-webkit-transform:scale(1.05);}6.9%{transform:scale(1);-webkit-transform:scale(1);}93.1%{opacity:1;transform:scale(1);-webkit-transform:scale(1);}100%{transform:scale(1.2);-webkit-transform:scale(1.2);opacity:0;}}
+</style>
+<script>
+var comiis_tip_ikrlgfp = 0, comiis_Credit_tiprbvluwl = new Array();
+function comiis_showCredit_tiprbvluwl(){
+if(comiis_Credit_tiprbvluwl.length > 0){
+$('body').append(comiis_Credit_tiprbvluwl[comiis_tip_ikrlgfp]);
+$('#comiis_showCredit').addClass('comiis_showCredit_ashow').on('webkitAnimationEnd animationend', function(){
+comiis_tip_ikrlgfp++;
+$(this).remove();
+if(comiis_Credit_tiprbvluwl.length >= (comiis_tip_ikrlgfp + 1)){
+setTimeout(function() {
+comiis_showCredit_tiprbvluwl();
+}, 100);
+}else{
+comiis_Credit_tiprbvluwl = new Array();
+comiis_tip_ikrlgfp = 0;
+}
+});
+}
+}
+function comiis_showCredit_tip_startxaijwg(){
+if(!getcookie('creditnotice')){
+return;
+}
+var comiis_credittip_titlevwoqyrd = '';
+if(getcookie('creditrule')){
+comiis_credittip_titlevwoqyrd = decodeURI(getcookie('creditrule', 1)).replace(String.fromCharCode(9), ' ');
+}
+var comiis_credittip_credit = getcookie('creditnotice').split('D');
+if(comiis_credittip_credit.length < 2 || comiis_credittip_credit[9] != discuz_uid){
+setcookie('creditnotice', '');
+setcookie('creditrule', '');
+return;
+}
+var creditnames = creditnotice.split(',');
+var creditinfo = [];
+var e, ii = 0;
+for(var i = 0; i < creditnames.length; i++) {
+e = creditnames[i].split('|');
+creditinfo[e[0]] = [e[1], e[2]];
+}
+for(i = 1; i <= 8; i++){
+if(comiis_credittip_credit[i] !== '0' && creditinfo[i]) {
+
+comiis_Credit_tiprbvluwl.push('<div class="comiis_showCredit'+(comiis_credittip_credit[i] < 0 ? ' comiis_showCreditn' : '')+'" id="comiis_showCredit"><img src="'+(comiis_credittip_credit[i] > 0 ? './source/plugin/comiis_credittip/image/comiis_z.png' : './source/plugin/comiis_credittip/image/comiis_f.png')+'"><span>'+comiis_credittip_titlevwoqyrd+'</span><p>'+creditinfo[i][0]+' '+(comiis_credittip_credit[i] > 0 ? '+' : '')+comiis_credittip_credit[i] +' '+ creditinfo[i][1]+'</p></div>');
+
+ii++;
+}
+}
+setcookie('creditnotice', '');
+setcookie('creditbase', '');
+setcookie('creditrule', '');
+comiis_showCredit_tiprbvluwl();
+}
+$(document).ready(function(){
+setTimeout(function() {
+comiis_showCredit_tip_startxaijwg();
+}, 500);
+var comiis_appendscript = appendscript;
+appendscript = function(src, text, reload, charset){
+comiis_showCredit_tip_startxaijwg();
+comiis_appendscript(src, text, reload, charset);
+}
+});
+</script>
+<script>$(".comiis_sidenv_box .sidenv_exit,.comiis_gobtn_tbox .sidenv_exit").append('<a href="javascript:;" onClick="comiis_app_setcolor_mode();"><span><i class="comiis_font comiis_app_color_modeicon" style="font-size:18px">&#xe69d;</i></span></a>');</script><script src="https://bbs.binmt.cc/source/plugin/forum_rate_limit/client.js?v=0.1.0-permission1" defer></script></body>
+</html>
