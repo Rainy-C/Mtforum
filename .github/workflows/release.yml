@@ -1,0 +1,109 @@
+name: Release APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Build signed release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install SDK platform and build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'platform-tools'
+
+      - name: Restore release keystore (rain.jks)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RAIN_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "${KEYSTORE_BASE64:-}" || { echo 'Missing secret RAIN_KEYSTORE_BASE64'; exit 1; }
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/rain.jks"
+          test -s "$RUNNER_TEMP/rain.jks"
+          echo "keystore sha256: $(sha256sum "$RUNNER_TEMP/rain.jks" | cut -d' ' -f1)"
+
+      - name: Assemble release
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/rain.jks
+          ANDROID_STORE_PASSWORD: ${{ secrets.RAIN_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.RAIN_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.RAIN_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_STORE_PASSWORD:-}" || { echo 'Missing secret RAIN_KEYSTORE_PASSWORD'; exit 1; }
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleRelease
+
+      - name: Verify signature and prepare assets
+        id: package
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/rain.jks
+          ANDROID_STORE_PASSWORD: ${{ secrets.RAIN_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.RAIN_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.RAIN_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
+          APK_SRC=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK_SRC"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK_SRC"
+          mkdir -p dist
+          APK="dist/MtForum-v${VERSION}-release.apk"
+          cp "$APK_SRC" "$APK"
+          (cd dist && sha256sum "$(basename "$APK")" > SHA256SUMS.txt)
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d' ' -f1 dist/SHA256SUMS.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MtForum-v${{ steps.package.outputs.version }}-release
+          path: |
+            ${{ steps.package.outputs.apk }}
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APK: ${{ steps.package.outputs.apk }}
+          VERSION: ${{ steps.package.outputs.version }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}-build.${{ github.run_number }}"
+          gh release create "$TAG" "$APK" dist/SHA256SUMS.txt \
+            --repo "${{ github.repository }}" \
+            --title "MtForum v${VERSION} (build ${{ github.run_number }})" \
+            --notes "签名密钥：rain.jks
+          SHA-256: ${SHA256}
+          工作流运行：#${{ github.run_number }}"
