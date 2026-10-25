@@ -19,9 +19,6 @@
     <string name="agreement_title">阅读协议</string>
     <string name="agreement_subtitle">请阅读使用与隐私说明，了解账号信息的处理方式。</string>
 
-    <string name="agreement_source_remote">微云协议 · 已同步</string>
-    <string name="agreement_source_cached">微云协议 · 离线缓存</string>
-    <string name="agreement_source_bundled">微云协议 · 内置离线副本</string>
     <string name="agreement_check">我已阅读并同意以上说明</string>
     <string name="agreement_scroll_hint">请先阅读至协议末尾</string>
     <string name="agree_continue">同意并继续</string>
