@@ -1,4 +1,4 @@
-import java.util.Properties
+import java.io.File
 
 plugins {
     id("com.android.application")
@@ -6,16 +6,26 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Release signing material is never committed. Provide it either through
-// environment variables (CI) or an ignored keystore.properties file (local).
-val signingProperties = Properties().apply {
-    val localFile = rootProject.file("keystore.properties")
-    if (localFile.exists()) localFile.inputStream().use { load(it) }
+// ===== release 签名 =====
+// 本机写死 rain.jks 路径；CI 通过环境变量 ANDROID_KEYSTORE_PATH 覆盖。
+// 私钥本身不入库（.gitignore 已忽略 *.jks / *.keystore / *.p12）。
+val localKeystorePath = "/home/evo/projects/key/rain.jks"
+val localStorePassword = "fycnb666"
+val localKeyAlias = "rain"
+val localKeyPassword = "fycnb666"
+
+fun resolveKeystore(): File? {
+    val fromEnv = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+    if (fromEnv != null) return file(fromEnv)
+    val candidates = listOf(file(localKeystorePath), rootProject.file("rain.jks"), file("../rain.jks"))
+    return candidates.firstOrNull { it.isFile }
 }
 
-fun signingValue(propertyKey: String, envKey: String): String? =
-    System.getenv(envKey)?.takeIf { it.isNotBlank() }
-        ?: signingProperties.getProperty(propertyKey)?.takeIf { it.isNotBlank() }
+fun signingSecret(envKey: String, localValue: String): String =
+    System.getenv(envKey)?.takeIf { it.isNotBlank() } ?: localValue
+
+// 仅本地预览时可用 -PallowDebugSigning 绕过缺钥报错
+val allowDebugSigning: Boolean = project.hasProperty("allowDebugSigning")
 
 android {
     namespace = "me.rain.mtforum"
@@ -34,26 +44,36 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     signingConfigs {
-        val releaseStorePath = signingValue("storeFile", "ANDROID_KEYSTORE_PATH")
-        if (releaseStorePath != null) {
+        val keystore = resolveKeystore()
+        if (keystore != null) {
             create("release") {
-                storeFile = file(releaseStorePath)
-                storePassword = signingValue("storePassword", "ANDROID_STORE_PASSWORD")
-                keyAlias = signingValue("keyAlias", "ANDROID_KEY_ALIAS")
-                keyPassword = signingValue("keyPassword", "ANDROID_KEY_PASSWORD")
+                storeFile = keystore
+                storePassword = signingSecret("ANDROID_STORE_PASSWORD", localStorePassword)
+                keyAlias = signingSecret("ANDROID_KEY_ALIAS", localKeyAlias)
+                keyPassword = signingSecret("ANDROID_KEY_PASSWORD", localKeyPassword)
                 enableV1Signing = true
                 enableV2Signing = true
                 enableV3Signing = true
             }
         }
     }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the stable release key when provided; otherwise a local
-            // preview build falls back to the machine-local debug key.
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            val releaseSigning = signingConfigs.findByName("release")
+            if (releaseSigning == null) {
+                if (!allowDebugSigning) {
+                    throw GradleException(
+                        "找不到 release 签名密钥：请确认 $localKeystorePath 存在，" +
+                            "或设置 ANDROID_KEYSTORE_PATH；仅做本地预览可加 -PallowDebugSigning"
+                    )
+                }
+                logger.warn("⚠ 未找到 rain.jks，release 使用 debug 签名（-PallowDebugSigning，勿用于发布）")
+            }
+            signingConfig = releaseSigning ?: signingConfigs.getByName("debug")
         }
     }
     lint { abortOnError = true }
