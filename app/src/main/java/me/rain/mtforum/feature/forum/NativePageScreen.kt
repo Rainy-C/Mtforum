@@ -231,7 +231,7 @@ fun NativePageScreen(
                             }
                     if (needsLogin) item { EmptyState("请先登录", action = "登录论坛", onAction = onLogin) }
                     if (!needsLogin)
-                        items(nativeDisplayBlocks(doc.blocks.flatMap { block ->
+                        items(accountDisplayBlocks(nativeDisplayBlocks(doc.blocks.flatMap { block ->
                             if (signPage && block.kind == NativeContentKind.Facts) emptyList()
                             else if (isDuplicateAccountNavigation(block, visibleUrl)) {
                                 // Both Comiis menu bars, including generic HTML fallbacks.
@@ -242,7 +242,7 @@ fun NativePageScreen(
                                 val otherLinks = block.links.filterNot { isNativeSectionTab(url, it.url) }
                                 if (otherLinks.isEmpty()) emptyList() else listOf(block.copy(links = otherLinks))
                             } else listOf(block)
-                        })) { block ->
+                        }), doc.url)) { block ->
                             NativeContentItem(block, doc.url, ::open)
                         }
                     if (!needsLogin)
