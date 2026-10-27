@@ -48,6 +48,39 @@ internal fun nativeDisplayBlocks(blocks: List<ContentBlock>): List<ContentBlock>
     }
 }
 
+/** The credit dashboard and promotion page are single pieces of information.
+ * Keep the site's original data and links, but avoid a separate card for every HTML fragment.
+ */
+internal fun accountDisplayBlocks(blocks: List<ContentBlock>, page: String): List<ContentBlock> {
+    val url = page.toHttpUrlOrNull() ?: return blocks
+    val creditHome = url.queryParameter("ac") == "credit" &&
+        url.queryParameter("op") in setOf(null, "base")
+    val promotion = url.queryParameter("ac") == "promotion"
+    if (!creditHome && !promotion) return blocks
+    val isSummary: (ContentBlock) -> Boolean = { block ->
+        block.kind in setOf(NativeContentKind.Text, NativeContentKind.Facts,
+            NativeContentKind.CreditRecord, NativeContentKind.UserGroup) &&
+            block.primaryLink == null && block.image == null &&
+            (block.text.isNotBlank() || block.facts.isNotEmpty())
+    }
+    val summaries = blocks.filter(isSummary)
+    if (summaries.size < 2) return blocks
+    val merged = ContentBlock(
+        text = summaries.joinToString("\n") { it.text },
+        title = "",
+        links = summaries.flatMap { it.links }.distinctBy { it.url },
+        kind = if (creditHome) NativeContentKind.Facts else NativeContentKind.Text,
+        facts = summaries.flatMap { it.facts }.distinctBy { it.label to it.value },
+    )
+    val first = blocks.indexOfFirst(isSummary)
+    return buildList {
+        blocks.forEachIndexed { index, block ->
+            if (index == first) add(merged)
+            if (!isSummary(block)) add(block)
+        }
+    }
+}
+
 @Composable
 internal fun NativeContentItem(block: ContentBlock, page: String, onOpen: (ContentLink) -> Unit) {
     if (block.kind == NativeContentKind.Rank) {
@@ -61,6 +94,27 @@ internal fun NativeContentItem(block: ContentBlock, page: String, onOpen: (Conte
     val url = page.toHttpUrlOrNull()
     val creditPage = url?.queryParameter("ac") == "credit"
     val groupPage = url?.queryParameter("ac") == "usergroup"
+    val creditHome = creditPage && url?.queryParameter("op") in setOf(null, "base")
+    val creditHistory = creditPage && url?.queryParameter("op") in setOf("log", "loglist", "record")
+    if (creditHome && block.kind in setOf(NativeContentKind.Facts, NativeContentKind.Text,
+            NativeContentKind.CreditRecord) &&
+        (block.text.isNotBlank() || block.facts.isNotEmpty())) {
+        CreditDashboardCard(block, onOpen)
+        return
+    }
+    if (url?.queryParameter("ac") == "promotion" && block.kind == NativeContentKind.Text) {
+        PromotionDashboardCard(block, onOpen)
+        return
+    }
+    if (creditHistory && block.kind in setOf(NativeContentKind.CreditRecord, NativeContentKind.Text,
+            NativeContentKind.Facts)) {
+        CreditHistoryCard(block, onOpen)
+        return
+    }
+    if (groupPage && block.kind in setOf(NativeContentKind.UserGroup, NativeContentKind.Text)) {
+        UserGroupDashboardCard(block, onOpen)
+        return
+    }
     if (block.kind in setOf(NativeContentKind.CreditRecord, NativeContentKind.UserGroup) ||
         (creditPage || groupPage) && block.kind == NativeContentKind.Text &&
         block.text.isNotBlank() && block.links.none { isNativeSectionTab(page, it.url) }) {
