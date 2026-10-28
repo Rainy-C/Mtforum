@@ -22,6 +22,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify release manifest generation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -90,6 +93,13 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
+          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts | head -1)
+          TAG="v$VERSION-build.$GITHUB_RUN_NUMBER"
+          test -n "$VERSION" && test -n "$VERSION_CODE"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$VERSION" && "$GITHUB_REF_NAME" != "v$VERSION-"* ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match app version $VERSION"
+            exit 1
+          fi
           APK_SRC=app/build/outputs/apk/release/app-release.apk
           test -f "$APK_SRC"
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
@@ -98,8 +108,16 @@ jobs:
           APK="dist/MtForum-v${VERSION}-release.apk"
           cp "$APK_SRC" "$APK"
           (cd dist && sha256sum "$(basename "$APK")" > SHA256SUMS.txt)
+          python3 .github/scripts/generate_update_manifest.py \
+            --apk "$APK" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$TAG" \
+            --output dist/update.json
+          python3 -m json.tool dist/update.json > /dev/null
           echo "apk=$APK" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha256=$(cut -d' ' -f1 dist/SHA256SUMS.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
@@ -109,6 +127,7 @@ jobs:
           path: |
             ${{ steps.package.outputs.apk }}
             dist/SHA256SUMS.txt
+            dist/update.json
           if-no-files-found: error
           retention-days: 90
 
@@ -117,11 +136,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APK: ${{ steps.package.outputs.apk }}
           VERSION: ${{ steps.package.outputs.version }}
+          TAG: ${{ steps.package.outputs.tag }}
           SHA256: ${{ steps.package.outputs.sha256 }}
         run: |
           set -euo pipefail
-          TAG="v${VERSION}-build.${{ github.run_number }}"
-          gh release create "$TAG" "$APK" dist/SHA256SUMS.txt \
+          gh release create "$TAG" "$APK" dist/SHA256SUMS.txt dist/update.json \
             --repo "${{ github.repository }}" \
             --title "MtForum v${VERSION} (build ${{ github.run_number }})" \
             --notes "签名密钥：rain.jks
