@@ -72,4 +72,14 @@ class AccountDashboardCardsTest {
         assertEquals("金币+20", data.reward)
         assertTrue(data.messages.any { it.contains("二维码") })
     }
+
+    @Test fun promotionQrUsesTheSameReferralUrlAsCapturedComiisResponse() {
+        val details = promotionDetails(
+            "Cynnie\nUID: 154205\n邀请您的朋友扫码加入吧\n网友通过二维码访问，您将获得 金币+20"
+        )
+        assertEquals("https://bbs.binmt.cc/?fromuid=154205", promotionInviteUrl(details.uid))
+        assertNull(promotionInviteUrl(null))
+        assertNull(promotionInviteUrl(""))
+        assertNull(promotionInviteUrl("154205&other=1"))
+    }
 }
