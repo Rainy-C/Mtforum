@@ -1,5 +1,10 @@
 package me.rain.mtforum.feature.forum
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -7,11 +12,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -21,6 +31,9 @@ import me.rain.mtforum.core.network.ContentBlock
 import me.rain.mtforum.core.network.ContentFact
 import me.rain.mtforum.core.network.ContentLink
 import me.rain.mtforum.core.network.cleanAccountText
+import me.rain.mtforum.core.ui.ActionButton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -260,13 +273,26 @@ internal fun promotionDetails(text: String): PromotionDetails {
     return PromotionDetails(username, uid, reward, messages)
 }
 
+/** Comiis draws this URL with jquery.qrcode; the QR is not an image in the HTML response. */
+internal fun promotionInviteUrl(uid: String?): String? {
+    if (uid == null || !uid.matches(Regex("""[1-9]\d{0,14}"""))) return null
+    return "https://bbs.binmt.cc/?fromuid=$uid"
+}
+
 @Composable
 internal fun PromotionDashboardCard(block: ContentBlock, onOpen: (ContentLink) -> Unit) {
     val data = promotionDetails(block.text)
     val muted = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    val context = LocalContext.current
+    val inviteUrl = promotionInviteUrl(data.uid)
+    val qrResult by produceState<Result<ImageBitmap>?>(initialValue = null, key1 = inviteUrl) {
+        value = inviteUrl?.let { url ->
+            withContext(Dispatchers.Default) { runCatching { createPromotionQr(url) } }
+        }
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(17.dp)) {
-            Text("我的推广信息", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text("我的推广二维码", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             if (data.username != null || data.uid != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     data.username?.let { username ->
@@ -275,6 +301,48 @@ internal fun PromotionDashboardCard(block: ContentBlock, onOpen: (ContentLink) -
                     }
                     data.uid?.let { Text("UID " + it, fontSize = 13.sp, color = muted) }
                 }
+            }
+            if (inviteUrl != null) {
+                AccountSeparator()
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        val side = (maxWidth - 48.dp).coerceIn(120.dp, 240.dp)
+                        Box(Modifier.clip(RoundedCornerShape(22.dp)).background(Color.White)
+                            .padding(14.dp), contentAlignment = Alignment.Center) {
+                            val qr = qrResult?.getOrNull()
+                            if (qr != null) {
+                                Image(qr, "我的论坛访问推广二维码", Modifier.size(side),
+                                    filterQuality = FilterQuality.None)
+                            } else {
+                                Box(Modifier.size(side), contentAlignment = Alignment.Center) {
+                                    Text(if (qrResult?.isFailure == true) "二维码生成失败" else "正在生成二维码…",
+                                        fontSize = 13.sp, color = Color.DarkGray)
+                                }
+                            }
+                        }
+                    }
+                    Text(data.messages.firstOrNull { it.contains("扫码") && it.contains("邀请") }
+                        ?: "邀请好友扫码加入论坛", fontSize = 14.sp, color = muted)
+                    Text(inviteUrl, fontSize = 12.sp, color = muted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionButton("复制链接", Modifier.weight(1f), primary = false) {
+                            context.getSystemService(ClipboardManager::class.java)
+                                ?.setPrimaryClip(ClipData.newPlainText("MT Forum 访问推广", inviteUrl))
+                            Toast.makeText(context, "邀请链接已复制", Toast.LENGTH_SHORT).show()
+                        }
+                        ActionButton("分享好友", Modifier.weight(1f)) {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, inviteUrl)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "分享邀请链接"))
+                        }
+                    }
+                }
+            } else {
+                Text("无法获取推广 UID，请刷新后重试", fontSize = 14.sp, color = muted)
             }
             data.reward?.let { reward ->
                 Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
@@ -287,9 +355,11 @@ internal fun PromotionDashboardCard(block: ContentBlock, onOpen: (ContentLink) -
                     }
                 }
             }
-            if (data.messages.isNotEmpty()) {
+            val remainingMessages = data.messages.filterNot { inviteUrl != null &&
+                it.contains("邀请") && it.contains("扫码") }
+            if (remainingMessages.isNotEmpty()) {
                 AccountSeparator()
-                data.messages.forEach { message ->
+                remainingMessages.forEach { message ->
                     Text(message, fontSize = 14.sp, lineHeight = 23.sp, color = muted)
                 }
             } else if (data.username == null && data.uid == null) {
