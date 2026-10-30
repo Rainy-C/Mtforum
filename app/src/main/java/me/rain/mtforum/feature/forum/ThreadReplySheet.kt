@@ -1,7 +1,6 @@
 package me.rain.mtforum.feature.forum
 
-import android.view.Gravity
-import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -27,21 +26,19 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rain.mtforum.core.network.*
@@ -60,6 +57,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 /** A reply editor belongs to the current thread; it must never create a navigation route. */
 internal data class ThreadReplyTarget(val url: String, val author: String?)
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ThreadReplySheet(
     repository: ForumRepository,
@@ -225,36 +223,40 @@ internal fun ThreadReplySheet(
         }
     }
 
-    Dialog(
-        onDismissRequest = { if (!submitting) onDismiss() },
-        properties = DialogProperties(
-            dismissOnBackPress = !submitting,
-            dismissOnClickOutside = !submitting,
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = true,
-        ),
-    ) {
-        val view = LocalView.current
-        val density = LocalDensity.current
-        val dialogWindow = (view.parent as? DialogWindowProvider)?.window
-        // Configure the window before the first frame, not after the sheet has
-        // appeared, so opening the keyboard cannot cause another layout jump.
-        DisposableEffect(dialogWindow) {
-            dialogWindow?.setGravity(Gravity.BOTTOM)
-            dialogWindow?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            dialogWindow?.setLayout(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-            )
-            onDispose { }
-        }
-        LaunchedEffect(focusRequester) {
-            withFrameNanos { }
-            focusRequester.requestFocus()
-            keyboard?.show()
-        }
+    // This is a child of ThreadScreen's Activity window, NOT an Android Dialog.
+    // A separate Dialog acquires focus and then resizes after the IME starts,
+    // creating two disconnected transitions even if both animations are faster.
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val imeTargetBottom = WindowInsets.imeAnimationTarget.getBottom(density)
+    var revealed by remember(target.url) { mutableStateOf(false) }
+    val imeStarting = imeBottom > 0 || imeTargetBottom > 0
+    val sheetVisible = revealed || imeStarting
+    LaunchedEffect(imeStarting) {
+        if (imeStarting) revealed = true
+    }
+    // External keyboards may not produce any IME inset. Avoid trapping the
+    // editor off screen, while letting software-keyboard frames drive entry.
+    LaunchedEffect(target.url) {
+        delay(800)
+        revealed = true
+    }
+    LaunchedEffect(focusRequester) {
+        withFrameNanos { }
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+    BackHandler(enabled = !submitting) {
+        if (imeBottom > 0) keyboard?.hide() else onDismiss()
+    }
 
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize()) {
+        // A single IME inset animation controls the sheet's bottom edge.
+        // Do not animate the full window or duplicate the keyboard's motion.
+        Box(Modifier.fillMaxSize()
+            .background(Color.Black.copy(alpha = if (sheetVisible) 0.30f else 0f))
+            .clickable(enabled = !submitting) { keyboard?.hide(); onDismiss() })
+        BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
             val available = (maxHeight - 4.dp).coerceAtLeast(0.dp)
             val compactHeight = minOf(224.dp, available)
             val fullHeight = minOf(490.dp, available)
@@ -268,14 +270,17 @@ internal fun ThreadReplySheet(
                 (if (expanded) fullHeight.value else compactHeight.value) -
                     dragPx / density.density
             ).coerceIn(compactHeight.value, fullHeight.value).dp
-            val sheetHeight by animateDpAsState(
-                targetValue = if (dragging) gestureHeight else if (expanded) fullHeight else compactHeight,
+            // Only user expansion animates. IME movement is applied by imePadding
+            // in the layout pass, with no second height animation chasing it.
+            val preferredHeight by animateDpAsState(
+                targetValue = if (expanded) 490.dp else 224.dp,
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioNoBouncy,
                     stiffness = Spring.StiffnessMedium,
                 ),
-                label = "reply-sheet-height",
+                label = "reply-sheet-manual-expand",
             )
+            val sheetHeight = minOf(available, if (dragging) gestureHeight else preferredHeight)
             val beyondCollapsedPx = (dragPx - if (expanded) rangePx else 0f).coerceAtLeast(0f)
             val slideOffsetPx by animateFloatAsState(
                 targetValue = if (dragging) beyondCollapsedPx else 0f,
@@ -313,11 +318,12 @@ internal fun ThreadReplySheet(
                 }
             }
 
-            Box(Modifier.fillMaxSize().clickable(enabled = !submitting) { onDismiss() })
-
             Column(
                 Modifier.align(Alignment.BottomCenter)
-                    .graphicsLayer { translationY = slideOffsetPx }
+                    .graphicsLayer {
+                        translationY = slideOffsetPx
+                        alpha = if (sheetVisible) 1f else 0f
+                    }
                     .fillMaxWidth()
                     .height(sheetHeight)
                     .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
