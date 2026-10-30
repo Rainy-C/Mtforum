@@ -905,6 +905,7 @@ fun ThreadScreen(
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PageHeader("帖子", onBack) {
             ToolIcon(MiuixIcons.Useful.Share, "分享", onClick = ::share)
@@ -1056,6 +1057,7 @@ fun ThreadScreen(
                 refresh++
             },
         )
+    }
     }
 }
 
