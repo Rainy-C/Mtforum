@@ -46,6 +46,7 @@ fun NativePageScreen(
     showHeader: Boolean = true,
     onLogin: () -> Unit = {},
     reloadToken: Int = 0,
+    accountTabs: List<ContentLink> = emptyList(),
 ) {
     // Rank categories belong to one screen. Do not route rank-tab links through HomeScreen.open().
     if (isRankingsUrl(url)) {
@@ -55,7 +56,10 @@ fun NativePageScreen(
     // Keep section tabs and their fetched documents inside this route. Reopening a tab
     // must not add another HomeScreen route or re-fetch a page already shown.
     var visibleUrl by rememberSaveable(url) { mutableStateOf(url) }
-    val sectionGroup = remember(url) { nativeSectionGroup(url) }
+    val sectionGroup = remember(url, accountTabs) {
+        if (accountTabs.isNotEmpty()) "account-tools" else nativeSectionGroup(url)
+    }
+    val accountIdentities = remember(accountTabs) { accountTabs.map { nativeSectionTabIdentity(it.url) } }
     val pageCache = remember(url) { mutableStateMapOf<String, NativeDocument>() }
     val cacheVersions = remember(url) { mutableStateMapOf<String, String>() }
     val sectionTabs = remember(url) { mutableStateListOf<ContentLink>() }
@@ -81,7 +85,8 @@ fun NativePageScreen(
         if (dangerous) {
             pendingLink = link
             confirm.value = true
-        } else if (isNativeSectionTab(visibleUrl, link.url) && sectionGroup != null) {
+        } else if ((accountTabs.isNotEmpty() && nativeSectionTabIdentity(link.url) in accountIdentities) ||
+            (isNativeSectionTab(visibleUrl, link.url) && sectionGroup != null)) {
             if (nativeSectionTabIdentity(visibleUrl) != nativeSectionTabIdentity(link.url)) {
                 visibleUrl = link.url
             }
@@ -108,7 +113,7 @@ fun NativePageScreen(
             val response = repository.document(visibleUrl, title)
             pageCache[visibleUrl] = response
             cacheVersions[visibleUrl] = version
-            if (sectionGroup != null) {
+            if (sectionGroup != null && accountTabs.isEmpty()) {
                 response.blocks.asSequence().filter { it.kind == NativeContentKind.Navigation }
                     .flatMap { it.links.asSequence() }
                     .filter { isNativeSectionTab(url, it.url) }
@@ -133,21 +138,36 @@ fun NativePageScreen(
             }
         // Favorites use one persistent Miuix segmented bar, even when a category is empty.
         // Its page may use the generic HTML fallback, which otherwise draws another tab row.
-        if (sectionGroup == "favorites" || sectionGroup == "social") {
-            val tabs = remember(url) {
-                if (sectionGroup == "favorites") favoriteSectionLinks(url) else socialSectionLinks(url)
+        if (accountTabs.isNotEmpty() || sectionGroup == "favorites" || sectionGroup == "social") {
+            val tabs = remember(url, accountTabs) {
+                when {
+                    accountTabs.isNotEmpty() -> accountTabs
+                    sectionGroup == "favorites" -> favoriteSectionLinks(url)
+                    else -> socialSectionLinks(url)
+                }
             }
             AnimatedSectionTabs(
                 tabs = tabs.map { it.text },
-                selectedTabIndex = if (sectionGroup == "favorites") favoriteSectionIndex(visibleUrl)
-                    else socialSectionIndex(visibleUrl),
+                selectedTabIndex = when {
+                    accountTabs.isNotEmpty() -> accountIdentities.indexOf(nativeSectionTabIdentity(visibleUrl))
+                        .takeIf { it >= 0 } ?: 0
+                    sectionGroup == "favorites" -> favoriteSectionIndex(visibleUrl)
+                    else -> socialSectionIndex(visibleUrl)
+                },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
                 onTabSelected = { index -> tabs.getOrNull(index)?.let { open(it) } },
             )
         } else if (sectionGroup != null && sectionTabs.size > 1) {
-            Box(Modifier.padding(horizontal = 20.dp)) {
-                NativeNavigation(sectionTabs.toList(), visibleUrl, ::open)
-            }
+            val tabs = sectionTabs.toList()
+            val selected = tabs.indexOfFirst {
+                nativeSectionTabIdentity(it.url) == nativeSectionTabIdentity(visibleUrl)
+            }.coerceAtLeast(0)
+            AnimatedSectionTabs(
+                tabs = tabs.map { it.text },
+                selectedTabIndex = selected,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                onTabSelected = { index -> tabs.getOrNull(index)?.let(::open) },
+            )
         }
         if (loading && document == null)
             Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
@@ -233,13 +253,21 @@ fun NativePageScreen(
                     if (!needsLogin)
                         items(accountDisplayBlocks(nativeDisplayBlocks(doc.blocks.flatMap { block ->
                             if (signPage && block.kind == NativeContentKind.Facts) emptyList()
+                            else if (accountTabs.isNotEmpty() && block.kind == NativeContentKind.Navigation &&
+                                block.links.isNotEmpty() && block.links.all { link ->
+                                    nativeSectionTabIdentity(link.url) in accountIdentities ||
+                                        isNativeSectionTab(visibleUrl, link.url)
+                                }) emptyList()
                             else if (isDuplicateAccountNavigation(block, visibleUrl)) {
                                 // Both Comiis menu bars, including generic HTML fallbacks.
                                 emptyList()
                             } else if (sectionGroup != null && block.kind == NativeContentKind.Navigation) {
                                 // The account tabs have a persistent row above the content.
                                 // Preserve unrelated navigation actions without duplicating tabs.
-                                val otherLinks = block.links.filterNot { isNativeSectionTab(url, it.url) }
+                                val otherLinks = block.links.filterNot {
+                                    nativeSectionTabIdentity(it.url) in accountIdentities ||
+                                        isNativeSectionTab(visibleUrl, it.url)
+                                }
                                 if (otherLinks.isEmpty()) emptyList() else listOf(block.copy(links = otherLinks))
                             } else listOf(block)
                         }), doc.url)) { block ->
