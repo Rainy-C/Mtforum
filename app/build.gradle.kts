@@ -35,8 +35,8 @@ android {
         applicationId = "me.rain.mtforum"
         minSdk = 33
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.3.4"
+        versionCode = 11
+        versionName = "0.3.5"
     }
 
     buildFeatures { compose = true }
