@@ -72,6 +72,10 @@ internal fun ThreadReplySheet(
     var failure by remember(target.url) { mutableStateOf<String?>(null) }
     var reload by remember(target.url) { mutableIntStateOf(0) }
     var submitting by remember(target.url) { mutableStateOf(false) }
+    // Keep the editor alive before the remote reply form arrives. This allows the
+    // IME and bottom sheet to start together rather than in two visible stages.
+    var messageDraft by remember(target.url) { mutableStateOf("") }
+    var draftEdited by remember(target.url) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val focusRequester = remember(target.url) { FocusRequester() }
@@ -131,7 +135,9 @@ internal fun ThreadReplySheet(
                     val aid = repository.uploadPostImage(active, bytes, name, type)
                     attachmentAids.add(aid)
                     if (messageIndex >= 0) {
-                        values[messageIndex] = values[messageIndex].orEmpty() + "\n[attachimg]$aid[/attachimg]\n"
+                        messageDraft += "\n[attachimg]$aid[/attachimg]\n"
+                        draftEdited = true
+                        values[messageIndex] = messageDraft
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -147,14 +153,14 @@ internal fun ThreadReplySheet(
     fun send() {
         val active = form ?: return
         if (submitting || messageIndex < 0) return
-        if (values[messageIndex].isNullOrBlank()) {
+        if (messageDraft.isBlank()) {
             failure = "请输入评论内容"
             return
         }
         val missing = active.fields.withIndex().firstOrNull { (i, field) ->
             field.required && field.type != "hidden" && when (field.type) {
                 "checkbox", "radio" -> checked[i] != true
-                else -> values[i].isNullOrBlank()
+                else -> if (i == messageIndex) messageDraft.isBlank() else values[i].isNullOrBlank()
             }
         }
         if (missing != null) {
@@ -175,7 +181,7 @@ internal fun ThreadReplySheet(
                         "file" -> null
                         "checkbox", "radio" -> if (checked[index] == true)
                             field.key to field.value.ifBlank { "on" } else null
-                        else -> field.key to values[index].orEmpty()
+                        else -> field.key to if (index == messageIndex) messageDraft else values[index].orEmpty()
                     }
                 }
                 val extra = attachmentAids.map { "attachnew[$it][description]" to "" }
@@ -207,10 +213,15 @@ internal fun ThreadReplySheet(
             expanded = true
         }
     }
+    // Incorporate server-provided quote text without clobbering early typing.
     LaunchedEffect(form) {
-        if (form != null) {
-            focusRequester.requestFocus()
-            keyboard?.show()
+        if (form != null && messageIndex >= 0) {
+            val initial = form.fields[messageIndex].value
+            if (!draftEdited) messageDraft = initial
+            else if (initial.isNotBlank() && !messageDraft.startsWith(initial)) {
+                messageDraft = initial + "\n" + messageDraft
+            }
+            values[messageIndex] = messageDraft
         }
     }
 
@@ -226,15 +237,21 @@ internal fun ThreadReplySheet(
         val view = LocalView.current
         val density = LocalDensity.current
         val dialogWindow = (view.parent as? DialogWindowProvider)?.window
-        LaunchedEffect(dialogWindow) {
+        // Configure the window before the first frame, not after the sheet has
+        // appeared, so opening the keyboard cannot cause another layout jump.
+        DisposableEffect(dialogWindow) {
             dialogWindow?.setGravity(Gravity.BOTTOM)
             dialogWindow?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            // A full-size transparent dialog host leaves enough room for a real
-            // bottom sheet to expand and lets the keyboard resize the viewport.
             dialogWindow?.setLayout(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
             )
+            onDispose { }
+        }
+        LaunchedEffect(focusRequester) {
+            withFrameNanos { }
+            focusRequester.requestFocus()
+            keyboard?.show()
         }
 
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -350,156 +367,141 @@ internal fun ThreadReplySheet(
                     }
                 }
 
-                when {
-                    loading && form == null -> {
-                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-                    }
-                    form == null -> {
-                        Column(
-                            Modifier.fillMaxWidth().weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Text(failure ?: "无法获取回复表单", fontSize = 13.sp)
-                            Text(
-                                "点击重试",
-                                modifier = Modifier.clickable { reload++ }.padding(6.dp),
-                                fontSize = 13.sp,
-                            )
-                        }
-                    }
-                    else -> {
-                        if (showExtras) {
-                            Column(
-                                Modifier.fillMaxWidth().weight(1f)
-                                    .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                ReplyMessageEditor(
-                                    message = values[messageIndex].orEmpty(),
-                                    onMessageChange = {
-                                        values[messageIndex] = it.take(form.fields[messageIndex].maxLength ?: 100000)
-                                    },
-                                    focusRequester = focusRequester,
+                // One permanent editor: it is focusable from the first frame,
+                // even while the reply form is still loading over the network.
+                ReplyMessageEditor(
+                    message = messageDraft,
+                    onMessageChange = { typed ->
+                        draftEdited = true
+                        messageDraft = typed.take(form?.fields?.getOrNull(messageIndex)?.maxLength ?: 100000)
+                        if (messageIndex >= 0) values[messageIndex] = messageDraft
+                    },
+                    focusRequester = focusRequester,
+                    enabled = !submitting,
+                    modifier = Modifier.fillMaxWidth().then(
+                        if (showExtras && form != null) Modifier.height(118.dp) else Modifier.weight(1f)
+                    ),
+                )
+                if (showExtras && form != null) {
+                    Column(
+                        Modifier.fillMaxWidth().weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        extraFields.forEach { (index, field) ->
+                            when (field.type) {
+                                "checkbox", "radio" -> SuperCheckbox(
+                                    checked = checked[index] == true,
+                                    title = field.label,
+                                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
                                     enabled = !submitting,
-                                    modifier = Modifier.fillMaxWidth().height(118.dp),
+                                    onCheckedChange = { value ->
+                                        if (field.type == "radio") form.fields.forEachIndexed { j, other ->
+                                            if (other.key == field.key) checked[j] = false
+                                        }
+                                        checked[index] = if (field.type == "radio") true else value
+                                    },
                                 )
-                                extraFields.forEach { (index, field) ->
-                                    when (field.type) {
-                                        "checkbox", "radio" -> SuperCheckbox(
-                                            checked = checked[index] == true,
+                                "select" -> {
+                                    if (field.options.isNotEmpty()) {
+                                        SuperDropdown(
+                                            items = field.options.map { it.label },
+                                            selectedIndex = field.options.indexOfFirst {
+                                                it.value == values[index]
+                                            }.coerceAtLeast(0),
                                             title = field.label,
                                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
                                             enabled = !submitting,
-                                            onCheckedChange = { value ->
-                                                if (field.type == "radio") form.fields.forEachIndexed { j, other ->
-                                                    if (other.key == field.key) checked[j] = false
-                                                }
-                                                checked[index] = if (field.type == "radio") true else value
-                                            },
+                                            onSelectedIndexChange = { values[index] = field.options[it].value },
                                         )
-                                        "select" -> {
-                                            if (field.options.isNotEmpty()) {
-                                                SuperDropdown(
-                                                    items = field.options.map { it.label },
-                                                    selectedIndex = field.options.indexOfFirst {
-                                                        it.value == values[index]
-                                                    }.coerceAtLeast(0),
-                                                    title = field.label,
-                                                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
-                                                    enabled = !submitting,
-                                                    onSelectedIndexChange = { values[index] = field.options[it].value },
-                                                )
-                                            }
-                                        }
-                                        else -> Box(
-                                            Modifier.fillMaxWidth()
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(MiuixTheme.colorScheme.background)
-                                                .padding(12.dp),
-                                        ) {
-                                            BasicTextField(
-                                                value = values[index].orEmpty(),
-                                                onValueChange = { values[index] = it.take(field.maxLength ?: 100000) },
-                                                enabled = !submitting,
-                                                singleLine = true,
-                                                cursorBrush = SolidColor(MiuixTheme.colorScheme.onSurface),
-                                                textStyle = TextStyle(
-                                                    color = MiuixTheme.colorScheme.onSurface, fontSize = 14.sp,
-                                                ),
-                                                decorationBox = { input ->
-                                                    Box {
-                                                        if (values[index].isNullOrBlank()) {
-                                                            Text(field.label, fontSize = 14.sp,
-                                                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                                                        }
-                                                        input()
-                                                    }
-                                                },
-                                            )
-                                        }
                                     }
                                 }
-                                form.captchaImages.forEach { image ->
-                                    AsyncImage(image, "验证码", Modifier.fillMaxWidth().heightIn(max = 86.dp))
+                                else -> Box(
+                                    Modifier.fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(MiuixTheme.colorScheme.background)
+                                        .padding(12.dp),
+                                ) {
+                                    BasicTextField(
+                                        value = values[index].orEmpty(),
+                                        onValueChange = { values[index] = it.take(field.maxLength ?: 100000) },
+                                        enabled = !submitting,
+                                        singleLine = true,
+                                        cursorBrush = SolidColor(MiuixTheme.colorScheme.onSurface),
+                                        textStyle = TextStyle(
+                                            color = MiuixTheme.colorScheme.onSurface, fontSize = 14.sp,
+                                        ),
+                                        decorationBox = { input ->
+                                            Box {
+                                                if (values[index].isNullOrBlank()) {
+                                                    Text(field.label, fontSize = 14.sp,
+                                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                                                }
+                                                input()
+                                            }
+                                        },
+                                    )
                                 }
                             }
-                        } else {
-                            ReplyMessageEditor(
-                                message = values[messageIndex].orEmpty(),
-                                onMessageChange = {
-                                    values[messageIndex] = it.take(form.fields[messageIndex].maxLength ?: 100000)
-                                },
-                                focusRequester = focusRequester,
-                                enabled = !submitting,
-                                modifier = Modifier.fillMaxWidth().weight(1f),
-                            )
                         }
-                        if (failure != null) {
-                            Text(
-                                failure.orEmpty(), fontSize = 12.sp, maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            )
+                        form.captchaImages.forEach { image ->
+                            AsyncImage(image, "验证码", Modifier.fillMaxWidth().heightIn(max = 86.dp))
                         }
-                        Row(
-                            Modifier.fillMaxWidth().heightIn(min = 44.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            if (form.upload != null) {
-                                Text(
-                                    "添加图片",
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable(enabled = !submitting) { imagePicker.launch("image/*") }
-                                        .padding(horizontal = 8.dp, vertical = 9.dp),
-                                    fontSize = 13.sp,
-                                )
-                            }
-                            Text(
-                                "${values[messageIndex].orEmpty().length} 字",
-                                modifier = Modifier.weight(1f),
-                                fontSize = 12.sp,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            )
-                            Button(
-                                onClick = ::send,
-                                minHeight = 40.dp,
-                                enabled = !submitting && !values[messageIndex].isNullOrBlank(),
-                                colors = ButtonDefaults.buttonColorsPrimary(),
-                                insideMargin = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
-                            ) {
-                                if (submitting) CircularProgressIndicator(size = 18.dp)
-                                else Text(
-                                    "发布", fontSize = 14.sp,
-                                    color = if (!submitting && !values[messageIndex].isNullOrBlank())
-                                        MiuixTheme.colorScheme.onPrimary
-                                    else MiuixTheme.colorScheme.disabledOnPrimaryButton,
-                                )
-                            }
-                        }
+                    }
+                }
+                if (form == null) {
+                    Text(
+                        if (loading) "正在获取回复表单…" else failure ?: "无法获取回复表单",
+                        fontSize = 12.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    if (!loading) Text(
+                        "点击重试",
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                            .clickable { reload++ }.padding(6.dp),
+                        fontSize = 12.sp,
+                    )
+                } else if (failure != null) {
+                    Text(
+                        failure.orEmpty(), fontSize = 12.sp, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (form?.upload != null) {
+                        Text(
+                            "添加图片",
+                            modifier = Modifier.clip(RoundedCornerShape(12.dp))
+                                .clickable(enabled = !submitting) { imagePicker.launch("image/*") }
+                                .padding(horizontal = 8.dp, vertical = 9.dp),
+                            fontSize = 13.sp,
+                        )
+                    }
+                    Text(
+                        if (form == null) "准备中…" else "${messageDraft.length} 字",
+                        modifier = Modifier.weight(1f),
+                        fontSize = 12.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    Button(
+                        onClick = ::send,
+                        minHeight = 40.dp,
+                        enabled = form != null && messageIndex >= 0 && !submitting && messageDraft.isNotBlank(),
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
+                    ) {
+                        if (submitting) CircularProgressIndicator(size = 18.dp)
+                        else Text(
+                            "发布", fontSize = 14.sp,
+                            color = if (form != null && !submitting && messageDraft.isNotBlank())
+                                MiuixTheme.colorScheme.onPrimary
+                            else MiuixTheme.colorScheme.disabledOnPrimaryButton,
+                        )
                     }
                 }
             }
