@@ -18,13 +18,19 @@ internal object PostBodyParser {
     // A locked-content notice in Comiis is commonly a `.comiis_quote`. It is NOT a
     // user quote: class-name-only classification displays misleading quote headings.
     private val gatedNotice = Regex(
-        """如果您要查看本帖隐藏内容|本帖隐藏的内容.{0,42}(?:回复|登录|购买|查看|可见)|(?:回复后可见|回复可见|登录后可见|购买后可见|请回复.{0,18}查看|权限不足.{0,24}查看)""",
+        """如果您要查看本帖隐藏内容|本帖隐藏的内容.{0,42}(?:回复|登录|购买|查看|可见)|""" +
+            """(?:回复后可见|回复可见|登录后可见|购买后可见|请回复.{0,18}查看|权限不足.{0,24}查看)|""" +
+            """(?:内容已隐藏|此处内容已被隐藏|支付.{0,12}(?:金币|积分).{0,12}(?:查看|可见))""",
         RegexOption.IGNORE_CASE,
     )
 
     private fun isGatedNotice(element: Element): Boolean {
-        if (element.hasClass("bb-hide")) return true
-        if (element.classNames().any { it.contains("showhide", true) || it.contains("locked", true) } &&
+        if (element.hasClass("bb-hide") || element.hasAttr("data-hide") &&
+            element.attr("data-hide") == "true") return true
+        if (element.classNames().any {
+                it.contains("showhide", true) || it.contains("locked", true) ||
+                    it.equals("comiis_hide", true) || it.equals("comiis_hidebox", true)
+            } &&
             element.text().length < 450) return true
         // Only promote a known *notice* container; do not classify an ordinary
         // quotation merely because it discusses hidden posts.
