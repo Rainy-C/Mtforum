@@ -132,6 +132,8 @@ fun ConversationScreen(
 ) {
     var conversation by remember(uid) { mutableStateOf<Conversation?>(null) }
     var text by remember(uid) { mutableStateOf("") }
+    var showSmileys by remember(uid) { mutableStateOf(false) }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     var sending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -227,6 +229,10 @@ fun ConversationScreen(
                     }
                 }
             }
+        if (showSmileys) {
+            ForumSmileyPicker(Modifier.fillMaxWidth().height(225.dp)
+                .padding(horizontal = 16.dp, vertical = 6.dp)) { code -> text += code }
+        }
         Row(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -239,6 +245,15 @@ fun ConversationScreen(
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
                 enabled = !sending,
+            )
+            Text(
+                if (showSmileys) "键盘" else "表情",
+                modifier = Modifier.clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        showSmileys = !showSmileys
+                        if (showSmileys) keyboard?.hide() else keyboard?.show()
+                    }.padding(horizontal = 6.dp, vertical = 10.dp),
+                fontSize = 13.sp,
             )
             ActionButton(
                 "发送",
