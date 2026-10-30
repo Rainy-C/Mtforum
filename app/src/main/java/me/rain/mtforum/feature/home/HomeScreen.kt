@@ -396,7 +396,7 @@ fun HomeScreen(account: AccountViewModel = viewModel()) {
                 )
             "search" -> SearchScreen(account.repository, { back() }, ::open)
             "about" -> AboutScreen { back() }
-            "account" -> AccountToolsScreen({ back() }, ::open)
+            "account" -> AccountToolsScreen(account.repository, { back() }, ::open, ::login)
             "settings" -> SettingsScreen({ back() }, { push("about") })
             "avatar" ->
                 AvatarScreen(
