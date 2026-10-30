@@ -8,12 +8,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.rain.mtforum.core.network.ForumRepository
+import me.rain.mtforum.core.network.ContentLink
+import me.rain.mtforum.feature.forum.NativePageScreen
 import me.rain.mtforum.core.ui.*
 import me.rain.mtforum.core.ui.icons.*
 import me.rain.mtforum.feature.forum.Avatar
@@ -196,7 +199,12 @@ private fun ProfileStat(value: Long?, title: String, modifier: Modifier, onClick
 }
 
 @Composable
-fun AccountToolsScreen(onBack: () -> Unit, onOpen: (String, String) -> Unit) {
+fun AccountToolsScreen(
+    repository: ForumRepository,
+    onBack: () -> Unit,
+    onOpen: (String, String) -> Unit,
+    onLogin: () -> Unit,
+) {
     val groups =
         listOf(
             listOf(
@@ -215,39 +223,20 @@ fun AccountToolsScreen(onBack: () -> Unit, onOpen: (String, String) -> Unit) {
                 "积分记录" to "ac=credit&op=log",
             ),
         )
-    Column(Modifier.fillMaxSize()) {
-        PageHeader("账号与安全", onBack)
-        Column(
-            Modifier.verticalScroll(rememberScrollState()).padding(20.dp).navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
-            groups.forEach { rows ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column {
-                        rows.forEach { (title, query) ->
-                            SuperArrow(
-                                title = title,
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
-                                onClick = {
-                                    onOpen(
-                                        title,
-                                        "${ForumRepository.BaseUrl}/home.php?mod=spacecp&$query",
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-            Card(Modifier.fillMaxWidth()) {
-                SuperArrow(
-                    title = "修改用户名",
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
-                    onClick = {
-                        onOpen("修改用户名", "${ForumRepository.BaseUrl}/plugin.php?id=nimba_rename")
-                    },
-                )
-            }
-        }
+    val tabs = remember {
+        groups.flatten().map { (label, query) ->
+            ContentLink(label, "${ForumRepository.BaseUrl}/home.php?mod=spacecp&$query")
+        } + ContentLink("修改用户名", "${ForumRepository.BaseUrl}/plugin.php?id=nimba_rename")
     }
+    // All account options live in one route; switching is a local state update,
+    // not a HomeScreen.open() push. Documents and scroll positions are cached.
+    NativePageScreen(
+        repository = repository,
+        title = "账号与安全",
+        url = tabs.first().url,
+        onBack = onBack,
+        onOpen = onOpen,
+        onLogin = onLogin,
+        accountTabs = tabs,
+    )
 }
