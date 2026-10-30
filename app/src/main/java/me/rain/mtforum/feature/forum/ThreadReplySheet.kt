@@ -107,6 +107,7 @@ internal fun ThreadReplySheet(
     val attachmentAids = remember(form, target.url) { mutableStateListOf<String>() }
     val messageIndex = form?.fields?.indexOfFirst { it.key == "message" } ?: -1
     var showExtras by remember(target.url) { mutableStateOf(false) }
+    var showSmileys by remember(target.url) { mutableStateOf(false) }
     var expanded by remember(target.url) { mutableStateOf(false) }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -238,7 +239,7 @@ internal fun ThreadReplySheet(
     // External keyboards may not produce any IME inset. Avoid trapping the
     // editor off screen, while letting software-keyboard frames drive entry.
     LaunchedEffect(target.url) {
-        delay(800)
+        delay(320)
         revealed = true
     }
     LaunchedEffect(focusRequester) {
@@ -273,7 +274,11 @@ internal fun ThreadReplySheet(
             // Only user expansion animates. IME movement is applied by imePadding
             // in the layout pass, with no second height animation chasing it.
             val preferredHeight by animateDpAsState(
-                targetValue = if (expanded) 490.dp else 224.dp,
+                targetValue = when {
+                    expanded -> 490.dp
+                    showSmileys -> 420.dp
+                    else -> 224.dp
+                },
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioNoBouncy,
                     stiffness = Spring.StiffnessMedium,
@@ -455,6 +460,13 @@ internal fun ThreadReplySheet(
                         }
                     }
                 }
+                if (showSmileys) {
+                    ForumSmileyPicker(Modifier.fillMaxWidth().height(170.dp)) { code ->
+                        draftEdited = true
+                        messageDraft += code
+                        if (messageIndex >= 0) values[messageIndex] = messageDraft
+                    }
+                }
                 if (form == null) {
                     Text(
                         if (loading) "正在获取回复表单…" else failure ?: "无法获取回复表单",
@@ -479,6 +491,18 @@ internal fun ThreadReplySheet(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    Text(
+                        if (showSmileys) "收起表情" else "表情",
+                        modifier = Modifier.clip(RoundedCornerShape(12.dp))
+                            .clickable(enabled = !submitting) {
+                                showSmileys = !showSmileys
+                                if (showSmileys) keyboard?.hide() else {
+                                    focusRequester.requestFocus()
+                                    keyboard?.show()
+                                }
+                            }.padding(horizontal = 8.dp, vertical = 9.dp),
+                        fontSize = 13.sp,
+                    )
                     if (form?.upload != null) {
                         Text(
                             "添加图片",
