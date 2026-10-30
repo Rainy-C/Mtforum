@@ -19,6 +19,8 @@ internal fun nativeSectionGroup(rawUrl: String): String? {
         mod == "space" && action == "thread" && url.queryParameter("view") == "me" -> "my-posts"
         mod == "space" && action == "favorite" -> "favorites"
         mod == "space" && action == "notice" -> "notices"
+        mod == "spacecp" && url.queryParameter("ac") == "profile" &&
+            url.queryParameter("op") in setOf(null, "base", "info", "contact", "password") -> "account-profile"
         mod == "spacecp" && url.queryParameter("ac") == "credit" &&
             url.queryParameter("op") in setOf(null, "base", "log", "loglist", "record", "rule") -> "credits"
         mod == "spacecp" && url.queryParameter("ac") == "usergroup" &&
