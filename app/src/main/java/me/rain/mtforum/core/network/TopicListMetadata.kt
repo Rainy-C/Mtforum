@@ -50,12 +50,29 @@ internal object TopicListMetadata {
         return Value(name, url, avatarNode?.let { ContentParser.imageUrl(it, page) }, likes, replies, views, hasHidden(row))
     }
 
-    fun hasHidden(row: Element): Boolean =
-        Regex("本(?:帖)?内容被作者隐藏|本帖隐藏的内容|回复后可见|回复可见|查看隐藏内容")
-            .containsMatchIn(row.text()) ||
-            row.selectFirst(".showhide, .replyhide, .hidecontent, [id^=hide_], " +
-                "[id*=showhide], [id*=replyhide], [id*=hidecontent], " +
-                "[class*=showhide], [class*=replyhide], [class*=hidecontent]") != null
+    fun hasHidden(row: Element): Boolean {
+        val body = row.selectFirst(
+            "[id^=postmessage_], .t_f, .comiis_message, .comiis_postbody, .message, .postmessage"
+        ) ?: row
+        if (body.selectFirst(".bb-hide, .showhide, .replyhide, .hidecontent, " +
+                ".comiis_hide, .comiis_showhide, .comiis_hidebox, " +
+                "[id^=hide_], [id*=showhide], [class*=replyhide], " +
+                "[class*=hidecontent], [class*=showhide], [data-hide=true]") != null) return true
+        val hint = Regex(
+            """本帖隐藏的内容|本帖内容被作者隐藏|此处内容(?:已被)?隐藏|回复后可见|回复可见|登录后可见|""" +
+                """购买后可见|支付.{0,12}(?:金币|积分).{0,12}(?:查看|可见)|""" +
+                """(?:回复|登录|购买|支付).{0,18}(?:查看|阅读).{0,8}隐藏内容""",
+        )
+        // A quote mentioning hidden posts is not necessarily a hidden post.
+        val notices = body.select(".comiis_quote, .showhide, .comiis_hide, .comiis_showhide, " +
+            "blockquote.bb-hide, .locked, .needreply")
+        if (notices.any { hint.containsMatchIn(it.text()) }) return true
+        return hint.containsMatchIn(body.ownText()) ||
+            body.select("p,div,span").any {
+                it.childrenSize() == 0 && it.text().length < 150 && hint.containsMatchIn(it.text()) &&
+                    it.closest("blockquote:not(.bb-hide)") == null
+            }
+    }
 
     private fun count(text: String): String? =
         Regex("""\d[\d,]*(?:\.\d+)?\s*[万亿kKwW]?""").find(ContentParser.clean(text))?.value?.trim()
