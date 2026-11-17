@@ -3,8 +3,12 @@ name: Release APK
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+    paths:
+      - 'app/build.gradle.kts'
 
 permissions:
   contents: write

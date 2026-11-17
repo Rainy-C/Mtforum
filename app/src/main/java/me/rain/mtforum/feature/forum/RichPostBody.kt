@@ -65,26 +65,41 @@ fun RichPostBody(
                     },
                 )
                 "quote" -> {
-                    val stroke = MiuixTheme.colorScheme.onSurface.copy(alpha = if (quoteDepth % 2 == 0) .38f else .23f)
+                    val raw = ContentParser.clean(section.node.text())
+                    val heading = Regex("""^回复\s+.{1,45}?\s+发表于\s+[^\s]+\s*[^\s]*""")
+                        .find(raw)?.value
+                        ?: section.node.selectFirst(".quote_title, .quoteauthor, .comiis_quote_user")
+                            ?.text()?.trim()?.takeIf { it.isNotBlank() }
+                    val preview = raw.removePrefix(heading.orEmpty()).trim()
+                    val stroke = MiuixTheme.colorScheme.onSurface.copy(alpha = .32f)
                     Column(
                         Modifier.fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = if (quoteDepth % 2 == 0) .058f else .035f))
+                            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .055f))
                             .drawBehind {
-                                drawRect(stroke, topLeft = androidx.compose.ui.geometry.Offset.Zero,
-                                    size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height))
+                                drawRect(
+                                    stroke,
+                                    topLeft = androidx.compose.ui.geometry.Offset.Zero,
+                                    size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height),
+                                )
                             }
-                            .padding(start = 13.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                            .padding(start = 12.dp, end = 12.dp, top = 9.dp, bottom = 9.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        // Never insert invented “引用” / “嵌套引用” labels: the
-                        // forum often supplies its own reply header inside the quote.
-                        if (quoteDepth < 8) {
-                            RichPostBody(section.node.html(), safeOpen, compact = true, quoteDepth = quoteDepth + 1)
-                        } else {
-                            BasicText(section.node.text().take(8000),
-                                style = TextStyle(fontSize = 13.sp, color = color))
-                        }
+                        if (!heading.isNullOrBlank()) BasicText(
+                            heading,
+                            style = TextStyle(fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary),
+                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                        BasicText(
+                            preview.ifBlank { raw }.take(1200),
+                            style = TextStyle(fontSize = 13.sp, lineHeight = 19.sp,
+                                color = MiuixTheme.colorScheme.onSurface.copy(alpha = .75f)),
+                            maxLines = 3,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
                     }
                 }
                 "hide", "free" -> Column(
@@ -149,7 +164,7 @@ private fun RichText(
     modifier: Modifier,
     style: TextStyle,
 ) {
-    val emojiSize: TextUnit = if (style.fontSize.value <= 14f) 18.sp else 20.sp
+    val emojiSize: TextUnit = (style.fontSize.value * 1.17f).sp
     val inline =
         remember(emojis, emojiSize) {
             if (emojis.isEmpty()) emptyMap()

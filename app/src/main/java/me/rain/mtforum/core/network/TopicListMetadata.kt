@@ -7,6 +7,7 @@ internal object TopicListMetadata {
     data class Value(
         val author: String, val authorUrl: String?, val avatar: String?,
         val likes: String?, val replies: String?, val views: String?, val hidden: Boolean,
+        val level: String?,
     )
 
     fun parse(row: Element, tid: String, page: String): Value {
@@ -47,7 +48,10 @@ internal object TopicListMetadata {
             replies = replies ?: numbers[0]
             views = views ?: numbers[1]
         }
-        return Value(name, url, avatarNode?.let { ContentParser.imageUrl(it, page) }, likes, replies, views, hasHidden(row))
+        return Value(
+            name, url, avatarNode?.let { ContentParser.imageUrl(it, page) },
+            likes, replies, views, hasHidden(row), ContentParser.memberLevel(row),
+        )
     }
 
     fun hasHidden(row: Element): Boolean {

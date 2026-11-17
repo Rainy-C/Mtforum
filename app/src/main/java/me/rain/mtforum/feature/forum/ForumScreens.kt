@@ -35,6 +35,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import me.rain.mtforum.core.network.*
 import me.rain.mtforum.core.ui.*
 import me.rain.mtforum.core.ui.icons.*
@@ -163,7 +164,7 @@ fun TopicsScreen(
                 state = scroll,
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(20.dp, 12.dp, 20.dp, if (home) 128.dp else 36.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 error?.let {
                     item {
@@ -316,30 +317,12 @@ private fun GuideFeedSelector(selectedMask: Int, onSelect: (Int) -> Unit) {
 
 @Composable
 fun FilterBar(items: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items.forEachIndexed { index, title ->
-            Button(
-                onClick = { onSelect(index) },
-                modifier = Modifier.weight(1f),
-                insideMargin = PaddingValues(horizontal = 4.dp, vertical = 10.dp),
-                minWidth = 0.dp,
-                colors =
-                    if (selected == index) ButtonDefaults.buttonColorsPrimary()
-                    else ButtonDefaults.buttonColors(),
-            ) {
-                Text(
-                    title,
-                    fontSize = 13.sp,
-                    color =
-                        if (selected == index) MiuixTheme.colorScheme.onPrimary
-                        else MiuixTheme.colorScheme.onSecondaryVariant,
-                )
-            }
-        }
-    }
+    AnimatedSectionTabs(
+        tabs = items,
+        selectedTabIndex = selected,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 6.dp),
+        onTabSelected = onSelect,
+    )
 }
 
 @Composable
@@ -360,8 +343,11 @@ internal fun TopicCard(
             }
         }
     }
-    Card(Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).clickable(onClick = onClick)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+    Card(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).clickable(onClick = onClick)) {
+        Column(
+            Modifier.padding(horizontal = 15.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
             // Favorites may provide a thread title but no author or avatar. Do not
             // invent an "unknown author" identity or a fake initial avatar.
             if (topic.author.isNotBlank() || topic.time.isNotBlank() || topic.forum.isNotBlank()) {
@@ -370,7 +356,7 @@ internal fun TopicCard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Row(
-                        Modifier.weight(1f).heightIn(min = if (topic.author.isBlank()) 26.dp else 48.dp)
+                        Modifier.weight(1f).heightIn(min = if (topic.author.isBlank()) 24.dp else 40.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .then(if (onAuthor != null && topic.author.isNotBlank())
                                 Modifier.clickable(onClick = onAuthor) else Modifier),
@@ -378,28 +364,45 @@ internal fun TopicCard(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         if (topic.author.isNotBlank()) {
-                            Avatar(if (showImages) topic.avatar else null, topic.author, size = 34)
+                            Avatar(if (showImages) topic.avatar else null, topic.author, size = 33)
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            if (topic.author.isNotBlank())
-                                Text(topic.author, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (topic.author.isNotBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(topic.author,
+                                        Modifier.weight(1f, fill = false),
+                                        fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    topic.level?.let { UserLevelPill(it) }
+                                }
+                            }
                             if (topic.time.isNotBlank())
                                 Text(topic.time, fontSize = 11.sp,
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                         }
                     }
                     if (topic.forum.isNotBlank())
-                        Text(topic.forum, modifier = Modifier.widthIn(max = 100.dp),
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                        Text(
+                            topic.forum,
+                            modifier = Modifier.widthIn(max = 100.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .045f))
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            fontSize = 11.sp,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
                 }
             }
             Text(
                 topic.title,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.SemiBold,
-                lineHeight = 25.sp,
+                lineHeight = 24.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -460,7 +463,7 @@ internal fun HiddenContentBadge() {
 private fun TopicStat(
     icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String, modifier: Modifier,
 ) {
-    Row(modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically,
+    Row(modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center) {
         Icon(icon, label, Modifier.size(15.dp), tint = MiuixTheme.colorScheme.onSurfaceVariantSummary)
         Spacer(Modifier.width(6.dp))
@@ -609,13 +612,21 @@ private fun CommunityBoardRow(board: ForumBoard, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(
-            Modifier.size(42.dp)
-                .clip(RoundedCornerShape(15.dp))
-                .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .055f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(MiuixNavigationIcons.Community, null, Modifier.size(24.dp))
+        if (LocalShowImages.current && !board.iconUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = board.iconUrl,
+                contentDescription = "${board.title}板块图标",
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)),
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+            )
+        } else {
+            Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(14.dp))
+                    .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .055f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(MiuixNavigationIcons.Community, null, Modifier.size(23.dp))
+            }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(board.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
@@ -797,11 +808,15 @@ fun ThreadScreen(
     var visitedPages by remember(url) { mutableStateOf(setOf(url)) }
     var loadMoreJob by remember(url) { mutableStateOf<Job?>(null) }
     var feedback by remember(url) { mutableStateOf<String?>(null) }
+    var liked by rememberSaveable(url) { mutableStateOf(false) }
+    var favorited by rememberSaveable(url) { mutableStateOf(false) }
+    var actionInProgress by remember(url) { mutableStateOf<Boolean?>(null) }
     val scroll = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val commentBackdrop = rememberLayerBackdrop()
     var replyTarget by remember(url) { mutableStateOf<ThreadReplyTarget?>(null) }
+    var rewardTarget by remember(url) { mutableStateOf<Pair<String, String>?>(null) }
 
     LaunchedEffect(url, refresh) {
         // A refresh replaces the entire accumulated comment stream, not just page one.
@@ -822,6 +837,21 @@ fun ThreadScreen(
         }
     }
 
+    // Determine the initial star state from the user's real favorite list, never from an
+    // optimistic in-memory tap count. Avoid resetting state while a mutation is running.
+    LaunchedEffect(detail?.tid, loggedIn) {
+        val tid = detail?.tid
+        if (loggedIn && !tid.isNullOrBlank() && actionInProgress == null) {
+            try {
+                favorited = repository.isThreadFavorited(tid)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Keep existing state when favorite list lookup is unavailable.
+            }
+        }
+    }
+
     fun reply(pid: String? = null, author: String? = null) {
         if (!loggedIn) {
             onLogin()
@@ -834,6 +864,30 @@ fun ThreadScreen(
                 author = author,
             )
         }
+    }
+
+    fun openThreadContent(title: String, target: String) {
+        val destination = target.toHttpUrlOrNull()
+        val isReply = destination?.host == ForumRepository.Host &&
+            destination.queryParameter("mod") == "post" &&
+            destination.queryParameter("action") == "reply" &&
+            (destination.queryParameter("tid") == detail?.tid ||
+                destination.queryParameter("tid").isNullOrBlank())
+        if (isReply) {
+            val pid = destination?.queryParameter("repquote")
+                ?: destination?.queryParameter("reppost")
+            reply(pid)
+        } else {
+            onOpen(title, target)
+        }
+    }
+
+    fun reward(post: ContentPost) {
+        if (!loggedIn) {
+            onLogin()
+            return
+        }
+        if (post.id.isNotBlank()) rewardTarget = post.id to post.author
     }
 
     fun share() {
@@ -853,17 +907,28 @@ fun ThreadScreen(
             return
         }
         val tid = detail?.tid ?: return
-        if (busy) return
+        if (busy || actionInProgress != null) return
+        if (!favorite && liked) return
         scope.launch {
-            busy = true
+            actionInProgress = favorite
             try {
-                feedback = repository.topicAction(tid, favorite)
+                if (favorite && favorited) {
+                    val result = repository.unfavoriteThread(tid)
+                    favorited = result.selected
+                } else {
+                    val result = repository.topicAction(tid, favorite)
+                    if (result.selected) {
+                        if (favorite) favorited = true else liked = true
+                    }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                feedback = e.readable()
+                // Keep the non-intrusive icon state unchanged on failure.
+                // Other message and reply feedback is handled separately.
+                android.util.Log.w("MtForumTopicAction", "Post action not confirmed", e)
             } finally {
-                busy = false
+                actionInProgress = null
             }
         }
     }
@@ -955,8 +1020,9 @@ fun ThreadScreen(
                                 if (hasOriginalPost) {
                                     val original = data.posts.first()
                                     item(key = "thread-original") {
-                                        ThreadPostCard(original, compact = false, onOpen = onOpen,
-                                            onReply = { reply(original.id, original.author) })
+                                        ThreadPostCard(original, compact = false, onOpen = ::openThreadContent,
+                                            onReply = null,
+                                            onReward = { reward(original) })
                                     }
                                 }
                                 val comments = if (hasOriginalPost) data.posts.drop(1) else data.posts
@@ -977,8 +1043,9 @@ fun ThreadScreen(
                                     }
                                 }
                                 items(comments, key = { "comment-${it.id}" }) { post ->
-                                    ThreadPostCard(post, compact = true, onOpen = onOpen,
-                                        onReply = { reply(post.id, post.author) })
+                                    ThreadPostCard(post, compact = true, onOpen = ::openThreadContent,
+                                        onReply = { reply(post.id, post.author) },
+                                        onReward = { reward(post) })
                                 }
                                 if (nextPage != null || moreLoading || moreError != null) {
                                     item(key = "thread-more-comments") {
@@ -1031,7 +1098,11 @@ fun ThreadScreen(
                 }
                 ThreadActionBar(
                     backdrop = commentBackdrop,
-                    enabled = !busy,
+                    enabled = !busy && actionInProgress == null,
+                    liked = liked,
+                    favorited = favorited,
+                    likeLoading = actionInProgress == false,
+                    favoriteLoading = actionInProgress == true,
                     onReply = { reply() },
                     onLike = { topicAction(false) },
                     onFavorite = { topicAction(true) },
@@ -1044,6 +1115,22 @@ fun ThreadScreen(
                     },
                 )
             }
+        }
+    }
+    rewardTarget?.let { (pid, author) ->
+        detail?.tid?.let { tid ->
+            ThreadRewardSheet(
+                repository = repository,
+                tid = tid,
+                pid = pid,
+                author = author,
+                onDismiss = { rewardTarget = null },
+                onDone = { result ->
+                    rewardTarget = null
+                    feedback = result
+                    refresh++
+                },
+            )
         }
     }
     replyTarget?.let { target ->
@@ -1066,7 +1153,8 @@ private fun ThreadPostCard(
     post: ContentPost,
     compact: Boolean,
     onOpen: (String, String) -> Unit,
-    onReply: () -> Unit,
+    onReply: (() -> Unit)?,
+    onReward: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(
@@ -1083,7 +1171,18 @@ private fun ThreadPostCard(
                     },
                 ) { Avatar(post.avatar, post.author, size = if (compact) 34 else 30) }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(post.author, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text(
+                            post.author,
+                            Modifier.weight(1f, fill = false),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        post.level?.let { UserLevelPill(it) }
+                    }
                     if (post.time.isNotBlank()) Text(
                         post.time, fontSize = 11.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -1102,8 +1201,24 @@ private fun ThreadPostCard(
                     onClick = { onOpen(link.text, link.url) },
                 )
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            ) {
                 Row(
+                    Modifier.clip(RoundedCornerShape(18.dp))
+                        .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .055f))
+                        .clickable(onClick = onReward)
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("✦", fontSize = 15.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    Text("打赏", fontSize = 12.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                }
+                if (compact && onReply != null) Row(
                     Modifier.clip(RoundedCornerShape(18.dp))
                         .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .055f))
                         .clickable(onClick = onReply)

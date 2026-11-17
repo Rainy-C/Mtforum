@@ -21,15 +21,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.rain.mtforum.core.network.ContentBlock
 import me.rain.mtforum.core.network.ContentLink
+import me.rain.mtforum.core.network.MallExchange
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-
-internal data class MallExchange(
-    val timestamp: String,
-    val status: String,
-    val username: String,
-    val amount: String,
-)
 
 /**
  * The Comiis mall sometimes supplies its purchase history as ONE text node rather
@@ -113,7 +107,8 @@ internal fun MallProductCard(block: ContentBlock, onOpen: (ContentLink) -> Unit)
                 }
             }
             val description = block.text.trim().removePrefix(title).trim()
-            if (description.isNotEmpty() && description != title) {
+            if (description.isNotEmpty() && description != title &&
+                !description.contains("抢购价") && !description.contains("已抢购")) {
                 Text(description, fontSize = 13.sp, lineHeight = 20.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -190,6 +185,7 @@ internal fun MallExchangeHistoryCard(
     records: List<MallExchange>,
     links: List<ContentLink>,
     onOpen: (ContentLink) -> Unit,
+    total: Int? = null,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
@@ -197,8 +193,11 @@ internal fun MallExchangeHistoryCard(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("兑换记录", Modifier.weight(1f), fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold)
-                Text("${records.size} 条", fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                Text(
+                    if (total != null) "显示 ${records.size} / ${total} 条" else "${records.size} 条",
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
             }
             records.forEachIndexed { index, entry ->
                 if (index != 0) NativeHairline()
@@ -233,19 +232,19 @@ internal fun MallExchangeHistoryCard(
                     }
                 }
             }
-            val extras = links.filterNot { link -> records.any { it.username == link.text.trim() } }
-                .distinctBy { it.url }.take(4)
-            if (extras.isNotEmpty()) {
+            links.firstOrNull { it.text == "下一页" }?.let { next ->
                 NativeHairline()
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    extras.forEach { link ->
-                        Text(link.text, Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
-                            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .05f))
-                            .clickable { onOpen(link) }.padding(9.dp),
-                            maxLines = 1, fontSize = 12.sp,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            overflow = TextOverflow.Ellipsis)
-                    }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Text(
+                        "查看更多兑换记录  ›",
+                        Modifier.clip(RoundedCornerShape(12.dp))
+                            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .06f))
+                            .clickable { onOpen(next) }
+                            .padding(horizontal = 15.dp, vertical = 10.dp),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MiuixTheme.colorScheme.onSurface,
+                    )
                 }
             }
         }

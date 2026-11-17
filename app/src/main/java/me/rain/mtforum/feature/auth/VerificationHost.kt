@@ -1,18 +1,9 @@
 package me.rain.mtforum.feature.auth
 
 import android.view.ViewGroup
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
@@ -22,6 +13,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import java.io.IOException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import me.rain.mtforum.core.network.ForumRepository
 import me.rain.mtforum.core.network.VerificationCoordinator
 import me.rain.mtforum.core.ui.ActionButton
@@ -30,29 +22,54 @@ import me.rain.mtforum.feature.web.releaseForumView
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Text
 
-/** Same-UA WebView + original-URL HTTP probe; cookies alone never prove success. */
+/**
+ * Human verification stays inside the original site's WebView.
+ * A passed challenge is never inferred from URL text or successful page load;
+ * the original URL must be confirmed by ForumRepository.probe().
+ */
 @Composable
 fun VerificationHost(request: VerificationCoordinator.Request, repository: ForumRepository) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var manual by remember(request.id) { mutableStateOf(false) }
-    val webView =
-        remember(request.id, context) { createForumWebView(context).apply { loadUrl(request.url) } }
+    var checking by remember(request.id) { mutableStateOf(false) }
+    var notice by remember(request.id) { mutableStateOf("正在打开论坛验证…") }
+    var lastCheck by remember(request.id) { mutableLongStateOf(0L) }
+    suspend fun probe() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (checking || request.result.isCompleted || now - lastCheck < 1800L) return
+        checking = true
+        lastCheck = now
+        try {
+            repository.cookies.flush()
+            if (repository.probe(request.url)) {
+                request.result.complete(true)
+            } else {
+                notice = "验证尚未被论坛确认，可重试或检查网页中的提示"
+            }
+        } catch (e: IOException) {
+            notice = "论坛网络检查失败，请检查连接后重试"
+        } catch (e: Exception) {
+            notice = "尚未确认通过，请在下方网页完成验证"
+        } finally {
+            checking = false
+        }
+    }
+    val webView = remember(request.id, context) {
+        createForumWebView(context,
+            onFinished = { scope.launch { probe() } },
+            onError = { manual = true; notice = "验证页加载失败，请尝试刷新" },
+        ).apply { loadUrl(request.url) }
+    }
     DisposableEffect(webView) { onDispose { webView.releaseForumView() } }
-    LaunchedEffect(request.id, "manual") {
-        delay(8000)
+    LaunchedEffect(request.id) {
+        delay(3500)
         manual = true
     }
     LaunchedEffect(request.id) {
         while (!request.result.isCompleted) {
-            delay(1000)
-            try {
-                if (repository.probe(request.url)) {
-                    request.result.complete(true)
-                    break
-                }
-            } catch (error: IOException) {
-                // A transient probe failure is not a successful verification.
-            }
+            delay(4500)
+            probe()
         }
     }
     if (manual) {
@@ -60,27 +77,45 @@ fun VerificationHost(request: VerificationCoordinator.Request, repository: Forum
             onDismissRequest = { request.result.complete(false) },
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            Card(Modifier.fillMaxWidth().padding(16.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("请完成论坛验证")
+            Card(Modifier.fillMaxWidth(.97f).fillMaxHeight(.86f)) {
+                Column(
+                    Modifier.fillMaxSize().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("论坛安全验证")
+                    Text(notice)
+                    // Full-size browser viewport. The original 420dp webview
+                    // clipped a whole responsive forum page into a small dialog.
                     AndroidView(
                         factory = {
                             (webView.parent as? ViewGroup)?.removeView(webView)
                             webView
                         },
-                        modifier = Modifier.fillMaxWidth().height(420.dp),
+                        modifier = Modifier.fillMaxWidth().weight(1f),
                     )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ActionButton("刷新网页", Modifier.weight(1f), primary = false) {
+                            webView.reload()
+                        }
+                        ActionButton(
+                            if (checking) "检查中…" else "我已完成",
+                            Modifier.weight(1f),
+                            primary = true,
+                            loading = checking,
+                        ) { scope.launch { probe() } }
+                    }
                     ActionButton(
-                        text = "取消验证",
-                        modifier = Modifier.fillMaxWidth(),
+                        "取消验证",
+                        Modifier.fillMaxWidth(),
                         primary = false,
-                        onClick = { request.result.complete(false) },
-                    )
+                    ) { request.result.complete(false) }
                 }
             }
         }
     } else {
-        // Keep the JS environment attached, with no visible full-page jump.
         AndroidView(
             factory = {
                 (webView.parent as? ViewGroup)?.removeView(webView)

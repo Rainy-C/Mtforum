@@ -19,7 +19,7 @@ class VerificationCoordinator {
         val request = Request(ids.incrementAndGet(), url, CompletableDeferred())
         mutablePending.value = request
         try {
-            withTimeoutOrNull(60_000) { request.result.await() } ?: false
+            withTimeoutOrNull(120_000) { request.result.await() } ?: false
         } finally {
             mutablePending.value = null
             request.result.cancel()

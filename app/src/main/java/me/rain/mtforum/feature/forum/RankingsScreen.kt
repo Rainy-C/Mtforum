@@ -1,10 +1,12 @@
 package me.rain.mtforum.feature.forum
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.draw.drawBehind
@@ -26,12 +28,15 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
 import me.rain.mtforum.core.network.ContentLink
 import me.rain.mtforum.core.network.ForumRepository
@@ -95,24 +100,23 @@ private fun AnimatedRankingTabs(
     var viewportWidthPx by remember { mutableIntStateOf(0) }
     val pillLeft = remember { Animatable(0f) }
     val pillWidth = remember { Animatable(0f) }
-    var previousSelection by remember { mutableStateOf<String?>(null) }
+    var indicatorInitialized by remember { mutableStateOf(false) }
     val activeBounds = bounds[selectedKey]
-    val transition = tween<Float>(durationMillis = 210, easing = FastOutSlowInEasing)
+    val transition = tween<Float>(270, easing = FastOutSlowInEasing)
 
-    LaunchedEffect(selectedKey, activeBounds) {
-        val target = activeBounds ?: return@LaunchedEffect
-        val changedTab = previousSelection != null && previousSelection != selectedKey
-        previousSelection = selectedKey
-        if (changedTab) {
+    // Bounds can change during a draw/layout pass. Restart only when the selected tab changes,
+    // otherwise a freshly measured bound can cancel the animation and snap the indicator.
+    LaunchedEffect(selectedKey) {
+        val target = snapshotFlow { bounds[selectedKey] }.filterNotNull().first()
+        if (!indicatorInitialized) {
+            pillLeft.snapTo(target.leftPx.toFloat())
+            pillWidth.snapTo(target.widthPx.toFloat())
+            indicatorInitialized = true
+        } else {
             coroutineScope {
                 launch { pillLeft.animateTo(target.leftPx.toFloat(), transition) }
                 launch { pillWidth.animateTo(target.widthPx.toFloat(), transition) }
             }
-        } else {
-            // On first display or a font/layout change, jump to the true bounds;
-            // otherwise the indicator incorrectly flies in from the screen edge.
-            pillLeft.snapTo(target.leftPx.toFloat())
-            pillWidth.snapTo(target.widthPx.toFloat())
         }
     }
 
@@ -130,7 +134,10 @@ private fun AnimatedRankingTabs(
             else -> null
         }
         if (scrollTarget != null) {
-            scrollState.animateScrollTo(scrollTarget.coerceIn(0, scrollState.maxValue), tween(230))
+            scrollState.animateScrollTo(
+                scrollTarget.coerceIn(0, scrollState.maxValue),
+                tween(durationMillis = 270, easing = FastOutSlowInEasing),
+            )
         }
     }
 
@@ -142,7 +149,7 @@ private fun AnimatedRankingTabs(
     ) {
         // The indicator lives on ONE draw layer instead of a separately measured Box.
         // Reading Animatable values inside drawBehind only invalidates drawing, not layout.
-        val highlight = MiuixTheme.colorScheme.onSurface.copy(alpha = .11f)
+        val highlight = MiuixTheme.colorScheme.onSurface.copy(alpha = .16f)
         Box(
             Modifier.drawBehind {
                 val width = pillWidth.value
@@ -160,6 +167,12 @@ private fun AnimatedRankingTabs(
                 tabs.forEach { tab ->
                     val key = rankingTabKey(tab.url)
                     val selected = key == selectedKey
+                    val tabInk by animateColorAsState(
+                        targetValue = if (selected) MiuixTheme.colorScheme.onSurface
+                            else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        animationSpec = tween(270, easing = FastOutSlowInEasing),
+                        label = "ranking-tab-ink-$key",
+                    )
                     Box(
                         Modifier.onGloballyPositioned { coordinates ->
                                 val measured = RankingTabBounds(
@@ -169,7 +182,12 @@ private fun AnimatedRankingTabs(
                                 if (bounds[key] != measured) bounds[key] = measured
                             }
                             .clip(RoundedCornerShape(18.dp))
-                            .clickable { onSelect(tab) }
+                            .selectable(
+                                selected = selected,
+                                interactionSource = null,
+                                indication = null,
+                                role = Role.Tab,
+                            ) { onSelect(tab) }
                             .heightIn(min = 48.dp)
                             .padding(horizontal = 19.dp, vertical = 13.dp),
                         contentAlignment = Alignment.Center,
@@ -178,8 +196,7 @@ private fun AnimatedRankingTabs(
                             tab.text,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = if (selected) MiuixTheme.colorScheme.onSurface
-                                    else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            color = tabInk,
                         )
                     }
                 }
@@ -280,7 +297,7 @@ internal fun RankingsScreen(
                         items(blocks, key = { block ->
                             "${block.rank}|${block.primaryLink?.url}|${block.title}"
                         }) { block ->
-                            NativeContentItem(block, doc.url) { link -> onOpen(link.text, link.url) }
+                            NativeContentItem(block, doc.url, onOpen = { link -> onOpen(link.text, link.url) })
                         }
                         if (blocks.isEmpty() && error == null && !loading) {
                             item(key = "empty") { EmptyState("榜单暂无内容") }

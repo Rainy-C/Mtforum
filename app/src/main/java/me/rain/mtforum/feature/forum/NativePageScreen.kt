@@ -253,6 +253,11 @@ fun NativePageScreen(
                     if (!needsLogin)
                         items(accountDisplayBlocks(nativeDisplayBlocks(doc.blocks.flatMap { block ->
                             if (signPage && block.kind == NativeContentKind.Facts) emptyList()
+                            else if (sectionGroup == "credits" && block.kind == NativeContentKind.Navigation &&
+                                block.links.any { link ->
+                                    link.url.contains("suboperation=creditrulelog") ||
+                                        link.url.contains("km=1")
+                                }) listOf(block)
                             else if (accountTabs.isNotEmpty() && block.kind == NativeContentKind.Navigation &&
                                 block.links.isNotEmpty() && block.links.all { link ->
                                     nativeSectionTabIdentity(link.url) in accountIdentities ||
@@ -271,7 +276,25 @@ fun NativePageScreen(
                                 if (otherLinks.isEmpty()) emptyList() else listOf(block.copy(links = otherLinks))
                             } else listOf(block)
                         }), doc.url)) { block ->
-                            NativeContentItem(block, doc.url, ::open)
+                            NativeContentItem(block, doc.url, ::open,
+                                onRemoveFavorite = { tid ->
+                                    scope.launch {
+                                        loading = true
+                                        try {
+                                            val result = repository.unfavoriteThread(tid)
+                                            feedback = result.message
+                                            onChanged()
+                                            refreshCurrent()
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            feedback = e.readable()
+                                        } finally {
+                                            loading = false
+                                        }
+                                    }
+                                },
+                            )
                         }
                     if (!needsLogin)
                         items(doc.forms, key = { it.id }) { form ->

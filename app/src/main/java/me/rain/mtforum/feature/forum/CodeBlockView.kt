@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -13,6 +14,8 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -20,6 +23,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -29,10 +34,15 @@ internal fun PostCodeBlock(code: String, languageHint: String? = null) {
     val label = remember(code, languageHint) { CodeSyntax.detect(code, languageHint) }
     val lines = remember(code) { code.lines() }
     var expanded by remember(code) { mutableStateOf(false) }
+    var reader by remember(code) { mutableStateOf(false) }
     val canFold = lines.size > 20
     val displayed = remember(code, expanded) { if (canFold && !expanded) lines.take(20).joinToString("\n") else code }
     val highlighted = remember(displayed, label, dark) { CodeSyntax.highlight(displayed, label, dark) }
     val contentColor = MiuixTheme.colorScheme.onSurface
+    fun copyCode() {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("MtForum source", code))
+    }
     val muted = MiuixTheme.colorScheme.onSurfaceVariantSummary
     Column(
         Modifier.fillMaxWidth().background(MiuixTheme.colorScheme.surface, RoundedCornerShape(16.dp))
@@ -41,10 +51,12 @@ internal fun PostCodeBlock(code: String, languageHint: String? = null) {
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             BasicText(label.uppercase(), style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = muted))
-            BasicText("复制", Modifier.clickable {
-                val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                manager.setPrimaryClip(ClipData.newPlainText("MTForum $label", code))
-            }, style = TextStyle(fontSize = 12.sp, color = contentColor))
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                BasicText("全屏", Modifier.clickable { reader = true },
+                    style = TextStyle(fontSize = 12.sp, color = contentColor))
+                BasicText("复制", Modifier.clickable { copyCode() },
+                    style = TextStyle(fontSize = 12.sp, color = contentColor))
+            }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (lines.size > 1) {
@@ -70,6 +82,56 @@ internal fun PostCodeBlock(code: String, languageHint: String? = null) {
                 style = TextStyle(color = contentColor, fontSize = 12.sp,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center),
             )
+        }
+    }
+    if (reader) {
+        val fullCode = remember(code, label, dark) { CodeSyntax.highlight(code, label, dark) }
+        Dialog(
+            onDismissRequest = { reader = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Column(
+                Modifier.fillMaxWidth(.96f).fillMaxHeight(.92f)
+                    .clip(RoundedCornerShape(21.dp))
+                    .background(MiuixTheme.colorScheme.surface)
+                    .padding(15.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+                    BasicText("返回", Modifier.clickable { reader = false }
+                        .padding(vertical = 8.dp),
+                        style = TextStyle(fontSize = 13.sp, color = contentColor))
+                    BasicText(label.uppercase(), Modifier.weight(1f),
+                        style = TextStyle(fontSize = 13.sp, color = muted,
+                            fontWeight = FontWeight.SemiBold))
+                    BasicText("复制", Modifier.clickable { copyCode() }
+                        .padding(vertical = 8.dp),
+                        style = TextStyle(fontSize = 13.sp, color = contentColor))
+                }
+                Row(
+                    Modifier.fillMaxWidth().weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MiuixTheme.colorScheme.background)
+                        .verticalScroll(rememberScrollState())
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (lines.size > 1) {
+                        BasicText((1..lines.size).joinToString("\n"),
+                            style = TextStyle(fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp, lineHeight = 21.sp, color = muted))
+                    }
+                    SelectionContainer {
+                        BasicText(fullCode, Modifier.horizontalScroll(rememberScrollState()),
+                            style = TextStyle(fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp, lineHeight = 21.sp, color = contentColor),
+                            softWrap = false)
+                    }
+                }
+                BasicText("可横向滚动 · 长按选择代码",
+                    style = TextStyle(fontSize = 11.sp, color = muted))
+            }
         }
     }
 }

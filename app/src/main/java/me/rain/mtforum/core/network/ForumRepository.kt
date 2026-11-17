@@ -16,6 +16,7 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -26,6 +27,23 @@ import okhttp3.Response
 class ForumRepository(val cookies: ForumCookies, val verification: VerificationCoordinator) {
     private val sessionMutation = Mutex()
     private val topicCache = linkedMapOf<String, Pair<List<Topic>, String?>>()
+    private val presenceCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Boolean?, Long>>()
+    private val presenceMaxAgeMs = 120_000L
+
+    fun cachedConversationPresence(uid: String): Boolean? =
+        presenceCache[uid]?.takeIf {
+            SystemClock.elapsedRealtime() - it.second < presenceMaxAgeMs
+        }?.first
+
+    suspend fun resolveConversationPresence(uid: String): Boolean? {
+        val record = presenceCache[uid]
+        if (record != null &&
+            SystemClock.elapsedRealtime() - record.second < presenceMaxAgeMs
+        ) return record.first
+        val presence = conversation(uid).online
+        presenceCache[uid] = presence to SystemClock.elapsedRealtime()
+        return presence
+    }
     private var cacheGeneration = 0
     // Keep foreground pages responsive without flooding Discuz/PHP with parallel HTML requests.
     private val requestSlots = Semaphore(2)
@@ -41,6 +59,7 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
     }
 
     fun clearContentCache() {
+        presenceCache.clear()
         cacheGeneration++
         topicCache.clear()
         previewCache.clear()
@@ -118,7 +137,8 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
     private suspend fun requestPage(request: Request): Page {
         var page = raw(request)
         if (ForumParser.isChallenge(page.body, page.type)) {
-            cookies.clearWaf()
+            // Keep WAF cookies from the challenge response: clearing these here
+            // can discard valid challenge state and create a verification loop.
             val replayable =
                 request.method == "GET" && !ContentParser.isMutationUrl(request.url.toString())
             val verificationUrl =
@@ -368,6 +388,49 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
         val target: String?,
     )
 
+    /**
+     * For ordinary thread replies, use the exact fastpostform published by the
+     * original thread page. The captured successful Comiis request uses this
+     * form, not the separate forum.php?mod=post&action=reply editor page.
+     */
+    suspend fun replyDocument(targetUrl: String): NativeDocument {
+        val target = safeUrl(targetUrl)
+        val tid = target.queryParameter("tid")?.takeIf { it.all(Char::isDigit) }
+            ?: return document(targetUrl, "回复")
+        if (target.queryParameter("repquote") != null)
+            return document(targetUrl, "回复")
+
+        val threadUrl = "$BaseUrl/thread-$tid-1-1.html"
+        val fromThread = document(threadUrl, "回复")
+        val fastpost = fromThread.forms.firstOrNull { form ->
+            form.id.startsWith("fastpostform") &&
+                form.fields.any { it.key == "message" } &&
+                form.fields.any { it.key == "formhash" } &&
+                form.url.toHttpUrlOrNull()?.queryParameter("action") == "reply"
+        } ?: return document(targetUrl, "回复")
+
+        // Real successful POST captured from the forum includes tid and
+        // replysubmit=yes in the URL itself. The raw HTML form action omits
+        // these fields because Discuz's fastpost JavaScript supplies them.
+        val action = fastpost.url.toHttpUrl().newBuilder().apply {
+            removeAllQueryParameters("tid")
+            addQueryParameter("tid", tid)
+            removeAllQueryParameters("replysubmit")
+            addQueryParameter("replysubmit", "yes")
+            removeAllQueryParameters("mobile")
+            addQueryParameter("mobile", "2")
+            removeAllQueryParameters("inajax")
+            addQueryParameter("inajax", "1")
+            removeAllQueryParameters("handlekey")
+            addQueryParameter("handlekey", "fastpost")
+        }.build().toString()
+        val form = fastpost.copy(
+            url = action, method = "POST", referer = threadUrl,
+            submits = listOf(RemoteSubmit("发表回复", "", "")),
+        )
+        return fromThread.copy(forms = listOf(form))
+    }
+
     suspend fun submit(
         form: RemoteForm,
         values: List<Pair<String, String>>,
@@ -419,9 +482,10 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
             builder.post(body)
         }
         val page = requestPage(builder.build())
-        if (page.body.trimStart().startsWith("{")) {
+        val ajaxBody = ContentParser.unwrap(page.body).trimStart()
+        if (ajaxBody.startsWith("{")) {
             val json =
-                runCatching { org.json.JSONObject(page.body) }.getOrNull()
+                runCatching { org.json.JSONObject(ajaxBody) }.getOrNull()
                     ?: throw ForumException("无法读取操作结果，请返回刷新查看")
             if (!json.has("err") || !json.has("msg")) throw ForumException("无法读取操作结果，请返回刷新查看")
             val message =
@@ -440,13 +504,19 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
                 target,
             )
         }
-        val failed = Regex("抱歉|失败|错误|无权|不允许|验证码不正确|密码不正确")
+        val failed = Regex("抱歉|失败|错误|无权|不允许|无效的请求|验证码不正确|验证码错误|密码不正确|请先登录|未登录")
             .containsMatchIn(ForumParser.message(page.body))
+        val redirectedToThread = action == "reply" && url.toString() != page.url &&
+            page.url.toHttpUrlOrNull()?.let { final ->
+                final.queryParameter("mod") == "viewthread" ||
+                    Regex("""/thread-\d+""").containsMatchIn(final.encodedPath)
+            } == true && ForumParser.hasForumSkeleton(page.body)
         val succeeded = !failed && (
-            Regex("操作成功|保存成功|修改成功|设置成功|发送成功|主题已发布|回复发布成功|回复成功|个人资料保存成功")
+            Regex("操作成功|保存成功|修改成功|设置成功|发送成功|主题已发布|回复发布成功|回复成功|回复发表成功|发表成功|发表回复成功|发布成功|个人资料保存成功")
                 .containsMatchIn(page.body) ||
                 Regex("""(?:parent\.)?show_success\s*\(|succeedhandle_\w+\s*\(""")
-                    .containsMatchIn(page.body)
+                    .containsMatchIn(page.body) ||
+                redirectedToThread
         )
         val doc = if (succeeded) NativeDocument("", page.url, emptyList(), emptyList())
             else try {
@@ -496,44 +566,215 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
         return message
     }
 
-    suspend fun topicAction(tid: String, favorite: Boolean): String {
+    data class TopicActionResult(val message: String, val selected: Boolean)
+
+    private fun topicActionFeedback(response: String, favorite: Boolean): TopicActionResult {
+        val action = if (favorite) "收藏" else "点赞"
+        val message = ForumParser.message(response).trim()
+        val repeated = if (favorite)
+            Regex("已经收藏|已收藏过|收藏过|重复收藏|已加入收藏").containsMatchIn(message)
+        else
+            Regex("已经推荐|已推荐过|推荐过|已经点赞|已点赞过|点赞过|已经支持|已支持过|已经评价|已评价过|您已评价过本主题|不能重复|重复推荐|重复点赞")
+                .containsMatchIn(message)
+        if (repeated) return TopicActionResult(message.ifBlank { "此前已${action}" }, true)
+        if (Regex("抱歉|失败|错误|不允许|无权|没有权限|无效|已关闭|禁止|验证码|无法提交|请先登录|请求来路不正确")
+                .containsMatchIn(message))
+            throw ForumException(message.take(180))
+        // Comiis/Discuz replies with recommendv:'+1' instead of the word "成功".
+        // This is the first-tap response seen in the captured recommend_add request.
+        val recommendAdded = !favorite &&
+            Regex("""["']recommendv["']\s*:\s*["']\+1["']""")
+                .containsMatchIn(response)
+        val confirmed = recommendAdded || message.length in 1..160 &&
+            Regex("成功|操作完成|推荐完成|感谢您的支持|谢谢支持|已加入收藏|已为您收藏")
+                .containsMatchIn(message)
+        if (!confirmed) throw ForumException(
+            "论坛未确认${action}结果，请刷新后核对，避免重复操作" +
+                (message.take(100).takeIf(String::isNotBlank)?.let { "：$it" } ?: "")
+        )
+        return TopicActionResult(message.ifBlank { "${action}成功" }, true)
+    }
+
+    suspend fun topicAction(tid: String, favorite: Boolean): TopicActionResult {
         if (!cookies.hasSession()) throw SessionExpiredException()
-        require(tid.all(Char::isDigit) && tid.isNotEmpty())
+        require(tid.isNotBlank() && tid.all(Char::isDigit))
         val ref = "$BaseUrl/thread-$tid-1-1.html"
-        val hash = ForumParser.formhash(html(ref).first) ?: throw ForumException("凭证已过期，请刷新后重试")
-        val url =
-            if (favorite)
-                "$BaseUrl/home.php"
-                    .toHttpUrl()
-                    .newBuilder()
-                    .addQueryParameter("mod", "spacecp")
-                    .addQueryParameter("ac", "favorite")
-                    .addQueryParameter("type", "thread")
-                    .addQueryParameter("id", tid)
-                    .addQueryParameter("formhash", hash)
-                    .addQueryParameter("mobile", "2")
-                    .build()
-            else
-                "$BaseUrl/forum.php"
-                    .toHttpUrl()
-                    .newBuilder()
-                    .addQueryParameter("mod", "misc")
-                    .addQueryParameter("action", "recommend")
-                    .addQueryParameter("handlekey", "recommend_add")
-                    .addQueryParameter("do", "add")
-                    .addQueryParameter("tid", tid)
-                    .addQueryParameter("hash", hash)
-                    .build()
-        return ForumParser.message(
-                request(
-                    Request.Builder()
-                        .url(url)
-                        .header("Referer", ref)
-                        .header("X-Requested-With", "XMLHttpRequest")
-                        .build()
-                )
+        val hash = ForumParser.formhash(html(ref).first)
+            ?: throw ForumException("无法获取操作凭证，请刷新帖子后重试")
+
+        if (!favorite) {
+            val likeUrl = "$BaseUrl/forum.php".toHttpUrl().newBuilder()
+                .addQueryParameter("mod", "misc")
+                .addQueryParameter("action", "recommend")
+                .addQueryParameter("handlekey", "recommend_add")
+                .addQueryParameter("do", "add")
+                .addQueryParameter("tid", tid)
+                .addQueryParameter("hash", hash)
+                .addQueryParameter("inajax", "1")
+                .build()
+            val response = request(
+                Request.Builder().url(likeUrl).header("Referer", ref)
+                    .header("X-Requested-With", "XMLHttpRequest").build()
             )
-            .ifBlank { "请刷新查看结果" }
+            return topicActionFeedback(response, false)
+        }
+
+        // Discuz GET renders a favorite form; the action is not applied until POST.
+        val popupUrl = "$BaseUrl/home.php".toHttpUrl().newBuilder()
+            .addQueryParameter("mod", "spacecp")
+            .addQueryParameter("ac", "favorite")
+            .addQueryParameter("type", "thread")
+            .addQueryParameter("id", tid)
+            .addQueryParameter("formhash", hash)
+            .addQueryParameter("inajax", "1")
+            .addQueryParameter("handlekey", "favorite")
+            .build()
+        val popup = request(
+            Request.Builder().url(popupUrl).header("Referer", ref)
+                .header("X-Requested-With", "XMLHttpRequest").build()
+        )
+        val form = org.jsoup.Jsoup.parse(ContentParser.unwrap(popup), popupUrl.toString())
+            .select("form").firstOrNull { candidate ->
+                val action = ContentParser.absolute(candidate.attr("action"), popupUrl.toString())
+                    ?: popupUrl.toString()
+                val target = action.toHttpUrlOrNull()
+                target?.queryParameter("ac") == "favorite" &&
+                    target.queryParameter("type") == "thread" &&
+                    (target.queryParameter("id") == tid || target.queryParameter("id") == null)
+            }
+        if (form == null) {
+            val message = ForumParser.message(popup)
+            if (Regex("已经收藏|已收藏过|收藏过|重复收藏|已加入收藏").containsMatchIn(message))
+                return TopicActionResult(message.ifBlank { "此前已收藏" }, true)
+            throw ForumException(
+                message.take(160).takeIf(String::isNotBlank)
+                    ?: "论坛未返回收藏确认表单，无法安全提交"
+            )
+        }
+        val actionUrl = safeUrl(
+            ContentParser.absolute(form.attr("action"), popupUrl.toString())
+                ?: popupUrl.toString()
+        )
+        val postUrl = actionUrl.newBuilder().removeAllQueryParameters("inajax")
+            .addQueryParameter("inajax", "1").build()
+        val posted = mutableSetOf<String>()
+        val body = FormBody.Builder()
+        form.select("input[name], textarea[name], select[name]").forEach { field ->
+            val name = field.attr("name")
+            val type = field.attr("type").lowercase()
+            if (name.isBlank() || field.hasAttr("disabled") ||
+                type in setOf("submit", "button", "reset", "file", "image") ||
+                type in setOf("checkbox", "radio") && !field.hasAttr("checked")) return@forEach
+            val value = when (field.tagName()) {
+                "textarea" -> field.wholeText()
+                "select" -> field.selectFirst("option[selected]")?.attr("value")
+                    ?: field.selectFirst("option")?.attr("value").orEmpty()
+                else -> field.attr("value")
+            }
+            body.add(name, value)
+            posted += name
+        }
+        if ("formhash" !in posted) body.add("formhash", hash)
+        if ("referer" !in posted) body.add("referer", ref)
+        if ("favoritesubmit" !in posted) body.add("favoritesubmit", "true")
+        form.selectFirst("button[type=submit][name], input[type=submit][name]")?.let {
+            body.add(it.attr("name"), it.attr("value").ifBlank { "true" })
+        }
+        val response = request(
+            Request.Builder().url(postUrl).header("Referer", popupUrl.toString())
+                .header("X-Requested-With", "XMLHttpRequest")
+                .post(body.build()).build()
+        )
+        return topicActionFeedback(response, true)
+    }
+
+    /**
+     * Deleting a favorite requires its unique favid, NOT its thread tid.
+     * Follow the actual Discuz two-step popup form shown in the user capture.
+     * Never act on a favorite unless its list row links to this exact tid.
+     */
+    private suspend fun favoriteDeleteUrl(tid: String): String? {
+        var next: String? = "$BaseUrl/home.php?mod=space&do=favorite&view=me&type=all&mobile=2"
+        val seen = mutableSetOf<String>()
+        repeat(4) {
+            val target = next ?: return null
+            if (!seen.add(target)) return null
+            val (body, page) = html(target)
+            val doc = org.jsoup.Jsoup.parse(ContentParser.unwrap(body), page)
+            doc.select("li.mysclist_li, li[id^=fav_]").forEach { row ->
+                val thread = row.select("a[href]").firstOrNull {
+                    ContentParser.topicId(it.attr("href")) == tid
+                }
+                if (thread != null) {
+                    val delete = row.select("a[href]").firstNotNullOfOrNull {
+                        val href = ContentParser.absolute(it.attr("href"), page)
+                        val u = href?.toHttpUrlOrNull()
+                        if (u?.host == Host && u.queryParameter("mod") == "spacecp" &&
+                            u.queryParameter("ac") == "favorite" &&
+                            u.queryParameter("op") == "delete" &&
+                            u.queryParameter("favid")?.all(Char::isDigit) == true) href else null
+                    }
+                    if (delete != null) return delete
+                }
+            }
+            next = doc.selectFirst("a.nxt[href], .pg a.next[href]")
+                ?.let { ContentParser.absolute(it.attr("href"), page) }
+        }
+        return null
+    }
+
+    suspend fun isThreadFavorited(tid: String): Boolean {
+        require(tid.isNotBlank() && tid.all(Char::isDigit))
+        if (!cookies.hasSession()) return false
+        return favoriteDeleteUrl(tid) != null
+    }
+
+    suspend fun unfavoriteThread(tid: String): TopicActionResult {
+        if (!cookies.hasSession()) throw SessionExpiredException()
+        require(tid.isNotBlank() && tid.all(Char::isDigit))
+        val listUrl = "$BaseUrl/home.php?mod=space&do=favorite&view=me&type=all&mobile=2"
+        val deleteUrl = favoriteDeleteUrl(tid)
+            ?: throw ForumException("未在近期收藏中找到该帖子，请在收藏列表核对")
+        val popupUrl = deleteUrl.toHttpUrl().newBuilder()
+            .setQueryParameter("inajax", "1").build()
+        val popup = request(
+            Request.Builder().url(popupUrl).header("Referer", listUrl)
+                .header("X-Requested-With", "XMLHttpRequest").build()
+        )
+        val doc = org.jsoup.Jsoup.parse(ContentParser.unwrap(popup), popupUrl.toString())
+        val form = doc.select("form[id^=favoriteform_]").firstOrNull()
+            ?: throw ForumException(ForumParser.message(popup).ifBlank { "删除收藏确认表单不存在" })
+        val action = ContentParser.absolute(form.attr("action"), popupUrl.toString())
+            ?: throw ForumException("删除收藏地址无效")
+        val target = safeUrl(action)
+        if (target.queryParameter("ac") != "favorite" ||
+            target.queryParameter("op") != "delete" ||
+            target.queryParameter("favid") != popupUrl.queryParameter("favid"))
+            throw ForumException("收藏记录校验失败，已取消删除")
+        val postUrl = target.newBuilder()
+            .setQueryParameter("handlekey", form.id())
+            .setQueryParameter("inajax", "1")
+            .build()
+        val fields = FormBody.Builder()
+        val posted = mutableSetOf<String>()
+        form.select("input[name]").forEach { field ->
+            val name = field.attr("name")
+            val type = field.attr("type").lowercase()
+            if (name.isBlank() || type in setOf("button", "reset", "file", "submit")) return@forEach
+            fields.add(name, field.attr("value"))
+            posted.add(name)
+        }
+        if ("deletesubmit" !in posted) fields.add("deletesubmit", "true")
+        if ("handlekey" !in posted) fields.add("handlekey", form.id())
+        val result = request(
+            Request.Builder().url(postUrl).header("Referer", popupUrl.toString())
+                .header("X-Requested-With", "XMLHttpRequest")
+                .post(fields.build()).build()
+        )
+        val message = ForumParser.message(result)
+        if (Regex("操作成功|删除成功|取消收藏成功").containsMatchIn(result))
+            return TopicActionResult("已取消收藏", false)
+        throw ForumException(message.ifBlank { "论坛未确认取消收藏" })
     }
 
     suspend fun uploadAvatar(bytes: ByteArray): String {
@@ -611,13 +852,49 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
 
     suspend fun conversations(): List<ConversationSummary> {
         val (body, url) = html("$BaseUrl/home.php?mod=space&do=pm&mobile=2")
-        return withContext(Dispatchers.Default) { ContentParser.conversations(body, url) }
+        val summaries = withContext(Dispatchers.Default) {
+            ContentParser.conversations(body, url)
+        }
+        return summaries.map { item ->
+            if (item.online != null) {
+                presenceCache[item.uid] = item.online to SystemClock.elapsedRealtime()
+                item
+            } else item.copy(online = cachedConversationPresence(item.uid))
+        }
     }
 
     suspend fun conversation(uid: String): Conversation {
         require(uid.isNotEmpty() && uid.all(Char::isDigit))
         val (body, url) = html("$BaseUrl/home.php?mod=space&do=pm&subop=view&touid=$uid&mobile=2")
-        return withContext(Dispatchers.Default) { ContentParser.conversation(body, url, uid) }
+        val result = withContext(Dispatchers.Default) {
+            ContentParser.conversation(body, url, uid)
+        }
+        if (result.online != null) {
+            presenceCache[uid] = result.online to SystemClock.elapsedRealtime()
+        }
+        return result
+    }
+
+    suspend fun uploadPrivateImage(
+        conversation: Conversation,
+        bytes: ByteArray,
+        filename: String,
+        mime: String,
+    ): String {
+        val config = conversation.upload
+            ?: throw ForumException("论坛私信页未提供图片上传权限。可使用“图片链接”发送已有的网络图片")
+        if (!cookies.hasSession()) throw SessionExpiredException()
+        val uploadForm = RemoteForm(
+            "pm-upload",
+            "$BaseUrl/home.php?mod=space&do=pm&subop=view&touid=${conversation.peer}&mobile=2",
+            "POST",
+            true,
+            emptyList(),
+            emptyList(),
+            upload = config,
+        )
+        val aid = uploadPostImage(uploadForm, bytes, filename, mime)
+        return "[attachimg]$aid[/attachimg]"
     }
 
     suspend fun sendPrivateMessage(conversation: Conversation, text: String) {

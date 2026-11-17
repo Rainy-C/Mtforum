@@ -8,6 +8,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
@@ -26,6 +27,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
@@ -273,11 +276,13 @@ fun HomeScreen(account: AccountViewModel = viewModel()) {
                                         state,
                                         ::login,
                                         account::refresh,
-                                        { logout.value = true },
-                                        ::open,
-                                        { push("about") },
-                                        { push("settings") },
-                                        { push("avatar") },
+                                        { if (stack.size == 1) logout.value = true },
+                                        // The root profile stays composed behind detail routes.
+                                        // Do not allow a covered profile's stats to open "我的回复".
+                                        { title, target -> if (stack.size == 1) open(title, target) },
+                                        { if (stack.size == 1) push("about") },
+                                        { if (stack.size == 1) push("settings") },
+                                        { if (stack.size == 1) push("avatar") },
                                     )
                                 }
                             }
@@ -409,6 +414,17 @@ fun HomeScreen(account: AccountViewModel = viewModel()) {
     }
     Box(Modifier.fillMaxSize().clipToBounds().background(MiuixTheme.colorScheme.background)) {
         Render(stack.first())
+        // The retained root tab must never receive a tap through an uncovered
+        // part of a detail page. A drawing-only background is not a touch barrier.
+        if (stack.size > 1) {
+            Box(
+                Modifier.matchParentSize().clickable(
+                    interactionSource = null,
+                    indication = null,
+                    onClick = {},
+                ),
+            )
+        }
         // Every open detail route owns a stable keyed composition, regardless of whether
         // it is active or covered. Neither a tab switch nor a nested navigation can
         // destroy the destination that edge-back reveals.
@@ -434,9 +450,28 @@ fun HomeScreen(account: AccountViewModel = viewModel()) {
                         // An empty reveal layer avoids any screenshot-to-live swap.
                         previous = {},
                     ) {
-                        Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.background)) {
+                        Box(
+                            Modifier.fillMaxSize()
+                                .background(MiuixTheme.colorScheme.background)
+                                .clickable(
+                                    interactionSource = null,
+                                    indication = null,
+                                    onClick = {},
+                                ),
+                        ) {
                             routeStates.SaveableStateProvider(route.id) { Render(route) }
                         }
+                    }
+                    // Covered routes stay composed for smooth back transitions, but their
+                    // child buttons must be completely inactive until revealed again.
+                    if (!isTop) {
+                        Box(
+                            Modifier.matchParentSize().clickable(
+                                interactionSource = null,
+                                indication = null,
+                                onClick = {},
+                            ),
+                        )
                     }
                 }
             }
@@ -470,7 +505,13 @@ private fun MessagesScreen(
     var category by rememberSaveable { mutableIntStateOf(0) }
     val paths = listOf("do=pm", "do=notice&view=mypost&type=post", "do=notice&view=system")
     Column(Modifier.fillMaxSize()) {
-        PageHeader("消息")
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().height(60.dp)
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("消息", fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
+        }
         if (!loggedIn)
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 EmptyState(

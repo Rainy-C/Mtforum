@@ -17,6 +17,7 @@ data class Topic(
     val images: List<String> = emptyList(),
     val hasImageAttachments: Boolean = false,
     val hasHiddenContent: Boolean = false,
+    val level: String? = null,
 )
 
 data class ForumBoard(
@@ -25,6 +26,7 @@ data class ForumBoard(
     val group: String,
     val summary: String = "",
     val todayPosts: String? = null,
+    val iconUrl: String? = null,
 )
 
 data class ContentLink(val text: String, val url: String)
@@ -39,6 +41,7 @@ data class ContentPost(
     val html: String,
     val images: List<String>,
     val links: List<ContentLink>,
+    val level: String? = null,
 )
 
 data class TopicDetail(
@@ -85,8 +88,15 @@ data class RemoteForm(
     val referer: String = url,
 )
 
+data class MallExchange(
+    val timestamp: String,
+    val status: String,
+    val username: String,
+    val amount: String,
+)
+
 enum class NativeContentKind {
-    Text, Navigation, Person, Thread, Notice, Product, Rank, Facts, CreditRecord, UserGroup
+    Text, Navigation, Person, Thread, Notice, Product, MallHistory, Rank, Facts, CreditRecord, UserGroup
 }
 
 data class ContentFact(val label: String, val value: String)
@@ -114,6 +124,8 @@ data class ContentBlock(
     val primaryLink: ContentLink? = null,
     val hasHiddenContent: Boolean = false,
     val feedMeta: FeedListMeta? = null,
+    val mallExchanges: List<MallExchange> = emptyList(),
+    val mallTotal: Int? = null,
 )
 
 data class NativeDocument(
@@ -143,6 +155,13 @@ data class ConversationSummary(
     val text: String,
     val time: String,
     val unread: Boolean,
+    val online: Boolean? = null,
+)
+
+data class ChatPart(
+    val text: String = "",
+    val imageUrl: String? = null,
+    val smiley: Boolean = false,
 )
 
 data class ChatMessage(
@@ -150,6 +169,7 @@ data class ChatMessage(
     val time: String,
     val mine: Boolean,
     val images: List<String>,
+    val parts: List<ChatPart> = emptyList(),
 )
 
 data class Conversation(
@@ -158,4 +178,6 @@ data class Conversation(
     val pmid: String,
     val formhash: String,
     val messages: List<ChatMessage>,
+    val upload: UploadConfig? = null,
+    val online: Boolean? = null,
 )

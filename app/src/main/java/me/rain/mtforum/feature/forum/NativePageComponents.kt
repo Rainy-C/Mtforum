@@ -11,6 +11,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,7 +84,12 @@ internal fun accountDisplayBlocks(blocks: List<ContentBlock>, page: String): Lis
 }
 
 @Composable
-internal fun NativeContentItem(block: ContentBlock, page: String, onOpen: (ContentLink) -> Unit) {
+internal fun NativeContentItem(
+    block: ContentBlock,
+    page: String,
+    onOpen: (ContentLink) -> Unit,
+    onRemoveFavorite: ((String) -> Unit)? = null,
+) {
     if (block.kind == NativeContentKind.Rank) {
         RankContentCard(block, onOpen)
         return
@@ -122,6 +129,12 @@ internal fun NativeContentItem(block: ContentBlock, page: String, onOpen: (Conte
         return
     }
     if (page.contains("keke_integralmall", ignoreCase = true)) {
+        if (block.kind == NativeContentKind.MallHistory) {
+            MallExchangeHistoryCard(
+                block.mallExchanges, block.links, onOpen, block.mallTotal,
+            )
+            return
+        }
         val exchanges = androidx.compose.runtime.remember(block.text) { parseMallExchanges(block.text) }
         if (exchanges.isNotEmpty()) {
             MallExchangeHistoryCard(exchanges, block.links, onOpen)
@@ -156,7 +169,12 @@ internal fun NativeContentItem(block: ContentBlock, page: String, onOpen: (Conte
             ContentParser.topicId(it.url) != null && !ContentParser.isMutationUrl(it.url)
         }
         if (favoriteTarget != null) {
-            FavoriteThreadCard(block.title.ifBlank { favoriteTarget.text }, favoriteTarget, onOpen)
+            FavoriteThreadCard(
+                block.title.ifBlank { favoriteTarget.text }, favoriteTarget, onOpen,
+                ContentParser.topicId(favoriteTarget.url)?.let { id ->
+                    onRemoveFavorite?.let { callback -> { callback(id) } }
+                },
+            )
             return
         }
     }
@@ -283,7 +301,11 @@ private fun FavoriteThreadCard(
     title: String,
     link: ContentLink,
     onOpen: (ContentLink) -> Unit,
+    onRemove: (() -> Unit)?,
 ) {
+    var confirmDelete by androidx.compose.runtime.remember(link.url) {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
     Card(
         Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
@@ -315,7 +337,23 @@ private fun FavoriteThreadCard(
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
             }
-            Icon(
+            if (onRemove != null) {
+                Text(
+                    if (confirmDelete) "确认移除" else "移除",
+                    Modifier.clip(RoundedCornerShape(11.dp))
+                        .background(
+                            if (confirmDelete) Color(0xFFC44747).copy(alpha = .11f)
+                            else MiuixTheme.colorScheme.onSurface.copy(alpha = .055f)
+                        )
+                        .clickable {
+                            if (confirmDelete) onRemove() else confirmDelete = true
+                        }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    fontSize = 12.sp,
+                    color = if (confirmDelete) Color(0xFFC44747)
+                        else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            } else Icon(
                 MiuixIcons.Useful.Back, null, Modifier.size(17.dp).rotate(180f),
                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )

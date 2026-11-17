@@ -13,6 +13,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,43 +91,87 @@ internal fun creditSnapshot(block: ContentBlock): CreditSnapshot {
 internal fun CreditDashboardCard(block: ContentBlock, onOpen: (ContentLink) -> Unit) {
     val data = creditSnapshot(block)
     val muted = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    var showFormula by remember(block.text) { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (data.total != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text("总积分", fontSize = 13.sp, color = muted)
-                    Text(data.total, fontSize = 34.sp, lineHeight = 39.sp,
-                        fontWeight = FontWeight.SemiBold)
-                }
-            } else {
-                Text("积分概览", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 19.dp, vertical = 21.dp),
+            verticalArrangement = Arrangement.spacedBy(17.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("账户积分", fontSize = 13.sp, color = muted)
+                Text(data.total ?: "—", fontSize = 39.sp, lineHeight = 45.sp,
+                    fontWeight = FontWeight.SemiBold)
+                Text("总积分", fontSize = 12.sp, color = muted)
             }
             if (data.balances.isNotEmpty()) {
                 AccountSeparator()
-                data.balances.chunked(2).forEach { pair ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        pair.forEach { fact ->
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    data.balances.take(3).forEach { fact ->
+                        Column(
+                            Modifier.weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .045f))
+                                .padding(horizontal = 11.dp, vertical = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(fact.label, fontSize = 12.sp, color = muted, maxLines = 1)
+                            Text(fact.value, fontSize = 22.sp, lineHeight = 27.sp,
+                                fontWeight = FontWeight.SemiBold, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                data.balances.drop(3).chunked(3).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        row.forEach { fact ->
+                            Column(
+                                Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                                    .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .045f))
+                                    .padding(11.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
                                 Text(fact.label, fontSize = 12.sp, color = muted)
-                                Text(fact.value, fontSize = 23.sp, lineHeight = 28.sp,
-                                    fontWeight = FontWeight.SemiBold, maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis)
+                                Text(fact.value, fontSize = 20.sp,
+                                    fontWeight = FontWeight.SemiBold)
                             }
                         }
-                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
             if (!data.formula.isNullOrBlank()) {
                 AccountSeparator()
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("积分计算规则", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text(data.formula, fontSize = 13.sp, lineHeight = 21.sp, color = muted)
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(13.dp))
+                        .clickable { showFormula = !showFormula }
+                        .padding(vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("积分计算规则", fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold)
+                        Text("查看论坛官方积分公式", fontSize = 12.sp, color = muted)
+                    }
+                    Text(if (showFormula) "收起  ↑" else "展开  ↓",
+                        fontSize = 12.sp, color = muted)
+                }
+                if (showFormula) {
+                    Text(
+                        data.formula.orEmpty(),
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .045f))
+                            .padding(13.dp),
+                        fontSize = 13.sp, lineHeight = 21.sp, color = muted,
+                    )
                 }
             }
-            if (data.remainder.isNotBlank()) {
-                Text(data.remainder, fontSize = 14.sp, lineHeight = 22.sp, color = muted)
-            }
+            if (data.remainder.isNotBlank())
+                Text(data.remainder, fontSize = 13.sp, lineHeight = 21.sp, color = muted)
             AccountLinkActions(block.links, onOpen)
         }
     }

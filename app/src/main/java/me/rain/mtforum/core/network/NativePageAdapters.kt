@@ -14,7 +14,12 @@ internal object NativePageAdapters {
         val plugin = url.queryParameter("id").orEmpty()
         val sign = url.encodedPath.contains("k_misign") || plugin.startsWith("k_misign")
         val mall = url.encodedPath.contains("keke_integralmall") || plugin.startsWith("keke_integralmall")
+        if (mall && url.encodedPath.contains("keke_integralmall-view")) {
+            return mallDetail(doc, page)
+        }
         val creditHistory = ac == "credit" && url.queryParameter("op") in setOf("log", "loglist", "record")
+        if (creditHistory && doc.selectFirst(".comiis_credits_log") != null)
+            return creditLog(doc, page)
         val selector = when {
             sign && url.queryParameter("operation") == "list" -> "tbody[id^=autolist_]"
             sign -> return signPage(doc, page)
@@ -72,6 +77,118 @@ internal object NativePageAdapters {
                 ?.let { row(it, page) }
             return if (message != null) Result(navigation(doc, page) + message) else null
         }
+        return Result(navigation(doc, page) + blocks)
+    }
+
+    /** Credit record rows and sub-tabs follow the captured Comiis structure. */
+    private fun creditLog(doc: Element, page: String): Result {
+        val filters = doc.select("#comiis_sub_btn a[href]").mapNotNull { link(it, page) }
+            .distinctBy { it.url }
+        val navigation = navigation(doc, page).toMutableList()
+        if (filters.isNotEmpty()) {
+            navigation += ContentBlock(
+                text = "", title = "记录分类", kind = NativeContentKind.Navigation,
+                links = filters,
+            )
+        }
+        val entries = doc.select(".comiis_credits_log > ul > li")
+            .mapNotNull { item ->
+                val kind = ContentParser.clean(item.selectFirst(".cre_mun")?.ownText().orEmpty())
+                val value = ContentParser.clean(item.selectFirst(".cre_mun span")?.text().orEmpty())
+                val time = ContentParser.clean(item.selectFirst("h2 .f_d.y")?.text().orEmpty())
+                val cause = ContentParser.clean(
+                    item.selectFirst("h2 span.f_d:not(.y)")?.text()
+                        ?: item.selectFirst("h2")?.ownText().orEmpty()
+                ).ifBlank { "积分变动" }
+                val detail = ContentParser.clean(item.selectFirst("p")?.text().orEmpty())
+                if (kind.isEmpty() || value.isEmpty()) null else ContentBlock(
+                    text = buildString {
+                        append(kind).append(" ").append(value)
+                        if (time.isNotEmpty()) append("\n").append(time)
+                        if (detail.isNotEmpty()) append("\n").append(detail)
+                    },
+                    title = cause,
+                    kind = NativeContentKind.CreditRecord,
+                    facts = listOf(
+                        ContentFact("项目", kind), ContentFact("变动", value),
+                        ContentFact("时间", time), ContentFact("备注", detail),
+                    ).filter { it.value.isNotBlank() },
+                )
+            }
+        val next = doc.selectFirst(".comiis_credits_log .pg a.nxt[href], .pg a.nxt[href]")
+            ?.let { ContentParser.absolute(it.attr("href"), page) }
+        if (next != null) {
+            navigation += ContentBlock(
+                text = "", kind = NativeContentKind.Navigation,
+                links = listOf(ContentLink("下一页", next)),
+            )
+        }
+        return Result(navigation + entries.ifEmpty {
+            listOf(ContentBlock("当前没有可展示的积分记录", kind = NativeContentKind.Text))
+        })
+    }
+
+    /** Structured Comiis marketplace detail, using the captured #buylist row contract. */
+    private fun mallDetail(doc: Element, page: String): Result? {
+        val title = ContentParser.clean(
+            doc.selectFirst(".comiis_viewtit h2, .main h2, .mallitem h2")?.text().orEmpty()
+        ).ifBlank { "积分商品" }
+        val image = doc.selectFirst("#prodoct-img img, .mallitem .item-img")
+            ?.let { ContentParser.imageUrl(it, page) }
+        val price = ContentParser.clean(
+            doc.selectFirst(".price-real i, .discount-price i")?.text().orEmpty()
+        )
+        val stock = ContentParser.clean(doc.selectFirst(".count-take")?.text().orEmpty())
+        val sold = ContentParser.clean(doc.selectFirst(".count-rest")?.text().orEmpty())
+        val description = doc.selectFirst(".centent")?.wholeText()?.trim().orEmpty()
+        val blocks = mutableListOf<ContentBlock>()
+        if (image != null || price.isNotBlank()) {
+            val facts = buildList {
+                if (price.isNotBlank()) add(ContentFact("价格", price))
+                if (stock.isNotBlank()) add(ContentFact("库存", stock))
+                if (sold.isNotBlank()) add(ContentFact("销量", sold))
+            }
+            blocks += ContentBlock(
+                text = description, title = title, image = image,
+                kind = NativeContentKind.Product, facts = facts,
+            )
+        }
+        val actions = doc.select(".item-btn a[href]").mapNotNull { link(it, page) }
+            .distinctBy { it.url }.take(2)
+        if (actions.isNotEmpty()) {
+            blocks += ContentBlock(
+                text = "兑换与卡密查询", title = "商品服务",
+                kind = NativeContentKind.Text, links = actions,
+            )
+        }
+        val records = doc.select("#buylist > li").mapNotNull { item ->
+            val time = ContentParser.clean(item.selectFirst(".ac")?.text().orEmpty())
+            val status = ContentParser.clean(item.selectFirst(".state")?.text().orEmpty())
+            val member = ContentParser.clean(item.selectFirst(".dhname")?.text().orEmpty())
+            val amount = ContentParser.clean(item.selectFirst(".jyje")?.text().orEmpty())
+                .removeSuffix("金币").trim()
+            if (time.isBlank() || member.isBlank() || amount.isBlank()) null
+            else MallExchange(time, status, member, amount)
+        }
+        val total = Regex("""兑换记录\s*(\d+)\s*条""")
+            .find(doc.selectFirst(".counts")?.text().orEmpty())
+            ?.groupValues?.get(1)?.toIntOrNull()
+        if (records.isNotEmpty() || total != null) {
+            val accountLinks = doc.select("#buylist > li .dhname a[href]")
+                .mapNotNull { link(it, page) }.distinctBy { it.url }
+            val nextLink = doc.selectFirst("#buylist .mallpage a.nxt[name]")
+                ?.let { a ->
+                    ContentParser.absolute(a.attr("name"), page)?.let { url ->
+                        ContentLink("下一页", url)
+                    }
+                }
+            blocks += ContentBlock(
+                text = "", title = "兑换记录", kind = NativeContentKind.MallHistory,
+                links = accountLinks + listOfNotNull(nextLink),
+                mallExchanges = records, mallTotal = total,
+            )
+        }
+        if (blocks.isEmpty()) return null
         return Result(navigation(doc, page) + blocks)
     }
 

@@ -15,6 +15,23 @@ object ContentParser {
     fun clean(text: String): String =
         text.replace(Regex("[\\uE000-\\uF8FF\\uFFFD]"), "").replace(Regex("\\s+"), " ").trim()
 
+    /**
+     * Comiis puts the real member rank in a.top_lev (e.g. "Lv.7 博士生").
+     * Older selectors such as .user_lev are only present in other themes.
+     * Never infer a rank from post count, UID, or the current user's profile.
+     */
+    fun memberLevel(node: Element): String? {
+        val raw = clean(node.selectFirst(
+            "a.top_lev[href*=ac=usergroup], .top_lev, .user_lev, " +
+                ".comiis_user_lev, .userlevel, .userinfo .user_lev"
+        )?.text().orEmpty())
+        val match = Regex("""(?i)\bLv\.?\s*(\d{1,3})\b""").find(raw) ?: return null
+        val rank = "Lv.${match.groupValues[1]}"
+        val title = raw.substring(match.range.last + 1).trim()
+            .let { Regex("""^[\p{L}]{1,8}""").find(it)?.value }
+        return if (title.isNullOrEmpty()) rank else "$rank $title"
+    }
+
     fun absolute(raw: String, page: String = base): String? {
         val decoded = raw.trim().replace("&amp;", "&")
         val value = if (decoded.startsWith("$base/https://")) decoded.removePrefix("$base/") else decoded
@@ -71,6 +88,8 @@ object ContentParser {
 
     private val smileyPath =
         Regex("""/static/image/smil(?:ey|ie)s?/|/smil(?:ey|ie)s?/""", RegexOption.IGNORE_CASE)
+
+    fun isSmileyUrl(url: String): Boolean = smileyPath.containsMatchIn(url)
 
     /** Forum smileys are inline text, never full-width content images. */
     fun isSmileyImage(image: Element): Boolean {
@@ -177,6 +196,7 @@ object ContentParser {
                             .take(3),
                         hasImageAttachments = row.selectFirst("img[alt=attach_img], img[title=图片附件]") != null,
                         hasHiddenContent = metadata.hidden,
+                        level = metadata.level,
                     )
                 }
                 .distinctBy { it.id }
@@ -194,8 +214,6 @@ object ContentParser {
             ForumBoard("40", "求助问答", "交流与讨论"),
             ForumBoard("44", "综合交流", "交流与讨论"),
             ForumBoard("50", "休闲灌水", "交流与讨论"),
-            ForumBoard("46", "官方公告", "论坛事务"),
-            ForumBoard("53", "申诉举报", "论坛事务"),
         )
 
     fun boards(body: String): List<ForumBoard> {
@@ -216,10 +234,17 @@ object ContentParser {
                     val title = (countPrefix.matchEntire(chosen)?.groupValues?.get(2)
                         ?: (if (chosen == raw || chosen == todayPosts) prefixed?.groupValues?.get(2) else null)
                         ?: chosen).trim()
-                    if (title.isBlank() || title.length > 32 || title.contains("下一页"))
+                    if (title.isBlank() || title.length > 32 || title.contains("下一页") ||
+                        title.contains("站务专区") || id in setOf("46", "53"))
                         return@mapNotNull null
                     val known = defaultBoards.firstOrNull { it.id == id }
-                    ForumBoard(id, title, known?.group ?: "更多板块", known?.summary.orEmpty(), todayPosts)
+                    val icon = a.selectFirst("img[src*=common_], img[data-src*=common_]")?.let {
+                        imageUrl(it, base)
+                    }?.takeIf { url ->
+                        Regex("""/data/attachment/common/[^/]+/common_${id}_icon\.(png|jpg|gif)""",
+                            RegexOption.IGNORE_CASE).containsMatchIn(url)
+                    }
+                    ForumBoard(id, title, known?.group ?: "更多板块", known?.summary.orEmpty(), todayPosts, icon)
                 }
                 .distinctBy { it.id }
         return if (result.isEmpty()) defaultBoards else result
@@ -306,6 +331,7 @@ object ContentParser {
                             }
                         }
                         .distinctBy { it.url },
+                    memberLevel(fragment),
                 )
             }
         return TopicDetail(
@@ -714,6 +740,23 @@ object ContentParser {
         )
     }
 
+    // Presence is a server-provided hint, not something inferred from activity time.
+    // Unknown stays null so the UI never incorrectly marks a member "online".
+    private val presenceLabel = Regex("""[（(]\s*(在线|离线)\s*[)）]""")
+    fun presenceFromLabel(text: String): Boolean? {
+        // Avatar/title attributes often contain just 在线 or 离线, without brackets.
+        val status = presenceLabel.find(text)?.groupValues?.getOrNull(1)
+            ?: text.trim().takeIf { it == "在线" || it == "离线" }
+        return when (status) {
+            "在线" -> true
+            "离线" -> false
+            else -> null
+        }
+    }
+
+    fun displayMemberName(raw: String): String =
+        raw.replace(presenceLabel, "").trim()
+
     fun conversations(body: String, page: String): List<ConversationSummary> {
         val doc = Jsoup.parse(unwrap(body), page)
         return doc.select("a[href*=do=pm][href*=subop=view][href*=touid=]")
@@ -746,6 +789,16 @@ object ContentParser {
                     summary,
                     time,
                     row.selectFirst("span.kmnums") != null,
+                    presenceFromLabel(name)
+                        ?: presenceFromLabel(
+                            row.selectFirst("[title*=在线], [title*=离线], [alt*=在线], [alt*=离线]")
+                                ?.let { it.attr("title").ifBlank { it.attr("alt") } }.orEmpty()
+                        )
+                        ?: when {
+                            row.selectFirst(".online, .status_online, .comiis_online") != null -> true
+                            row.selectFirst(".offline, .status_offline, .comiis_offline") != null -> false
+                            else -> null
+                        },
                 )
             }
             .distinctBy { it.uid }
@@ -787,22 +840,58 @@ object ContentParser {
                                 row.selectFirst(
                                     ".dialog_blue.y, .dialog_green.y, .comiis_msg_right"
                                 ) != null)
-                    val bb =
-                        Regex(
-                            """\[img(?:=[^]]+)?]\s*([^\[\]\r\n]+?)\s*\[/img]""",
-                            RegexOption.IGNORE_CASE,
-                        )
-                    val text = node.wholeText()
-                    val images =
-                        node.select("img").mapNotNull { it.image(page) } +
-                            bb.findAll(text)
-                                .mapNotNull { absolute(it.groupValues[1], page) }
-                                .toList()
+                    // Preserve the order of text, inline smileys and attachments.
+                    // Treat image BBCode inside a text node exactly like an HTML <img>.
+                    val bb = Regex(
+                        """\[img(?:=[^]]+)?]\s*([^\[\]\r\n]+?)\s*\[/img]|https?://[^\s<>"'\[\]]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s<>"'\[\]]*)?""",
+                        RegexOption.IGNORE_CASE,
+                    )
+                    val parts = mutableListOf<ChatPart>()
+                    fun appendText(value: String) {
+                        if (value.isEmpty()) return
+                        var start = 0
+                        bb.findAll(value).forEach { match ->
+                            if (match.range.first > start)
+                                parts += ChatPart(text = value.substring(start, match.range.first))
+                            val url = absolute(match.groups[1]?.value ?: match.value, page)
+                            if (url == null) parts += ChatPart(text = match.value)
+                            else parts += ChatPart(imageUrl = url, smiley = isSmileyUrl(url))
+                            start = match.range.last + 1
+                        }
+                        if (start < value.length) parts += ChatPart(text = value.substring(start))
+                    }
+                    fun walk(source: org.jsoup.nodes.Node) {
+                        when (source) {
+                            is org.jsoup.nodes.TextNode -> appendText(source.getWholeText())
+                            is org.jsoup.nodes.Element -> when (source.normalName()) {
+                                "img" -> {
+                                    val url = source.image(page)
+                                    if (url != null) parts += ChatPart(
+                                        imageUrl = url,
+                                        smiley = isSmileyImage(source) || isSmileyUrl(url),
+                                    )
+                                }
+                                "br" -> appendText("\n")
+                                "script", "style" -> Unit
+                                else -> {
+                                    source.childNodes().forEach(::walk)
+                                    if (source.normalName() in setOf("p", "li")) appendText("\n")
+                                }
+                            }
+                            else -> source.childNodes().forEach(::walk)
+                        }
+                    }
+                    node.childNodes().forEach(::walk)
+                    val normalized = parts.filter { it.imageUrl != null || it.text.isNotBlank() }
+                    val text = normalized.filter { it.imageUrl == null }.joinToString("") { it.text }
+                        .trim()
+                    val images = normalized.mapNotNull { it.imageUrl }.distinct()
                     ChatMessage(
-                        bb.replace(text, "").trim(),
+                        text,
                         clean(row.selectFirst(".msg_time")?.text().orEmpty()),
                         mine,
-                        images.distinct(),
+                        images,
+                        normalized,
                     )
                 }
                 .distinct()
@@ -812,6 +901,20 @@ object ContentParser {
                 ?: "0"
         val name =
             clean(doc.selectFirst(".comiis_pm_tit, .comiis_pm_user, h2.flex")?.text().orEmpty())
-        return Conversation(peer, name, pmid, ForumParser.formhash(html).orEmpty(), messages)
+        val uploadData = Regex("""uploadformdata\s*:\s*\{([^}]*)\}""", RegexOption.IGNORE_CASE)
+            .find(html)?.groupValues?.get(1).orEmpty()
+        val uploadUid = Regex("""["']?uid["']?\s*:\s*["']?(\d+)""")
+            .find(uploadData)?.groupValues?.get(1)
+        val uploadHash = Regex("""["']?hash["']?\s*:\s*["']([a-fA-F0-9]+)["']""")
+            .find(uploadData)?.groupValues?.get(1)
+        val maxKb = Regex("""maxfilesize\s*[:=]\s*["']?(\d+)""")
+            .find(html)?.groupValues?.get(1)?.toIntOrNull() ?: 1024
+        val upload = if (uploadUid != null && uploadHash != null)
+            UploadConfig(uploadUid, uploadHash, (maxKb.toLong() * 1024).coerceIn(1024, 10 * 1024 * 1024).toInt())
+        else null
+        return Conversation(
+            peer, name, pmid, ForumParser.formhash(html).orEmpty(), messages, upload,
+            presenceFromLabel(name),
+        )
     }
 }

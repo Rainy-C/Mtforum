@@ -50,36 +50,40 @@ internal fun ForumSmileyPicker(
     onChoose: (String) -> Unit,
 ) {
     var current by remember { mutableStateOf("doge") }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             listOf("doge" to "Doge", "comiis_tb" to "贴吧", "qq" to "QQ").forEach { (key, title) ->
                 val selected = key == current
                 Box(
                     Modifier.clip(RoundedCornerShape(12.dp))
-                        .background(MiuixTheme.colorScheme.onSurface.copy(alpha = if (selected) .12f else .04f))
+                        .background(MiuixTheme.colorScheme.onSurface.copy(alpha = if (selected) .12f else .025f))
                         .clickable { current = key }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .padding(horizontal = 13.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(title, fontSize = 13.sp,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
                 }
             }
+            Spacer(Modifier.weight(1f))
+            Text("点选插入", fontSize = 11.sp,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
         }
         LazyVerticalGrid(
-            columns = GridCells.Fixed(6),
+            columns = GridCells.Adaptive(minSize = 44.dp),
             modifier = Modifier.fillMaxWidth().weight(1f),
-            contentPadding = PaddingValues(bottom = 6.dp),
+            contentPadding = PaddingValues(start = 2.dp, end = 2.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             items(smileyGroups[current].orEmpty(), key = { it }) { url ->
                 Box(
                     Modifier.aspectRatio(1f)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .035f))
+                        .background(MiuixTheme.colorScheme.onSurface.copy(alpha = .028f))
                         .clickable { smileyInsertCode(url).takeIf(String::isNotBlank)?.let(onChoose) }
-                        .padding(5.dp),
+                        .padding(7.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     AsyncImage(url, "表情", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)

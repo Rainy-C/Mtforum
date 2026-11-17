@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -28,6 +29,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -72,18 +74,19 @@ internal fun ThreadReplySheet(
     var submitting by remember(target.url) { mutableStateOf(false) }
     // Keep the editor alive before the remote reply form arrives. This allows the
     // IME and bottom sheet to start together rather than in two visible stages.
-    var messageDraft by remember(target.url) { mutableStateOf("") }
-    var draftEdited by remember(target.url) { mutableStateOf(false) }
+    val inlineDraft = remember(target.url) { ForumInlineEditorState() }
+    val messageDraft = inlineDraft.markup
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val focusRequester = remember(target.url) { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     LaunchedEffect(target.url, reload) {
         loading = true
         failure = null
         try {
-            document = repository.document(target.url, "回复")
+            document = repository.replyDocument(target.url)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -105,6 +108,7 @@ internal fun ThreadReplySheet(
         }
     }
     val attachmentAids = remember(form, target.url) { mutableStateListOf<String>() }
+
     val messageIndex = form?.fields?.indexOfFirst { it.key == "message" } ?: -1
     var showExtras by remember(target.url) { mutableStateOf(false) }
     var showSmileys by remember(target.url) { mutableStateOf(false) }
@@ -133,11 +137,7 @@ internal fun ThreadReplySheet(
                     }
                     val aid = repository.uploadPostImage(active, bytes, name, type)
                     attachmentAids.add(aid)
-                    if (messageIndex >= 0) {
-                        messageDraft += "\n[attachimg]$aid[/attachimg]\n"
-                        draftEdited = true
-                        values[messageIndex] = messageDraft
-                    }
+                    inlineDraft.insertMedia(uri.toString(), "[attachimg]$aid[/attachimg]", image = true)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -152,14 +152,15 @@ internal fun ThreadReplySheet(
     fun send() {
         val active = form ?: return
         if (submitting || messageIndex < 0) return
-        if (messageDraft.isBlank()) {
+        val payload = inlineDraft.markup
+        if (payload.isBlank()) {
             failure = "请输入评论内容"
             return
         }
         val missing = active.fields.withIndex().firstOrNull { (i, field) ->
             field.required && field.type != "hidden" && when (field.type) {
                 "checkbox", "radio" -> checked[i] != true
-                else -> if (i == messageIndex) messageDraft.isBlank() else values[i].isNullOrBlank()
+                else -> if (i == messageIndex) payload.isBlank() else values[i].isNullOrBlank()
             }
         }
         if (missing != null) {
@@ -180,10 +181,11 @@ internal fun ThreadReplySheet(
                         "file" -> null
                         "checkbox", "radio" -> if (checked[index] == true)
                             field.key to field.value.ifBlank { "on" } else null
-                        else -> field.key to if (index == messageIndex) messageDraft else values[index].orEmpty()
+                        else -> field.key to if (index == messageIndex) payload else values[index].orEmpty()
                     }
                 }
-                val extra = attachmentAids.map { "attachnew[$it][description]" to "" }
+                val extra = Regex("""\[attachimg\](\d+)\[/attachimg\]""")
+                    .findAll(payload).map { "attachnew[${it.groupValues[1]}][description]" to "" }.toList()
                 val result = repository.submit(active, data + extra, submitButton)
                 if (result.success) onSubmitted(result.message.ifBlank { "评论已发布" })
                 else failure = result.message
@@ -215,12 +217,8 @@ internal fun ThreadReplySheet(
     // Incorporate server-provided quote text without clobbering early typing.
     LaunchedEffect(form) {
         if (form != null && messageIndex >= 0) {
-            val initial = form.fields[messageIndex].value
-            if (!draftEdited) messageDraft = initial
-            else if (initial.isNotBlank() && !messageDraft.startsWith(initial)) {
-                messageDraft = initial + "\n" + messageDraft
-            }
-            values[messageIndex] = messageDraft
+            inlineDraft.setTextIfUntouched(form.fields[messageIndex].value)
+            values[messageIndex] = inlineDraft.markup
         }
     }
 
@@ -233,6 +231,14 @@ internal fun ThreadReplySheet(
     var revealed by remember(target.url) { mutableStateOf(false) }
     val imeStarting = imeBottom > 0 || imeTargetBottom > 0
     val sheetVisible = revealed || imeStarting
+    // Keep the smiley panel open while the IME animates OUT. Closing it as
+    // soon as imeStarting is true used to conceal the picker under the keyboard.
+    LaunchedEffect(imeStarting) {
+        if (imeStarting && !showSmileys) {
+            showExtras = false
+            expanded = false
+        }
+    }
     LaunchedEffect(imeStarting) {
         if (imeStarting) revealed = true
     }
@@ -259,7 +265,7 @@ internal fun ThreadReplySheet(
             .clickable(enabled = !submitting) { keyboard?.hide(); onDismiss() })
         BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
             val available = (maxHeight - 4.dp).coerceAtLeast(0.dp)
-            val compactHeight = minOf(224.dp, available)
+            val compactHeight = minOf(if (imeStarting) 224.dp else 248.dp, available)
             val fullHeight = minOf(490.dp, available)
             val rangePx = with(density) { (fullHeight - compactHeight).toPx() }
             val collapseThresholdPx = with(density) { 44.dp.toPx() }
@@ -275,9 +281,10 @@ internal fun ThreadReplySheet(
             // in the layout pass, with no second height animation chasing it.
             val preferredHeight by animateDpAsState(
                 targetValue = when {
-                    expanded -> 490.dp
-                    showSmileys -> 420.dp
-                    else -> 224.dp
+                    showSmileys -> 462.dp
+                    imeStarting -> 224.dp
+                    expanded || showExtras -> 420.dp
+                    else -> 248.dp
                 },
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioNoBouncy,
@@ -333,12 +340,13 @@ internal fun ThreadReplySheet(
                     .height(sheetHeight)
                     .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                     .background(MiuixTheme.colorScheme.surface)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    .then(if (imeStarting) Modifier else Modifier.navigationBarsPadding())
+                    .padding(horizontal = 16.dp, vertical = if (imeStarting) 4.dp else 8.dp),
+                verticalArrangement = Arrangement.spacedBy(if (imeStarting) 3.dp else 6.dp),
             ) {
                 Box(
-                    Modifier.fillMaxWidth().height(16.dp).then(dragHandle),
+                    Modifier.fillMaxWidth().height(if (imeStarting) 9.dp else 16.dp)
+                        .then(dragHandle),
                     contentAlignment = Alignment.TopCenter,
                 ) {
                     Box(
@@ -348,7 +356,8 @@ internal fun ThreadReplySheet(
                     )
                 }
                 Row(
-                    Modifier.fillMaxWidth().height(40.dp).then(dragHandle),
+                    Modifier.fillMaxWidth().height(if (imeStarting) 34.dp else 40.dp)
+                        .then(dragHandle),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -378,20 +387,38 @@ internal fun ThreadReplySheet(
                     }
                 }
 
+                // Always show load and send failures directly under the title.
+                // A status below the emoji grid can be clipped outside the sheet.
+                if (failure != null || form == null) {
+                    Text(
+                        failure ?: if (loading) "正在获取回复表单…" else "回复表单不可用，请重试",
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MiuixTheme.colorScheme.background)
+                            .clickable(enabled = form == null && !loading) { reload++ }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        fontSize = 12.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (failure != null) Color(0xFFBF4750)
+                            else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
                 // One permanent editor: it is focusable from the first frame,
                 // even while the reply form is still loading over the network.
-                ReplyMessageEditor(
-                    message = messageDraft,
-                    onMessageChange = { typed ->
-                        draftEdited = true
-                        messageDraft = typed.take(form?.fields?.getOrNull(messageIndex)?.maxLength ?: 100000)
-                        if (messageIndex >= 0) values[messageIndex] = messageDraft
-                    },
-                    focusRequester = focusRequester,
+                ForumInlineEditor(
+                    state = inlineDraft,
+                    hint = if (messageDraft.isBlank()) "说点什么吧…" else "",
                     enabled = !submitting,
                     modifier = Modifier.fillMaxWidth().then(
-                        if (showExtras && form != null) Modifier.height(118.dp) else Modifier.weight(1f)
-                    ),
+                        if ((showExtras && form != null) || showSmileys)
+                            Modifier.height(98.dp)
+                        else Modifier.weight(1f)
+                    ).clip(RoundedCornerShape(18.dp))
+                        .background(MiuixTheme.colorScheme.background)
+                        .padding(horizontal = 13.dp, vertical = 9.dp)
+                        .focusRequester(focusRequester),
+                    onFocused = { showSmileys = false },
                 )
                 if (showExtras && form != null) {
                     Column(
@@ -462,29 +489,11 @@ internal fun ThreadReplySheet(
                 }
                 if (showSmileys) {
                     ForumSmileyPicker(Modifier.fillMaxWidth().height(170.dp)) { code ->
-                        draftEdited = true
-                        messageDraft += code
-                        if (messageIndex >= 0) values[messageIndex] = messageDraft
+                        val url = code.removePrefix("[img]").removeSuffix("[/img]")
+                        if (url.startsWith("https://")) {
+                            inlineDraft.insertMedia(url, code)
+                        }
                     }
-                }
-                if (form == null) {
-                    Text(
-                        if (loading) "正在获取回复表单…" else failure ?: "无法获取回复表单",
-                        fontSize = 12.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                    if (!loading) Text(
-                        "点击重试",
-                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
-                            .clickable { reload++ }.padding(6.dp),
-                        fontSize = 12.sp,
-                    )
-                } else if (failure != null) {
-                    Text(
-                        failure.orEmpty(), fontSize = 12.sp, maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
                 }
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 44.dp),
@@ -496,7 +505,12 @@ internal fun ThreadReplySheet(
                         modifier = Modifier.clip(RoundedCornerShape(12.dp))
                             .clickable(enabled = !submitting) {
                                 showSmileys = !showSmileys
-                                if (showSmileys) keyboard?.hide() else {
+                                if (showSmileys) {
+                                    showExtras = false
+                                    expanded = false
+                                    keyboard?.hide()
+                                    focusManager.clearFocus()
+                                } else {
                                     focusRequester.requestFocus()
                                     keyboard?.show()
                                 }
@@ -519,15 +533,17 @@ internal fun ThreadReplySheet(
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
                     Button(
-                        onClick = ::send,
+                        onClick = { if (form == null) reload++ else send() },
                         minHeight = 40.dp,
-                        enabled = form != null && messageIndex >= 0 && !submitting && messageDraft.isNotBlank(),
+                        enabled = !submitting && (form == null && !loading ||
+                            form != null && messageIndex >= 0 &&
+                            messageDraft.isNotBlank()),
                         colors = ButtonDefaults.buttonColorsPrimary(),
                         insideMargin = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
                     ) {
                         if (submitting) CircularProgressIndicator(size = 18.dp)
                         else Text(
-                            "发布", fontSize = 14.sp,
+                            if (form == null && !loading) "重试" else "发布", fontSize = 14.sp,
                             color = if (form != null && !submitting && messageDraft.isNotBlank())
                                 MiuixTheme.colorScheme.onPrimary
                             else MiuixTheme.colorScheme.disabledOnPrimaryButton,
@@ -536,42 +552,5 @@ internal fun ThreadReplySheet(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun ReplyMessageEditor(
-    message: String,
-    onMessageChange: (String) -> Unit,
-    focusRequester: FocusRequester,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier.clip(RoundedCornerShape(18.dp))
-            .background(MiuixTheme.colorScheme.background)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-    ) {
-        BasicTextField(
-            value = message,
-            onValueChange = onMessageChange,
-            enabled = enabled,
-            modifier = Modifier.fillMaxSize().focusRequester(focusRequester),
-            cursorBrush = SolidColor(MiuixTheme.colorScheme.onSurface),
-            textStyle = TextStyle(
-                fontSize = 15.sp, lineHeight = 23.sp,
-                color = MiuixTheme.colorScheme.onSurface,
-            ),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-            decorationBox = { input ->
-                Box {
-                    if (message.isEmpty()) {
-                        Text("说点什么吧…", fontSize = 15.sp,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                    }
-                    input()
-                }
-            },
-        )
     }
 }

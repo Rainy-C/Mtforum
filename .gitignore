@@ -8,3 +8,5 @@ keystore.properties
 *.keystore
 *.p12
 *.apk
+__pycache__/
+*.pyc
