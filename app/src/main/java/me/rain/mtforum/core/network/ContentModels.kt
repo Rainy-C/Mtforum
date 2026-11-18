@@ -18,6 +18,7 @@ data class Topic(
     val hasImageAttachments: Boolean = false,
     val hasHiddenContent: Boolean = false,
     val level: String? = null,
+    val isFeatured: Boolean = false,
 )
 
 data class ForumBoard(

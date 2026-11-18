@@ -20,6 +20,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -192,7 +195,7 @@ fun ConversationList(repository: ForumRepository, onOpen: (String, String) -> Un
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PrivateBubble(message: ChatMessage, onOpen: (String, String) -> Unit) {
+private fun PrivateBubble(message: ChatMessage, onPreview: (String) -> Unit) {
     val parts = message.parts.ifEmpty {
         buildList {
             if (message.text.isNotBlank()) add(ChatPart(text = message.text))
@@ -216,23 +219,34 @@ private fun PrivateBubble(message: ChatMessage, onOpen: (String, String) -> Unit
             .padding(if (sticker) 2.dp else 12.dp)
     ) {
         FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             parts.forEach { part ->
                 val image = part.imageUrl
                 when {
-                    image == null && part.text.isNotBlank() -> Text(
-                        part.text, fontSize = 15.sp, lineHeight = 22.sp, color = foreground)
-                    image != null && LocalShowImages.current -> {
-                        val modifier = if (part.smiley) Modifier.size(if (sticker) 46.dp else 20.dp)
-                            else Modifier.widthIn(max = 220.dp).heightIn(max = 230.dp)
-                        AsyncImage(image, if (part.smiley) "表情" else "消息图片",
-                            modifier.clip(RoundedCornerShape(if (part.smiley) 6.dp else 13.dp))
-                                .clickable { onOpen("图片", image) },
-                            contentScale = ContentScale.Fit)
+                    image == null && part.text.isNotBlank() -> Box(
+                        Modifier.heightIn(min = 23.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(part.text, fontSize = 15.sp, lineHeight = 22.sp,
+                            color = foreground)
                     }
-                    image != null -> Text("[图片]", Modifier.clickable { onOpen("图片", image) },
+                    image != null && LocalShowImages.current -> {
+                        val modifier = if (part.smiley) Modifier.size(if (sticker) 46.dp else 19.dp)
+                            else Modifier.widthIn(max = 220.dp).heightIn(max = 230.dp)
+                        Box(
+                            if (part.smiley && !sticker) Modifier.heightIn(min = 23.dp)
+                            else Modifier,
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            AsyncImage(image, if (part.smiley) "表情" else "消息图片",
+                                modifier.clip(RoundedCornerShape(if (part.smiley) 6.dp else 13.dp))
+                                    .clickable { onPreview(image) },
+                                contentScale = ContentScale.Fit)
+                        }
+                    }
+                    image != null -> Text("[图片]", Modifier.clickable { onPreview(image) },
                         fontSize = 13.sp, color = foreground)
                 }
             }
@@ -256,6 +270,7 @@ fun ConversationScreen(
     var showImageUrl by remember(uid) { mutableStateOf(false) }
     var showAttachmentMenu by remember(uid) { mutableStateOf(false) }
     var imageUrl by remember(uid) { mutableStateOf("") }
+    var previewImage by remember(uid) { mutableStateOf<String?>(null) }
     var sending by remember(uid) { mutableStateOf(false) }
     var uploading by remember(uid) { mutableStateOf(false) }
     var error by remember(uid) { mutableStateOf<String?>(null) }
@@ -393,7 +408,7 @@ fun ConversationScreen(
                             Text(item.time, Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                                 fontSize = 10.sp,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                        PrivateBubble(item, onOpen)
+                        PrivateBubble(item, onPreview = { previewImage = it })
                     }
                 }
             }
@@ -491,6 +506,7 @@ fun ConversationScreen(
                         .background(MiuixTheme.colorScheme.surface)
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     onFocused = { showSmileys = false },
+                    centerSingleLine = true,
                 )
                 Box(
                     Modifier.size(43.dp).clip(RoundedCornerShape(15.dp))
@@ -537,6 +553,53 @@ fun ConversationScreen(
                             else MiuixTheme.colorScheme.onSurfaceVariantSummary)
                 }
             }
+        }
+    }
+    previewImage?.let { image ->
+        PrivateImagePreview(imageUrl = image) { previewImage = null }
+    }
+}
+
+@Composable
+private fun PrivateImagePreview(imageUrl: String, onDismiss: () -> Unit) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
+        ),
+    ) {
+        var scale by remember(imageUrl) { mutableFloatStateOf(1f) }
+        var translation by remember(imageUrl) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+        Box(
+            Modifier.fillMaxSize().background(Color(0xF5000000)),
+        ) {
+            AsyncImage(
+                model = imageUrl,
+                contentDescription = "查看聊天图片",
+                modifier = Modifier.fillMaxSize()
+                    .pointerInput(imageUrl) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 4.5f)
+                            translation = if (scale <= 1f) androidx.compose.ui.geometry.Offset.Zero
+                                else translation + pan
+                        }
+                    }
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = translation.x
+                        translationY = translation.y
+                    },
+                contentScale = ContentScale.Fit,
+            )
+            Box(
+                Modifier.align(Alignment.TopEnd)
+                    .statusBarsPadding().padding(18.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0x99000000))
+                    .clickable { onDismiss() }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) { Text("关闭", fontSize = 14.sp, color = Color.White) }
         }
     }
 }

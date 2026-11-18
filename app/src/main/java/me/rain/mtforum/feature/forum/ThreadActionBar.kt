@@ -26,7 +26,6 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import me.rain.mtforum.core.ui.icons.*
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -40,8 +39,6 @@ internal fun ThreadActionBar(
     enabled: Boolean,
     liked: Boolean,
     favorited: Boolean,
-    likeLoading: Boolean,
-    favoriteLoading: Boolean,
     onReply: () -> Unit,
     onLike: () -> Unit,
     onComments: () -> Unit,
@@ -78,7 +75,7 @@ internal fun ThreadActionBar(
                     if (liked) "已点赞" else "点赞",
                     enabled, Modifier.weight(1f),
                     selected = liked, selectedColor = Color(0xFFE96666),
-                    loading = likeLoading, onClick = onLike,
+                    onClick = onLike,
                 )
                 GlassActionIcon(MiuixNavigationIcons.Messages, "查看评论", true, Modifier.weight(1f),
                     onClick = onComments)
@@ -87,7 +84,7 @@ internal fun ThreadActionBar(
                     if (favorited) "已收藏" else "收藏",
                     enabled, Modifier.weight(1f),
                     selected = favorited, selectedColor = Color(0xFFF0AC38),
-                    loading = favoriteLoading, onClick = onFavorite,
+                    onClick = onFavorite,
                 )
                 GlassActionIcon(MiuixIcons.Useful.Share, "分享", true, Modifier.weight(1f),
                     onClick = onShare)
@@ -132,7 +129,6 @@ private fun GlassActionIcon(
     modifier: Modifier,
     selected: Boolean = false,
     selectedColor: Color = Color.Unspecified,
-    loading: Boolean = false,
     onClick: () -> Unit,
 ) {
     val active = if (selectedColor == Color.Unspecified)
@@ -151,11 +147,10 @@ private fun GlassActionIcon(
         modifier.height(38.dp)
             .clip(RoundedCornerShape(50))
             .background(if (selected) active.copy(alpha = .13f) else Color.Transparent)
-            .clickable(enabled = enabled && !loading, onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        if (loading) CircularProgressIndicator(size = 18.dp)
-        else Icon(
+        Icon(
             icon, description,
             Modifier.size(21.dp).graphicsLayer {
                 scaleX = iconScale

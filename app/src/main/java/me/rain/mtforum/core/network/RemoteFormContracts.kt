@@ -65,6 +65,42 @@ internal object RemoteFormContracts {
             }
         if (form.select("input[name]").none { it.attr("name") == "formhash" })
             form.appendElement("input").attr("type", "hidden").attr("name", "formhash").attr("value", hash)
+
+        // Discuz desktop variants inject both verification fields through JS.
+        // When the live HTML provides a challenge placeholder, preserve its
+        // idhash and module ID rather than silently losing required POST data.
+        if (editor && url.queryParameter("action") == "newthread") {
+            fun addField(name: String, type: String, value: String = "", required: Boolean = false) {
+                if (form.select("input[name=$name]").isNotEmpty()) return
+                form.appendElement("input").attr("name", name).attr("type", type)
+                    .attr("value", value).also {
+                        if (required) it.attr("required", "required")
+                    }
+            }
+            val code = doc.selectFirst("input[name=seccodehash], input[name=seccode]")
+            val codeSpan = doc.selectFirst("span[id^=seccode_]")
+            val codeHash = code?.attr("value").orEmpty()
+                .ifBlank { codeSpan?.id()?.removePrefix("seccode_").orEmpty() }
+                .takeIf { it.matches(Regex("""[A-Za-z0-9]{4,80}""")) }
+            if (codeHash != null) {
+                val codeKey = code?.attr("name")?.takeIf {
+                    it == "seccodehash" || it == "seccode"
+                } ?: "seccodehash"
+                addField(codeKey, "hidden", codeHash)
+                addField("seccodemodid", "hidden", "forum::post")
+                addField("seccodeverify", "text", required = true)
+            }
+            val qInput = doc.selectFirst("input[name=secqaahash]")
+            val qHash = qInput?.attr("value").orEmpty()
+                .ifBlank {
+                    doc.selectFirst("span[id^=secqaa_]")?.id()
+                        ?.removePrefix("secqaa_").orEmpty()
+                }.takeIf { it.matches(Regex("""[A-Za-z0-9]{4,80}""")) }
+            if (qHash != null) {
+                addField("secqaahash", "hidden", qHash)
+                addField("secanswer", "text", required = true)
+            }
+        }
     }
 
     fun complete(form: RemoteForm, pageHash: String?): RemoteForm {

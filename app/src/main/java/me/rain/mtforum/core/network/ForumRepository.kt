@@ -24,6 +24,9 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
+/** A definitive forum rejection, unlike an ambiguous AJAX reply. */
+class TopicActionRejectedException(message: String) : ForumException(message)
+
 class ForumRepository(val cookies: ForumCookies, val verification: VerificationCoordinator) {
     private val sessionMutation = Mutex()
     private val topicCache = linkedMapOf<String, Pair<List<Topic>, String?>>()
@@ -506,7 +509,8 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
         }
         val failed = Regex("抱歉|失败|错误|无权|不允许|无效的请求|验证码不正确|验证码错误|密码不正确|请先登录|未登录")
             .containsMatchIn(ForumParser.message(page.body))
-        val redirectedToThread = action == "reply" && url.toString() != page.url &&
+        val redirectedToThread = action in listOf("reply", "newthread") &&
+            url.toString() != page.url &&
             page.url.toHttpUrlOrNull()?.let { final ->
                 final.queryParameter("mod") == "viewthread" ||
                     Regex("""/thread-\d+""").containsMatchIn(final.encodedPath)
@@ -532,6 +536,7 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
                 ?.groupValues
                 ?.get(1)
                 ?.let { runCatching { safeUrl(it).toString() }.getOrNull() }
+                ?: if (redirectedToThread) page.url else null
         return Submission(message, succeeded, doc, target)
     }
 
@@ -579,7 +584,7 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
         if (repeated) return TopicActionResult(message.ifBlank { "此前已${action}" }, true)
         if (Regex("抱歉|失败|错误|不允许|无权|没有权限|无效|已关闭|禁止|验证码|无法提交|请先登录|请求来路不正确")
                 .containsMatchIn(message))
-            throw ForumException(message.take(180))
+            throw TopicActionRejectedException(message.take(180))
         // Comiis/Discuz replies with recommendv:'+1' instead of the word "成功".
         // This is the first-tap response seen in the captured recommend_add request.
         val recommendAdded = !favorite &&
@@ -646,7 +651,7 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
             val message = ForumParser.message(popup)
             if (Regex("已经收藏|已收藏过|收藏过|重复收藏|已加入收藏").containsMatchIn(message))
                 return TopicActionResult(message.ifBlank { "此前已收藏" }, true)
-            throw ForumException(
+            throw TopicActionRejectedException(
                 message.take(160).takeIf(String::isNotBlank)
                     ?: "论坛未返回收藏确认表单，无法安全提交"
             )
@@ -685,7 +690,14 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
                 .header("X-Requested-With", "XMLHttpRequest")
                 .post(body.build()).build()
         )
-        return topicActionFeedback(response, true)
+        // Some Comiis themes persist the favorite but reply with only a JS
+        // callback (no "收藏成功" text). Reconcile against the server instead
+        // of asking users to tap a second time just to update the star.
+        val reported = runCatching { topicActionFeedback(response, true) }
+        reported.getOrNull()?.let { return it }
+        if (isThreadFavorited(tid)) return TopicActionResult("收藏成功", true)
+        throw reported.exceptionOrNull()
+            ?: ForumException("论坛未确认收藏状态，请检查收藏列表")
     }
 
     /**
@@ -774,6 +786,9 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
         val message = ForumParser.message(result)
         if (Regex("操作成功|删除成功|取消收藏成功").containsMatchIn(result))
             return TopicActionResult("已取消收藏", false)
+        if (Regex("抱歉|失败|错误|不允许|无权|没有权限|无效|已关闭|禁止|验证码|请先登录")
+                .containsMatchIn(message))
+            throw TopicActionRejectedException(message.take(180))
         throw ForumException(message.ifBlank { "论坛未确认取消收藏" })
     }
 
@@ -814,11 +829,19 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
         bytes: ByteArray,
         name: String,
         type: String,
+    ): String = uploadPostAttachment(form, bytes, name, type, image = true)
+
+    suspend fun uploadPostAttachment(
+        form: RemoteForm,
+        bytes: ByteArray,
+        name: String,
+        type: String,
+        image: Boolean,
     ): String {
-        val config = form.upload ?: throw ForumException("当前页面不支持上传图片")
+        val config = form.upload ?: throw ForumException("当前页面未提供附件上传凭证")
         if (bytes.isEmpty() || bytes.size > config.maxBytes)
-            throw ForumException("图片不能超过 ${config.maxBytes / 1024}KB")
-        if (!type.startsWith("image/")) throw ForumException("请选择图片文件")
+            throw ForumException("附件不能超过 ${config.maxBytes / 1024}KB")
+        if (image && !type.startsWith("image/")) throw ForumException("请选择图片文件")
         val data =
             MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
@@ -826,12 +849,25 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
                 .addFormDataPart("hash", config.hash)
                 .addFormDataPart("Filedata", name, bytes.toRequestBody(type.toMediaType()))
                 .build()
+        // The Discuz swfupload handler requires uid/hash as GET parameters.
+        // Including them only in the multipart body leads to error code 10.
+        val sourceUrl = form.referer.toHttpUrlOrNull() ?: form.url.toHttpUrlOrNull()
+        val fid = sourceUrl?.queryParameter("fid")
+        val uploadUrl = "$BaseUrl/misc.php".toHttpUrl().newBuilder()
+            .addQueryParameter("mod", "swfupload")
+            .addQueryParameter("action", "swfupload")
+            .addQueryParameter("operation", "upload")
+            .addQueryParameter("type", if (image) "image" else "attach")
+            .addQueryParameter("uid", config.uid)
+            .addQueryParameter("hash", config.hash)
+            .addQueryParameter("simple", "2")
+            .addQueryParameter("inajax", "yes")
+            .addQueryParameter("infloat", "yes")
+        if (fid?.all(Char::isDigit) == true) uploadUrl.addQueryParameter("fid", fid)
         val body =
             request(
                 Request.Builder()
-                    .url(
-                        "$BaseUrl/misc.php?mod=swfupload&operation=upload&type=image&inajax=yes&infloat=yes&simple=2"
-                    )
+                    .url(uploadUrl.build())
                     .header("Referer", form.url)
                     .header("X-Requested-With", "XMLHttpRequest")
                     .post(data)
@@ -845,9 +881,84 @@ class ForumRepository(val cookies: ForumCookies, val verification: VerificationC
                 .split('|')
         // After removing the marker: type | status | aid | ...
         if (payload.size < 3 || payload[1] != "0" || !payload[2].matches(Regex("\\d+"))) {
-            throw ForumException("图片上传失败，请检查格式及大小")
+            throw ForumException("附件上传失败，请检查格式及大小")
         }
         return payload[2]
+    }
+
+    data class PostingChallenge(val imageBytes: ByteArray? = null, val question: String? = null)
+
+    /**
+     * Discuz creates a fresh CAPTCHA session and returns the valid image's
+     * update token in a JS response. Never synthesize an update token.
+     * Both security requests use this repository's authenticated cookie jar.
+     */
+    suspend fun loadPostingChallenge(form: RemoteForm): PostingChallenge {
+        val code = form.fields.firstOrNull { it.key in setOf("seccodehash", "seccode") }
+            ?.value?.takeIf { it.matches(Regex("""[A-Za-z0-9]{4,80}""")) }
+        val qHash = form.fields.firstOrNull { it.key == "secqaahash" }
+            ?.value?.takeIf { it.matches(Regex("""[A-Za-z0-9]{4,80}""")) }
+        var image: ByteArray? = null
+        var question: String? = null
+        if (code != null) {
+            val mod = form.fields.firstOrNull { it.key == "seccodemodid" }
+                ?.value?.ifBlank { "forum::post" } ?: "forum::post"
+            val path = "$BaseUrl/misc.php".toHttpUrl().newBuilder()
+                .addQueryParameter("mod", "seccode")
+                .addQueryParameter("action", "update")
+                .addQueryParameter("idhash", code)
+                .addQueryParameter("modid", mod)
+                .addQueryParameter("_", System.currentTimeMillis().toString())
+                .build()
+            val html = request(
+                Request.Builder().url(path).header("Referer", form.referer)
+                    .header("Cache-Control", "no-cache").build()
+            )
+            val token = Regex(
+                """misc\.php\?mod=seccode(?:&amp;|&)update=(\d+)(?:&amp;|&)idhash=${Regex.escape(code)}"""
+            ).find(html)?.groupValues?.get(1)
+            if (token != null) {
+                val imageUrl = "$BaseUrl/misc.php".toHttpUrl().newBuilder()
+                    .addQueryParameter("mod", "seccode")
+                    .addQueryParameter("update", token)
+                    .addQueryParameter("idhash", code)
+                    .build()
+                image = withContext(Dispatchers.IO) {
+                    client.newCall(
+                        Request.Builder().url(imageUrl)
+                            .header("Referer", form.referer)
+                            .header("Cache-Control", "no-cache").build()
+                    ).execute().use { response ->
+                        if (!response.isSuccessful ||
+                            !response.header("Content-Type").orEmpty().startsWith("image/"))
+                            return@use null
+                        val data = response.body?.bytes()
+                        data?.takeIf { it.size in 1..800_000 }
+                    }
+                }
+            }
+        }
+        if (qHash != null) {
+            val path = "$BaseUrl/misc.php".toHttpUrl().newBuilder()
+                .addQueryParameter("mod", "secqaa")
+                .addQueryParameter("action", "update")
+                .addQueryParameter("idhash", qHash)
+                .addQueryParameter("modid", "forum::post")
+                .addQueryParameter("_", System.currentTimeMillis().toString())
+                .build()
+            val html = request(
+                Request.Builder().url(path).header("Referer", form.referer)
+                    .header("Cache-Control", "no-cache").build()
+            )
+            val matched = Regex("""sectplcode\[2\]\s*\+\s*'((?:[^'\\]|\\.)*)'""")
+                .find(html)?.groupValues?.getOrNull(1)
+                ?: Regex("""'((?:[^'\\]|\\.)*)'\s*\+\s*sectplcode\[3\]""")
+                    .find(html)?.groupValues?.getOrNull(1)
+            question = matched?.replace("\\'", "'")?.let {
+                org.jsoup.Jsoup.parse(it).text().trim()
+            }?.takeIf(String::isNotEmpty)
+        }
+        return PostingChallenge(image, question)
     }
 
     suspend fun conversations(): List<ConversationSummary> {

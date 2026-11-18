@@ -90,6 +90,37 @@ internal fun NativeContentItem(
     onOpen: (ContentLink) -> Unit,
     onRemoveFavorite: ((String) -> Unit)? = null,
 ) {
+    val pageUrl = page.toHttpUrlOrNull()
+    val addFriend = pageUrl?.queryParameter("ac") == "friend" &&
+        pageUrl.queryParameter("op") == "add"
+    if (addFriend && block.kind == NativeContentKind.Text && block.image != null) {
+        val memberName = Regex("""添加\s*(.*?)\s*为好友""")
+            .find(block.text)?.groupValues?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() } ?: block.title.ifBlank { "论坛用户" }
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.fillMaxWidth().padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Avatar(if (LocalShowImages.current) block.image else null, memberName, 60)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("添加好友", fontSize = 13.sp,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                        Text(memberName, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                        Text("填写附言并选择分组", fontSize = 12.sp,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    }
+                }
+                val details = block.links.filter { it.text in setOf("查看", "查看资料", "个人资料") }
+                if (details.isNotEmpty()) NativeLinkActions(details.take(1), onOpen)
+            }
+        }
+        return
+    }
     if (block.kind == NativeContentKind.Rank) {
         RankContentCard(block, onOpen)
         return

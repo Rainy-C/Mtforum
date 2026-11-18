@@ -35,8 +35,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import me.rain.mtforum.core.network.*
+import me.rain.mtforum.core.data.SearchHistoryStore
 import me.rain.mtforum.core.ui.*
 import me.rain.mtforum.core.ui.icons.*
 import top.yukonga.miuix.kmp.basic.*
@@ -74,6 +76,7 @@ fun TopicsScreen(
     sessionKey: Boolean = false,
     onBack: (() -> Unit)? = null,
     onSearch: () -> Unit = {},
+    refreshToken: Int = 0,
     onCompose: (() -> Unit)? = null,
     onOpen: (String, String) -> Unit,
 ) {
@@ -93,6 +96,9 @@ fun TopicsScreen(
     var loading by remember(url, sessionKey) { mutableStateOf(false) }
     var loadingMore by remember(url, sessionKey) { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
+    LaunchedEffect(refreshToken) {
+        if (refreshToken > 0) refresh++
+    }
     var nextFeedOffset by remember { mutableIntStateOf(0) }
     var loadMoreJob by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
@@ -141,6 +147,62 @@ fun TopicsScreen(
     fun reload() {
         loadMoreJob?.cancel()
         refresh++
+    }
+
+
+    fun requestNextTopics() {
+        if (loading || loadingMore || !hasMore || topics.isEmpty() || error != null) return
+        loadingMore = true
+        loadMoreJob = scope.launch {
+            try {
+                if (home) {
+                    val eligible = selectedViews.filter { homePages[it]?.next != null }
+                    if (eligible.isNotEmpty()) {
+                        val offset = nextFeedOffset % eligible.size
+                        val rotated = eligible.drop(offset) + eligible.take(offset)
+                        for (view in rotated.take(2)) {
+                            val before = homePages[view] ?: continue
+                            val target = before.next ?: continue
+                            val result = repository.topics(target, refresh = refresh > 0)
+                            val merged = (before.topics + result.first).distinctBy { it.id }
+                            homePages[view] = before.copy(
+                                topics = merged,
+                                next = result.second?.takeUnless {
+                                    it == target || merged.size == before.topics.size
+                                },
+                            )
+                        }
+                        nextFeedOffset += minOf(2, eligible.size)
+                    }
+                } else {
+                    val target = boardNext ?: return@launch
+                    val result = repository.topics(target, refresh = refresh > 0)
+                    val merged = (boardTopics + result.first).distinctBy { it.id }
+                    boardNext = result.second?.takeUnless {
+                        it == target || merged.size == boardTopics.size
+                    }
+                    boardTopics = merged
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.readable()
+            } finally {
+                loadingMore = false
+            }
+        }
+    }
+
+    LaunchedEffect(scroll, topics.size, hasMore, loading, loadingMore, error, selectedMask, refresh) {
+        if (topics.isNotEmpty() && hasMore && !loading && !loadingMore && error == null) {
+            snapshotFlow {
+                val layout = scroll.layoutInfo
+                val last = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+                layout.totalItemsCount > 0 && last >= layout.totalItemsCount - 3
+            }.distinctUntilChanged().collect { atEnd ->
+                if (atEnd) requestNextTopics()
+            }
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -195,51 +257,15 @@ fun TopicsScreen(
                         Box(Modifier.fillMaxWidth(), Alignment.Center) { CircularProgressIndicator() }
                     }
                 }
-                if (hasMore) {
-                    item(key = "guide-more") {
-                        ActionButton(
-                            if (loadingMore || loading) "加载中" else "加载更多",
-                            Modifier.fillMaxWidth(),
-                            primary = false,
-                            loading = loadingMore || loading,
-                        ) {
-                            if (loading || loadingMore) return@ActionButton
-                            loadMoreJob = scope.launch {
-                                loadingMore = true
-                                error = null
-                                try {
-                                    if (home) {
-                                        // At most two pages per tap, sequentially, to keep forum pressure low.
-                                        val eligible = selectedViews.filter { homePages[it]?.next != null }
-                                        if (eligible.isNotEmpty()) {
-                                            val offset = nextFeedOffset % eligible.size
-                                            val toLoad = (eligible.drop(offset) + eligible.take(offset)).take(2)
-                                            for (view in toLoad) {
-                                                val before = homePages[view] ?: continue
-                                                val target = before.next ?: continue
-                                                val result = repository.topics(target, refresh = refresh > 0)
-                                                homePages[view] = before.copy(
-                                                    topics = (before.topics + result.first).distinctBy { it.id },
-                                                    next = result.second,
-                                                )
-                                            }
-                                            nextFeedOffset += toLoad.size
-                                        }
-                                    } else {
-                                        val target = boardNext ?: return@launch
-                                        val result = repository.topics(target, refresh = refresh > 0)
-                                        boardTopics = (boardTopics + result.first).distinctBy { it.id }
-                                        boardNext = result.second
-                                    }
-                                } catch (e: CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    error = e.readable()
-                                } finally {
-                                    loadingMore = false
-                                }
-                            }
-                        }
+                if (loadingMore) {
+                    item(key = "guide-more-progress") {
+                        Text(
+                            "正在加载下一页…",
+                            Modifier.fillMaxWidth().padding(vertical = 15.dp),
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
                     }
                 }
             }
@@ -398,14 +424,29 @@ internal fun TopicCard(
                         )
                 }
             }
-            Text(
-                topic.title,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 24.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (topic.isFeatured) {
+                    Icon(
+                        MiuixNavigationIcons.Flame,
+                        "精华帖",
+                        Modifier.padding(top = 3.dp).size(18.dp),
+                        tint = if (MiuixTheme.colorScheme.background.luminance() < 0.5f)
+                            Color(0xFFFFB35D) else Color(0xFFEA8531),
+                    )
+                }
+                Text(
+                    topic.title,
+                    modifier = Modifier.weight(1f),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 24.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (topic.hasHiddenContent) HiddenContentBadge()
             if (topic.excerpt.isNotBlank() && topic.excerpt != topic.title)
                 Text(
@@ -665,6 +706,10 @@ fun SearchScreen(
     onOpen: (String, String) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
+    val searchContext = LocalContext.current
+    val recentSearches = remember(searchContext) {
+        mutableStateListOf<String>().apply { addAll(SearchHistoryStore.load(searchContext)) }
+    }
     var result by remember { mutableStateOf<NativeDocument?>(null) }
     var topics by remember { mutableStateOf<List<Topic>>(emptyList()) }
     var nextPage by remember { mutableStateOf<String?>(null) }
@@ -674,8 +719,12 @@ fun SearchScreen(
     var searched by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    fun search() {
-        if (busy || query.isBlank()) return
+    fun search(term: String = query) {
+        val keyword = term.trim()
+        if (busy || keyword.isBlank()) return
+        query = keyword
+        recentSearches.clear()
+        recentSearches.addAll(SearchHistoryStore.record(searchContext, keyword))
         scope.launch {
             busy = true
             error = null
@@ -691,7 +740,7 @@ fun SearchScreen(
                         ?: throw ForumException("搜索暂时不可用，请稍后重试")
                 val fields =
                     form.fields.filter { it.type == "hidden" }.map { it.key to it.value } +
-                        listOf("srchtxt" to query.trim(), "searchsubmit" to "yes", "mod" to "forum")
+                        listOf("srchtxt" to keyword, "searchsubmit" to "yes", "mod" to "forum")
                 val response =
                     repository.submit(
                         form.copy(method = "POST"),
@@ -713,22 +762,34 @@ fun SearchScreen(
             }
         }
     }
-    fun loadMore() {
+    val searchScroll = rememberLazyListState()
+    fun requestNextSearchPage() {
         val next = nextPage ?: return
-        if (busy || loadingMore) return
+        if (busy || loadingMore || moreError != null) return
+        loadingMore = true
         scope.launch {
-            loadingMore = true
-            moreError = null
             try {
                 val (page, following) = repository.topics(next)
-                topics = (topics + page).distinctBy { it.id }
-                nextPage = following?.takeUnless { it == next }
+                val merged = (topics + page).distinctBy { it.id }
+                nextPage = following?.takeUnless { it == next || merged.size == topics.size }
+                topics = merged
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 moreError = e.readable()
             } finally {
                 loadingMore = false
+            }
+        }
+    }
+    LaunchedEffect(searchScroll, topics.size, nextPage, busy, loadingMore, moreError) {
+        if (topics.isNotEmpty() && nextPage != null && !busy && !loadingMore && moreError == null) {
+            snapshotFlow {
+                val layout = searchScroll.layoutInfo
+                val last = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+                layout.totalItemsCount > 0 && last >= layout.totalItemsCount - 3
+            }.distinctUntilChanged().collect { atEnd ->
+                if (atEnd) requestNextSearchPage()
             }
         }
     }
@@ -756,11 +817,81 @@ fun SearchScreen(
             }
         else
             LazyColumn(
+                state = searchScroll,
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                if (!searched && recentSearches.isNotEmpty()) {
+                    item("recent-searches") {
+                        Column(
+                            Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "最近搜索",
+                                    modifier = Modifier.weight(1f),
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    "清空",
+                                    Modifier.clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            recentSearches.clear()
+                                            SearchHistoryStore.clear(searchContext)
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                                    fontSize = 12.sp,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            }
+                            recentSearches.toList().forEach { term ->
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .clip(RoundedCornerShape(15.dp))
+                                        .background(
+                                            MiuixTheme.colorScheme.onSurface.copy(alpha = .045f)
+                                        ),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Row(
+                                        Modifier.weight(1f)
+                                            .clickable { search(term) }
+                                            .padding(horizontal = 14.dp, vertical = 13.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(11.dp),
+                                    ) {
+                                        Icon(
+                                            MiuixIcons.Useful.Search, null, Modifier.size(16.dp),
+                                            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                        )
+                                        Text(
+                                            term,
+                                            fontSize = 14.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    Text(
+                                        "删除",
+                                        Modifier.clickable {
+                                            recentSearches.remove(term)
+                                            SearchHistoryStore.remove(searchContext, term)
+                                        }.padding(horizontal = 13.dp, vertical = 12.dp),
+                                        fontSize = 12.sp,
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
                 error?.let { item { EmptyState("搜索结果", it) } }
-                if (topics.isEmpty() && error == null)
+                if (topics.isEmpty() && error == null && (searched || recentSearches.isEmpty()))
                     item {
                         EmptyState(
                             if (searched) "没有找到相关帖子" else "发现感兴趣的内容",
@@ -772,19 +903,19 @@ fun SearchScreen(
                         onAuthor = topic.authorUrl?.let { authorUrl -> { onOpen(topic.author, authorUrl) } },
                     ) { onOpen(topic.title, topic.url) }
                 }
-                if (nextPage != null || loadingMore || moreError != null) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            moreError?.let { message ->
-                                Text(message, fontSize = 13.sp,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                            }
-                            if (nextPage != null) ActionButton(
-                                if (loadingMore) "加载中" else if (moreError != null) "重试加载" else "加载更多",
-                                Modifier.fillMaxWidth(), primary = false, loading = loadingMore,
-                            ) { loadMore() }
-                        }
-                    }
+                if (loadingMore) item {
+                    Text("正在加载下一页…", Modifier.fillMaxWidth().padding(14.dp),
+                        fontSize = 12.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                }
+                if (moreError != null) item {
+                    Text("下一页加载失败，点击重试",
+                        Modifier.fillMaxWidth().clickable {
+                            moreError = null
+                            requestNextSearchPage()
+                        }.padding(14.dp), fontSize = 12.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                 }
             }
     }
@@ -810,6 +941,7 @@ fun ThreadScreen(
     var feedback by remember(url) { mutableStateOf<String?>(null) }
     var liked by rememberSaveable(url) { mutableStateOf(false) }
     var favorited by rememberSaveable(url) { mutableStateOf(false) }
+    var favoriteRevision by remember(url) { mutableIntStateOf(0) }
     var actionInProgress by remember(url) { mutableStateOf<Boolean?>(null) }
     val scroll = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -842,8 +974,13 @@ fun ThreadScreen(
     LaunchedEffect(detail?.tid, loggedIn) {
         val tid = detail?.tid
         if (loggedIn && !tid.isNullOrBlank() && actionInProgress == null) {
+            val startedAtRevision = favoriteRevision
             try {
-                favorited = repository.isThreadFavorited(tid)
+                val confirmed = repository.isThreadFavorited(tid)
+                // A slower initial lookup must not overwrite a user's newer tap.
+                if (favoriteRevision == startedAtRevision && actionInProgress == null) {
+                    favorited = confirmed
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -909,24 +1046,40 @@ fun ThreadScreen(
         val tid = detail?.tid ?: return
         if (busy || actionInProgress != null) return
         if (!favorite && liked) return
+        // Update immediately before scheduling the network request. Both icons
+        // remain visible without any loading UI or success toast.
+        actionInProgress = favorite
+        val previouslyFavorited = favorited
+        val previouslyLiked = liked
+        if (favorite) {
+            favorited = !previouslyFavorited
+            favoriteRevision++
+        } else {
+            liked = true
+        }
         scope.launch {
-            actionInProgress = favorite
             try {
-                if (favorite && favorited) {
-                    val result = repository.unfavoriteThread(tid)
-                    favorited = result.selected
-                } else {
-                    val result = repository.topicAction(tid, favorite)
-                    if (result.selected) {
-                        if (favorite) favorited = true else liked = true
-                    }
+                val result = when {
+                    favorite && previouslyFavorited -> repository.unfavoriteThread(tid)
+                    else -> repository.topicAction(tid, favorite)
                 }
+                if (favorite) favorited = result.selected else liked = result.selected
             } catch (e: CancellationException) {
+                // The request may already have reached the server. Do not undo
+                // the local state on an inconclusive cancellation.
                 throw e
+            } catch (e: SessionExpiredException) {
+                if (favorite) favorited = previouslyFavorited else liked = previouslyLiked
+                android.util.Log.w("MtForumTopicAction", "Session expired", e)
+            } catch (e: TopicActionRejectedException) {
+                // Only an explicit server rejection reverses the optimistic UI.
+                if (favorite) favorited = previouslyFavorited else liked = previouslyLiked
+                android.util.Log.w("MtForumTopicAction", "Server rejected action", e)
             } catch (e: Exception) {
-                // Keep the non-intrusive icon state unchanged on failure.
-                // Other message and reply feedback is handled separately.
-                android.util.Log.w("MtForumTopicAction", "Post action not confirmed", e)
+                // An AJAX response without expected text, an out-of-date
+                // favorites list or an interrupted connection cannot prove
+                // failure. Do not erase a successful first tap.
+                android.util.Log.w("MtForumTopicAction", "Action status uncertain", e)
             } finally {
                 actionInProgress = null
             }
@@ -1101,8 +1254,6 @@ fun ThreadScreen(
                     enabled = !busy && actionInProgress == null,
                     liked = liked,
                     favorited = favorited,
-                    likeLoading = actionInProgress == false,
-                    favoriteLoading = actionInProgress == true,
                     onReply = { reply() },
                     onLike = { topicAction(false) },
                     onFavorite = { topicAction(true) },
@@ -1149,12 +1300,13 @@ fun ThreadScreen(
 }
 
 @Composable
-private fun ThreadPostCard(
+internal fun ThreadPostCard(
     post: ContentPost,
     compact: Boolean,
     onOpen: (String, String) -> Unit,
     onReply: (() -> Unit)?,
     onReward: () -> Unit,
+    showActions: Boolean = true,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(
@@ -1201,7 +1353,7 @@ private fun ThreadPostCard(
                     onClick = { onOpen(link.text, link.url) },
                 )
             }
-            Row(
+            if (showActions) Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {

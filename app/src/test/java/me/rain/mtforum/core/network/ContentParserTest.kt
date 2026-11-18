@@ -20,6 +20,49 @@ class ContentParserTest {
     }
 
     @Test
+    fun featuredMarkerIsSeparatedFromHeadlineAndOrdinaryTitlesStayUntouched() {
+        val html = """
+            <li class="forumlist_li">
+                <h2><a href="thread-101-1-1.html">
+                    <span class="bg_c f_f">精</span>【原创教程】如何调试
+                </a></h2>
+            </li>
+            <li class="forumlist_li">
+                <h2><span class="bg_c f_f">精</span>
+                    <a href="thread-102-1-1.html">进阶教程</a></h2>
+            </li>
+            <li class="forumlist_li">
+                <h2><a href="thread-103-1-1.html">精益求精的技巧</a></h2>
+            </li>
+            <li class="forumlist_li">
+                <h2><a href="thread-104-1-1.html">
+                    <span class="bg_c f_f">热</span>热门教程</a></h2>
+            </li>
+        """
+        val posts = ContentParser.topics(html, "$base/forum-41-1.html").first
+        assertEquals(4, posts.size)
+        assertEquals("【原创教程】如何调试", posts[0].title)
+        assertTrue(posts[0].isFeatured)
+        assertEquals("进阶教程", posts[1].title)
+        assertTrue(posts[1].isFeatured)
+        assertEquals("精益求精的技巧", posts[2].title)
+        assertFalse(posts[2].isFeatured)
+        assertEquals("热热门教程", posts[3].title)
+        assertFalse(posts[3].isFeatured)
+    }
+
+    @Test
+    fun digestFeedMarksAllReturnedThreadsWithoutRewritingTheTitle() {
+        val html = """<li class="forumlist_li"><h2>
+            <a href="thread-11-1-1.html">原始标题</a></h2></li>"""
+        val topic = ContentParser.topics(
+            html, "$base/forum.php?mod=guide&view=digest"
+        ).first.single()
+        assertTrue(topic.isFeatured)
+        assertEquals("原始标题", topic.title)
+    }
+
+    @Test
     fun desktopTablePostsKeepBodyLazyImagesAndSeparateReplies() {
         val html = """<title>桌面帖子 - MT论坛</title><div id="post_101"><table id="pid101"><tr>
             <td class="pls"><div class="authi"><a href="home.php?uid=1">甲</a></div></td>
@@ -227,7 +270,9 @@ class ContentParserTest {
         val html =
             """<form action="home.php?mod=spacecp&amp;ac=profile" method="post"><input type="password" name="oldpassword"><input name="emailnew" value="name@example.com"><select name="questionidnew"><option value="0">不修改</option></select><input name="answernew"></form>"""
         val form = ContentParser.document(html, base).forms.single()
-        assertEquals(listOf("当前密码", "邮箱", "新的安全提问", "安全提问答案"), form.fields.map { it.label })
+        assertEquals(listOf("当前密码", "邮箱", "新的安全提问", "安全提问答案"),
+            form.fields.filter { it.type != "hidden" }.map { it.label })
+        assertEquals("true", form.fields.first { it.key == "passwordsubmit" }.value)
         assertEquals("name@example.com", form.fields.first { it.key == "emailnew" }.value)
         assertEquals("oldpassword", form.fields.first().key)
     }

@@ -172,6 +172,7 @@ fun HomeScreen(account: AccountViewModel = viewModel()) {
         val kind =
             when {
                 parsed.getQueryParameter("action") == "login" -> "login"
+                isPost && parsed.getQueryParameter("action") == "newthread" -> "newthread"
                 parsed.getQueryParameter("do") == "pm" &&
                     parsed.getQueryParameter("subop") == "view" &&
                     parsed.getQueryParameter("touid") != null -> "conversation"
@@ -344,6 +345,35 @@ fun HomeScreen(account: AccountViewModel = viewModel()) {
                 )
             "sms" -> SmsScreen(account.repository, { back() })
             "user-space" -> UserSpaceScreen(account.repository, route.url, { back() }, ::open)
+            "newthread" ->
+                NewThreadScreen(
+                    repository = account.repository,
+                    url = route.url,
+                    boardTitle = route.title.takeUnless { it == "发布帖子" }
+                        ?: stack.getOrNull(stack.indexOf(route) - 1)
+                            ?.takeIf { it.kind == "topics" }?.title.orEmpty(),
+                    userName = state.profile?.username,
+                    userGroup = state.profile?.userGroup,
+                    userAvatar = state.profile?.avatarUrl,
+                    onSwitchBoard = { selectedFid, selectedName ->
+                        val target = "${ForumRepository.BaseUrl}/forum.php?mod=post&action=newthread&fid=$selectedFid&mobile=2"
+                        // Change boards inside the same editor, not by pushing
+                        // another editor onto the back stack.
+                        stack = stack.map { current ->
+                            if (current.id == route.id) {
+                                current.copy(title = selectedName, url = target)
+                            } else current
+                        }
+                    },
+                    onBack = { back() },
+                    onCreated = {
+                        val parent = stack.getOrNull(stack.indexOf(route) - 1)
+                        if (parent?.kind == "topics") {
+                            refreshRequests[parent.id] = (refreshRequests[parent.id] ?: 0) + 1
+                        }
+                    },
+                    onPublished = { target -> open("帖子", target) },
+                )
             "thread" ->
                 ThreadScreen(
                     account.repository,
@@ -361,6 +391,7 @@ fun HomeScreen(account: AccountViewModel = viewModel()) {
                     sessionKey = state.loggedIn,
                     onBack = { back() },
                     onSearch = { push("search") },
+                    refreshToken = refreshRequests[route.id] ?: 0,
                     onCompose = {
                         if (!state.loggedIn) login()
                         else

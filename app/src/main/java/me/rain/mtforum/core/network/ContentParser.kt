@@ -144,6 +144,19 @@ object ContentParser {
             .firstOrNull { it.hasClass("prev") || it.hasClass("pre") || it.text().contains("上一页") }
             ?.let { absolute(it.attr("href"), page) }
 
+    /** Only Discuz's actual `精` marker is a featured badge, not the word in a title. */
+    private fun isFeaturedMarker(element: Element): Boolean =
+        element.tagName() == "span" &&
+            element.hasClass("bg_c") &&
+            element.hasClass("f_f") &&
+            clean(element.text()) == "精"
+
+    /** Remove only visual featured badges nested in the headline link. */
+    private fun threadTitle(anchor: Element): String =
+        clean(anchor.clone().apply {
+            select("span.bg_c.f_f").filter(::isFeaturedMarker).forEach { it.remove() }
+        }.text())
+
     fun topics(body: String, page: String): Pair<List<Topic>, String?> {
         val doc = Jsoup.parse(unwrap(body), page)
         var rows =
@@ -164,13 +177,17 @@ object ContentParser {
                     val a =
                         row.select("h2 a[href], .list_body a[href], a.s.xst, a.xst, a[href]")
                             .firstOrNull {
-                                topicId(it.attr("href")) != null && clean(it.text()).isNotBlank()
+                                topicId(it.attr("href")) != null && threadTitle(it).isNotBlank()
                             } ?: return@mapNotNull null
                     val id = topicId(a.attr("href")) ?: return@mapNotNull null
                     val metadata = TopicListMetadata.parse(row, id, page)
+                    val headline = a.closest("h2, h3") ?: a
+                    val featured = headline.select("span.bg_c.f_f").any(::isFeaturedMarker) ||
+                        a.select("span.bg_c.f_f").any(::isFeaturedMarker) ||
+                        page.toHttpUrlOrNull()?.queryParameter("view") == "digest"
                     Topic(
                         id,
-                        clean(a.text()),
+                        threadTitle(a),
                         absolute(a.attr("href"), page) ?: "$base/thread-$id-1-1.html",
                         metadata.author,
                         metadata.authorUrl,
@@ -197,6 +214,7 @@ object ContentParser {
                         hasImageAttachments = row.selectFirst("img[alt=attach_img], img[title=图片附件]") != null,
                         hasHiddenContent = metadata.hidden,
                         level = metadata.level,
+                        isFeatured = featured,
                     )
                 }
                 .distinctBy { it.id }

@@ -302,6 +302,8 @@ fun NativePageScreen(
                                 repository,
                                 form,
                                 mallConfirmation = mallConfirm && form.id == "mall-exchange",
+                                friendRequest = visibleUrl.contains("ac=friend") &&
+                                    visibleUrl.contains("op=add"),
                                 onResult = { result ->
                                     feedback = result.message
                                     if (result.success) onChanged()
@@ -355,6 +357,7 @@ private fun NativeForm(
     repository: ForumRepository,
     form: RemoteForm,
     mallConfirmation: Boolean = false,
+    friendRequest: Boolean = false,
     onResult: (ForumRepository.Submission) -> Unit,
 ) {
     // Passwords and draft fields remain in memory only. Duplicate names keep their own field index.
@@ -499,7 +502,7 @@ private fun NativeForm(
         }
     }
     val groups = form.fields.withIndex().filter { it.value.type != "hidden" }
-        .groupBy { nativeFieldSection(it.value) }
+        .groupBy { if (friendRequest) "申请信息" else nativeFieldSection(it.value) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         groups.forEach { (section, fields) ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -510,7 +513,11 @@ private fun NativeForm(
                         fields.forEach { entry ->
                             val index = entry.index
                             val original = entry.value
-                            val field = original.copy(label = nativeFieldLabel(original, form))
+                            val field = original.copy(label = if (friendRequest) when (original.key) {
+                                "message", "note", "remark" -> "申请附言"
+                                "gid", "groupid" -> "好友分组"
+                                else -> nativeFieldLabel(original, form)
+                            } else nativeFieldLabel(original, form))
                             when (field.type) {
                                 "hidden" -> Unit
                                 "select" ->
@@ -560,7 +567,9 @@ private fun NativeForm(
                                         label = field.label,
                                         enabled = !submitting && !completed && !field.readOnly,
                                         singleLine = field.type != "textarea",
-                                        minLines = if (field.key == "message") 7 else if (field.type == "textarea") 4 else 1,
+                                        minLines = if (friendRequest && field.type == "textarea") 3
+                                            else if (field.key == "message") 7
+                                            else if (field.type == "textarea") 4 else 1,
                                         keyboardOptions =
                                             KeyboardOptions(
                                                 keyboardType =
@@ -598,6 +607,13 @@ private fun NativeForm(
             ),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            if (friendRequest) {
+                Text("发送好友申请", fontSize = 18.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                Text("发送后需等待对方确认，申请附言与好友分组可在上方编辑。",
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            }
             if (mallConfirmation) {
                 Text("兑换确认", fontSize = 21.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
